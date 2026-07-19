@@ -1,6 +1,9 @@
-import { dispatchRole } from "@/core/roles/role-dispatcher";
+﻿import { dispatchRole } from "@/core/roles/role-dispatcher";
 import {
-  canContinueWorkflow,
+  createWorkflowRecord,
+  updateWorkflowRecord,
+} from "@/core/repositories/workflow-repository";
+import {
   createWorkflowContext,
   transitionWorkflow,
 } from "@/core/workflows/workflow-engine";
@@ -15,27 +18,57 @@ export async function startMissionWorkflow({
   missionId,
   ownerId,
   command,
-}: StartMissionWorkflowParams): Promise<void> {
+}: StartMissionWorkflowParams): Promise<string> {
   let workflow = createWorkflowContext(
     missionId,
     ownerId,
+    command,
   );
 
-  while (canContinueWorkflow(workflow)) {
-    if (workflow.state === "planned") {
-      workflow = transitionWorkflow(
-        workflow,
-        "planning",
-      );
+  const workflowId = await createWorkflowRecord(workflow);
+
+  workflow = {
+    ...workflow,
+    id: workflowId,
+  };
+
+  workflow = transitionWorkflow(workflow, "planning");
+
+  await updateWorkflowRecord(workflow);
+
+  const result = await dispatchRole({
+    role: workflow.currentRole,
+    missionId,
+    ownerId,
+    command,
+    workflowId,
+  });
+
+  if (
+    result.status === "completed" &&
+    result.nextState
+  ) {
+    workflow = transitionWorkflow(
+      workflow,
+      result.nextState,
+    );
+
+    await updateWorkflowRecord(workflow);
+
+    if (
+      workflow.state === "building" ||
+      workflow.state === "testing" ||
+      workflow.state === "documenting"
+    ) {
+      await dispatchRole({
+        role: workflow.currentRole,
+        missionId,
+        ownerId,
+        command,
+        workflowId,
+      });
     }
-
-    await dispatchRole({
-      role: workflow.currentRole,
-      missionId,
-      ownerId,
-      command,
-    });
-
-    return;
   }
+
+  return workflowId;
 }

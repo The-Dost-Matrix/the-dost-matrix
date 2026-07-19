@@ -1,5 +1,4 @@
-import { createBuildTask } from "@/core/application/tasks/create-build-task";
-import { recordAuditEvent } from "@/core/application/audit/audit-service";
+﻿import { recordAuditEvent } from "@/core/application/audit/audit-service";
 import { createDirectorPlanInput } from "@/core/director/planner";
 import { createDirectorPlanRecord } from "@/core/repositories/director-plan-repository";
 
@@ -28,17 +27,9 @@ export async function createDirectorPlan({
     entityType: "directorPlan",
     entityId: planId,
     missionId,
-    summary: `Director-plan aangemaakt voor missie: ${command}`,
+    summary:
+      `Director-plan aangemaakt voor missie: ${command}`,
   });
-
-  if (plan.requiredAgents.includes("Builder")) {
-    await createBuildTask({
-      missionId,
-      ownerId,
-      command,
-      estimatedHours: plan.estimatedHours,
-    });
-  }
 
   return planId;
 }
