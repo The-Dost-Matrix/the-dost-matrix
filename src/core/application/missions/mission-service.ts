@@ -1,6 +1,6 @@
 import type { Mission } from "@/core/domain/missions/mission";
 import { recordAuditEvent } from "@/core/application/audit/audit-service";
-import { createDirectorPlan } from "@/core/application/director/create-director-plan";
+import { startMissionWorkflow } from "@/core/workflows/start-mission-workflow";
 import {
   createMissionRecord,
   subscribeToMissionRecords,
@@ -32,7 +32,7 @@ export async function createMission(
     missionId,
   });
 
-  await createDirectorPlan({
+  await startMissionWorkflow({
     missionId,
     ownerId,
     command: normalizedCommand,
