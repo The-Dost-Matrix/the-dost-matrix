@@ -1,4 +1,5 @@
-﻿import { dispatchRole } from "@/core/roles/role-dispatcher";
+import { emitMatrixEvent } from "@/core/application/events/matrix-event-bus";
+import { dispatchRole } from "@/core/roles/role-dispatcher";
 import {
   getWorkflowRecord,
   updateWorkflowRecord,
@@ -20,6 +21,20 @@ export async function completeWorkflowRole({
   outcome,
 }: CompleteWorkflowRoleParams): Promise<void> {
   let workflow = await getWorkflowRecord(workflowId);
+  const completedRole = workflow.currentRole;
+  const previousState = workflow.state;
+
+  await emitMatrixEvent({
+    ownerId: workflow.ownerId,
+    missionId: workflow.missionId,
+    workflowId,
+    type: "role.completed",
+    payload: {
+      role: completedRole,
+      outcome,
+      state: previousState,
+    },
+  });
 
   if (workflow.state === "building") {
     workflow = transitionWorkflow(
@@ -67,17 +82,64 @@ export async function completeWorkflowRole({
 
   await updateWorkflowRecord(workflow);
 
-  if (
-    workflow.state === "building" ||
-    workflow.state === "testing" ||
-    workflow.state === "documenting"
-  ) {
-    await dispatchRole({
-      role: workflow.currentRole,
-      missionId: workflow.missionId,
+  await emitMatrixEvent({
+    ownerId: workflow.ownerId,
+    missionId: workflow.missionId,
+    workflowId,
+    type: "workflow.state.changed",
+    payload: {
+      previousState,
+      nextState: workflow.state,
+      currentRole: workflow.currentRole,
+      repairAttempts: workflow.repairAttempts,
+    },
+  });
+
+  if (workflow.state === "completed") {
+    await emitMatrixEvent({
       ownerId: workflow.ownerId,
-      command: workflow.command,
+      missionId: workflow.missionId,
       workflowId,
+      type: "workflow.completed",
+      payload: {
+        repairAttempts: workflow.repairAttempts,
+      },
     });
+
+    return;
   }
+
+  if (workflow.state === "failed") {
+    await emitMatrixEvent({
+      ownerId: workflow.ownerId,
+      missionId: workflow.missionId,
+      workflowId,
+      type: "workflow.failed",
+      payload: {
+        failedRole: completedRole,
+        repairAttempts: workflow.repairAttempts,
+      },
+    });
+
+    return;
+  }
+
+  await emitMatrixEvent({
+    ownerId: workflow.ownerId,
+    missionId: workflow.missionId,
+    workflowId,
+    type: "role.dispatched",
+    payload: {
+      role: workflow.currentRole,
+      state: workflow.state,
+    },
+  });
+
+  await dispatchRole({
+    role: workflow.currentRole,
+    missionId: workflow.missionId,
+    ownerId: workflow.ownerId,
+    command: workflow.command,
+    workflowId,
+  });
 }

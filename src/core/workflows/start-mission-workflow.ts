@@ -1,4 +1,5 @@
-﻿import { dispatchRole } from "@/core/roles/role-dispatcher";
+import { emitMatrixEvent } from "@/core/application/events/matrix-event-bus";
+import { dispatchRole } from "@/core/roles/role-dispatcher";
 import {
   createWorkflowRecord,
   updateWorkflowRecord,
@@ -32,9 +33,44 @@ export async function startMissionWorkflow({
     id: workflowId,
   };
 
+  await emitMatrixEvent({
+    ownerId,
+    missionId,
+    workflowId,
+    type: "mission.workflow.started",
+    payload: {
+      command,
+      state: workflow.state,
+    },
+  });
+
+  const previousState = workflow.state;
   workflow = transitionWorkflow(workflow, "planning");
 
   await updateWorkflowRecord(workflow);
+
+  await emitMatrixEvent({
+    ownerId,
+    missionId,
+    workflowId,
+    type: "workflow.state.changed",
+    payload: {
+      previousState,
+      nextState: workflow.state,
+      currentRole: workflow.currentRole,
+    },
+  });
+
+  await emitMatrixEvent({
+    ownerId,
+    missionId,
+    workflowId,
+    type: "role.dispatched",
+    payload: {
+      role: workflow.currentRole,
+      state: workflow.state,
+    },
+  });
 
   const result = await dispatchRole({
     role: workflow.currentRole,
@@ -44,10 +80,23 @@ export async function startMissionWorkflow({
     workflowId,
   });
 
+  await emitMatrixEvent({
+    ownerId,
+    missionId,
+    workflowId,
+    type: "role.completed",
+    payload: {
+      role: workflow.currentRole,
+      status: result.status,
+      nextState: result.nextState ?? null,
+    },
+  });
+
   if (
     result.status === "completed" &&
     result.nextState
   ) {
+    const currentState = workflow.state;
     workflow = transitionWorkflow(
       workflow,
       result.nextState,
@@ -55,11 +104,34 @@ export async function startMissionWorkflow({
 
     await updateWorkflowRecord(workflow);
 
+    await emitMatrixEvent({
+      ownerId,
+      missionId,
+      workflowId,
+      type: "workflow.state.changed",
+      payload: {
+        previousState: currentState,
+        nextState: workflow.state,
+        currentRole: workflow.currentRole,
+      },
+    });
+
     if (
       workflow.state === "building" ||
       workflow.state === "testing" ||
       workflow.state === "documenting"
     ) {
+      await emitMatrixEvent({
+        ownerId,
+        missionId,
+        workflowId,
+        type: "role.dispatched",
+        payload: {
+          role: workflow.currentRole,
+          state: workflow.state,
+        },
+      });
+
       await dispatchRole({
         role: workflow.currentRole,
         missionId,
