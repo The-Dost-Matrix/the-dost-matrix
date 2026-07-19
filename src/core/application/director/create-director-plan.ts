@@ -1,8 +1,7 @@
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
-import { recordAuditEvent } from "@/core/application/audit/audit-service";
 import { createBuildTask } from "@/core/application/tasks/create-build-task";
-import { db } from "@/core/firebase/client";
+import { recordAuditEvent } from "@/core/application/audit/audit-service";
 import { createDirectorPlanInput } from "@/core/director/planner";
+import { createDirectorPlanRecord } from "@/core/repositories/director-plan-repository";
 
 interface CreateDirectorPlanParams {
   missionId: string;
@@ -10,23 +9,36 @@ interface CreateDirectorPlanParams {
   command: string;
 }
 
-export async function createDirectorPlan({ missionId, ownerId, command }: CreateDirectorPlanParams): Promise<string> {
-  const plan = createDirectorPlanInput({ missionId, ownerId, command });
-  const planDocument = await addDoc(collection(db, "directorPlans"), {
-    ...plan,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+export async function createDirectorPlan({
+  missionId,
+  ownerId,
+  command,
+}: CreateDirectorPlanParams): Promise<string> {
+  const plan = createDirectorPlanInput({
+    missionId,
+    ownerId,
+    command,
   });
+
+  const planId = await createDirectorPlanRecord(plan);
+
   await recordAuditEvent({
     ownerId,
     action: "director.plan.created",
     entityType: "directorPlan",
-    entityId: planDocument.id,
+    entityId: planId,
     missionId,
     summary: `Director-plan aangemaakt voor missie: ${command}`,
   });
+
   if (plan.requiredAgents.includes("Builder")) {
-    await createBuildTask({ missionId, ownerId, command, estimatedHours: plan.estimatedHours });
+    await createBuildTask({
+      missionId,
+      ownerId,
+      command,
+      estimatedHours: plan.estimatedHours,
+    });
   }
-  return planDocument.id;
+
+  return planId;
 }

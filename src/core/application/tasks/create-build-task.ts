@@ -1,7 +1,6 @@
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { recordAuditEvent } from "@/core/application/audit/audit-service";
-import { db } from "@/core/firebase/client";
 import { createBuildTaskInput } from "@/core/builder/task-planner";
+import { createBuildTaskRecord } from "@/core/repositories/build-task-repository";
 
 interface CreateBuildTaskParams {
   missionId: string;
@@ -10,20 +9,29 @@ interface CreateBuildTaskParams {
   estimatedHours: number;
 }
 
-export async function createBuildTask({ missionId, ownerId, command, estimatedHours }: CreateBuildTaskParams): Promise<string> {
-  const task = createBuildTaskInput({ missionId, ownerId, command, estimatedHours });
-  const taskDocument = await addDoc(collection(db, "agentTasks"), {
-    ...task,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+export async function createBuildTask({
+  missionId,
+  ownerId,
+  command,
+  estimatedHours,
+}: CreateBuildTaskParams): Promise<string> {
+  const task = createBuildTaskInput({
+    missionId,
+    ownerId,
+    command,
+    estimatedHours,
   });
+
+  const taskId = await createBuildTaskRecord(task);
+
   await recordAuditEvent({
     ownerId,
     action: "builder.task.created",
     entityType: "agentTask",
-    entityId: taskDocument.id,
+    entityId: taskId,
     missionId,
     summary: `Builder-taak aangemaakt voor missie: ${command}`,
   });
-  return taskDocument.id;
+
+  return taskId;
 }
