@@ -1,6 +1,7 @@
 import type { User } from "firebase/auth";
 import type { DirectorDecision } from "@/core/contracts/v2";
 import type { MissionV2 } from "@/core/mission-engine/v2/mission";
+import type { KnowledgeEntry } from "@/core/domain/knowledge/knowledge-entry";
 
 /**
  * Client-side wrappers rond /api/missions/v2. Net als bij chat-service.ts:
@@ -97,6 +98,7 @@ export interface AutoStepMissionV2Result {
   mission: MissionV2;
   decision?: DirectorDecision;
   roleOutput?: string;
+  usedKnowledge?: KnowledgeEntry[];
 }
 
 /**

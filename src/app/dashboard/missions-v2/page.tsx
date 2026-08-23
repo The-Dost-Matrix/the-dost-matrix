@@ -9,6 +9,7 @@ import {
   createMissionV2,
 } from "@/domains/missions/mission-engine-v2-service";
 import type { MissionV2 } from "@/core/mission-engine/v2/mission";
+import type { KnowledgeEntry } from "@/core/domain/knowledge/knowledge-entry";
 
 /**
  * Eerste werkende scherm voor Mission Engine V2: hier kun je een mission
@@ -50,6 +51,7 @@ export default function MissionsV2Page() {
   const [mission, setMission] = useState<MissionV2 | null>(null);
   const [roleOutput, setRoleOutput] = useState("");
   const [directorReason, setDirectorReason] = useState("");
+  const [usedKnowledge, setUsedKnowledge] = useState<KnowledgeEntry[]>([]);
 
   const [busy, setBusy] = useState<"create" | "auto-step" | null>(null);
   const [error, setError] = useState("");
@@ -83,6 +85,7 @@ export default function MissionsV2Page() {
     setError("");
     setRoleOutput("");
     setDirectorReason("");
+    setUsedKnowledge([]);
 
     try {
       const created = await createMissionV2(user, {
@@ -109,6 +112,7 @@ export default function MissionsV2Page() {
       setMission(result.mission);
       if (result.decision) setDirectorReason(result.decision.reason);
       if (result.roleOutput) setRoleOutput(result.roleOutput);
+      setUsedKnowledge(result.usedKnowledge ?? []);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "De Director kon geen stap zetten.");
     } finally {
@@ -129,7 +133,8 @@ export default function MissionsV2Page() {
             Director zelf beslissen wat de eerstvolgende stap is — en voert
             die (bij een dispatch naar de builder-rol) meteen ook uit via een
             echte LLM-aanroep. Jij hoeft alleen nog op de knop te klikken
-            totdat de missie voltooid is.
+            totdat de missie voltooid is. De Director gebruikt daarbij ook
+            goedgekeurde kennis uit je Second Brain als achtergrond.
           </p>
         </div>
       </section>
@@ -224,6 +229,17 @@ export default function MissionsV2Page() {
                 <article className="knowledge-card">
                   <strong>Beslissing van de Director</strong>
                   <p>{directorReason}</p>
+                </article>
+              )}
+
+              {usedKnowledge.length > 0 && (
+                <article className="knowledge-card">
+                  <strong>Gebruikte kennis uit het Second Brain</strong>
+                  <ul>
+                    {usedKnowledge.map((entry) => (
+                      <li key={entry.id}>{entry.title?.trim() || "(zonder titel)"}</li>
+                    ))}
+                  </ul>
                 </article>
               )}
 

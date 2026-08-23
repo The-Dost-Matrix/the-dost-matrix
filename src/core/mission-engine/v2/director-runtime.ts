@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import type { ActorRef, DirectorDecision, DirectorDecisionType, JsonValue } from "@/core/contracts/v2";
 import { getChatProvider } from "@/core/llm/model-router";
+import { retrieveKnowledgeContext } from "@/core/application/knowledge/retrieval";
+import type { KnowledgeEntry } from "@/core/domain/knowledge/knowledge-entry";
 
 import type { MissionEngine } from "./engine";
 import type { MissionV2 } from "./mission";
@@ -27,12 +29,22 @@ import type { MissionV2 } from "./mission";
  * - Bij COMPLETE_MISSION beoordeelt de Director zelf (niet een aparte
  *   QA-rol — die bestaat nog niet) of de succescriteria gehaald zijn. Dat is
  *   een bewuste, eerlijke beperking van deze eerste versie.
+ *
+ * Vanaf hier gebruikt de Director ook goedgekeurde kennis uit het Second
+ * Brain (dezelfde kennis die je via de Kennis-pagina keurt) als achtergrond
+ * bij zijn beslissing — zie gatherRelevantKnowledge. Dit is bewust beperkt
+ * tot uitsluitend goedgekeurde kennis (retrieveKnowledgeContext filtert al
+ * op status "approved") en wordt nooit boven de missie zelf gesteld: de
+ * succescriteria en het doel van de missie blijven leidend.
  */
 
 const ALLOWED_AUTONOMOUS_DECISIONS: DirectorDecisionType[] = [
   "DISPATCH_ROLE",
   "COMPLETE_MISSION",
 ];
+
+const MAX_RELEVANT_KNOWLEDGE = 6;
+const MAX_KNOWLEDGE_CONTEXT_LENGTH = 6_000;
 
 export interface RunDirectorStepInput {
   engine: MissionEngine;
@@ -43,6 +55,46 @@ export interface RunDirectorStepInput {
 export interface RunDirectorStepResult {
   mission: MissionV2;
   decision: DirectorDecision;
+  usedKnowledge: KnowledgeEntry[];
+}
+
+/**
+ * Haalt goedgekeurde Second Brain-kennis op die relevant is voor deze missie
+ * (op basis van titel, doel en succescriteria). Bewust geen embedding-
+ * aanroep hier — puur tekstuele matching — om dit besluitpad simpel en
+ * foutbestendig te houden; dit kan later verfijnd worden zoals bij de
+ * V1-chat (zie getDirectorMemoryContext).
+ */
+async function gatherRelevantKnowledge(mission: MissionV2): Promise<KnowledgeEntry[]> {
+  const query = [
+    mission.title,
+    mission.objective,
+    ...mission.successCriteria.map((criterion) => criterion.description),
+  ].join("\n");
+
+  return retrieveKnowledgeContext(mission.ownerId, query, null, MAX_RELEVANT_KNOWLEDGE);
+}
+
+function buildKnowledgeContextBlock(knowledge: KnowledgeEntry[]): string {
+  if (knowledge.length === 0) {
+    return "Geen relevante goedgekeurde kennis gevonden in het Second Brain.";
+  }
+
+  const blocks: string[] = [];
+  let used = 0;
+
+  for (const entry of knowledge) {
+    const title = entry.title?.trim() || "(zonder titel)";
+    const type = entry.type ?? "fact";
+    const block = `[${type}] ${title}\n${entry.content}`;
+
+    if (used + block.length > MAX_KNOWLEDGE_CONTEXT_LENGTH) break;
+
+    blocks.push(block);
+    used += block.length;
+  }
+
+  return blocks.join("\n\n");
 }
 
 interface DirectorLlmDecision {
@@ -57,7 +109,11 @@ function extractJson(text: string): string {
   return (fenced ? fenced[1] : text).trim();
 }
 
-function buildDirectorPrompt(mission: MissionV2, allowComplete: boolean): {
+function buildDirectorPrompt(
+  mission: MissionV2,
+  allowComplete: boolean,
+  knowledge: KnowledgeEntry[],
+): {
   systemPrompt: string;
   userPrompt: string;
 } {
@@ -95,6 +151,9 @@ function buildDirectorPrompt(mission: MissionV2, allowComplete: boolean): {
     "Eerdere toewijzingen:",
     assignmentLines,
     "",
+    "Relevante goedgekeurde kennis uit het Second Brain (uitsluitend ter achtergrond — gebruik dit nooit om de succescriteria hierboven te vervangen of aan te vullen, en verzin geen kennis die hier niet expliciet staat):",
+    buildKnowledgeContextBlock(knowledge),
+    "",
     'De enige beschikbare rol om taken aan toe te wijzen is "builder".',
     `Kies één decisionType uit: ${allowedTypes}.`,
     "",
@@ -113,9 +172,10 @@ function buildDirectorPrompt(mission: MissionV2, allowComplete: boolean): {
 async function decideNextStep(
   mission: MissionV2,
   allowComplete: boolean,
+  knowledge: KnowledgeEntry[],
 ): Promise<DirectorLlmDecision> {
   const provider = getChatProvider();
-  const { systemPrompt, userPrompt } = buildDirectorPrompt(mission, allowComplete);
+  const { systemPrompt, userPrompt } = buildDirectorPrompt(mission, allowComplete, knowledge);
 
   const completion = await provider.chatCompletion(systemPrompt, [
     { role: "user", content: userPrompt },
@@ -195,7 +255,8 @@ export async function runDirectorStep({
     mission.assignments.some((assignment) => assignment.status === "COMPLETED") &&
     mission.activeAssignmentIds.length === 0;
 
-  const llmDecision = await decideNextStep(mission, allowComplete);
+  const usedKnowledge = await gatherRelevantKnowledge(mission);
+  const llmDecision = await decideNextStep(mission, allowComplete, usedKnowledge);
   const now = new Date().toISOString();
 
   const decision: DirectorDecision = {
@@ -256,5 +317,5 @@ export async function runDirectorStep({
     payload: { decision: decision as unknown as JsonValue },
   });
 
-  return { mission: updated, decision };
+  return { mission: updated, decision, usedKnowledge };
 }

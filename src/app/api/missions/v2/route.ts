@@ -381,7 +381,7 @@ async function handleAutoStep(body: AutoStepBody, ownerId: string) {
   assertOwnership(mission, ownerId);
 
   if (mission.status === "ACTIVE") {
-    const { mission: afterDecision, decision } = await runDirectorStep({
+    const { mission: afterDecision, decision, usedKnowledge } = await runDirectorStep({
       engine,
       missionId: mission.missionId,
     });
@@ -390,7 +390,7 @@ async function handleAutoStep(body: AutoStepBody, ownerId: string) {
     if (decision.decisionType !== "DISPATCH_ROLE") {
       // COMPLETE_MISSION (of een ander eindresultaat) — niets meer om
       // meteen uit te voeren.
-      return NextResponse.json({ mission, decision });
+      return NextResponse.json({ mission, decision, usedKnowledge });
     }
 
     const resolved = resolveActiveAssignmentId(
@@ -405,7 +405,7 @@ async function handleAutoStep(body: AutoStepBody, ownerId: string) {
       assignmentId: resolved.assignmentId,
     });
 
-    return NextResponse.json({ mission: afterRole, decision, roleOutput });
+    return NextResponse.json({ mission: afterRole, decision, roleOutput, usedKnowledge });
   }
 
   if (mission.status === "WAITING_FOR_ROLE") {
