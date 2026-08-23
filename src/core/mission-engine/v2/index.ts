@@ -5,6 +5,7 @@ export * from "./engine-factory";
 export * from "./events";
 export * from "./firestore-store";
 export * from "./mission";
+export * from "./mission-factory";
 export * from "./role-runtime";
 export * from "./state-machine";
 export * from "./store";
