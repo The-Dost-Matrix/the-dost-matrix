@@ -28,6 +28,11 @@ const mainNavigation = [
     disabled: true,
   },
   {
+    label: "Mission Engine V2",
+    href: "/dashboard/missions-v2",
+    icon: "⚙",
+  },
+  {
     label: "Director",
     href: "/dashboard/director",
     icon: "⌘",

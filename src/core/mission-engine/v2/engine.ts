@@ -49,6 +49,18 @@ export class MissionEngine {
     private readonly ids: MissionIdFactory,
   ) {}
 
+  /**
+   * Alleen-lezen opvraging van de huidige staat van een mission.
+   * Muteert niets en telt niet mee voor command-idempotentie — bedoeld
+   * voor callers (bv. API-routes of een Role Runtime) die eerst de actuele
+   * staat nodig hebben (zoals de huidige `version`) voordat ze een command
+   * samenstellen.
+   */
+  async getMission(missionId: EntityId): Promise<MissionV2 | null> {
+    const mission = await this.store.findMission(missionId);
+    return mission ? structuredClone(mission) : null;
+  }
+
   async create(command: CommandEnvelope<CreateMissionPayload>): Promise<MissionV2> {
     this.assertCommand(command, "CreateMission");
     await this.assertNotProcessed(command.commandId);

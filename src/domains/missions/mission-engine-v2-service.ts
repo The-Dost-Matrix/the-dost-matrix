@@ -1,0 +1,93 @@
+import type { User } from "firebase/auth";
+import type { MissionV2 } from "@/core/mission-engine/v2/mission";
+
+/**
+ * Client-side wrappers rond /api/missions/v2. Net als bij chat-service.ts:
+ * er wordt hier nooit rechtstreeks met Firestore of een LLM-provider
+ * gepraat vanuit de browser — alles loopt via de server-only API-route.
+ */
+
+async function callMissionEngineApi<TResponse>(
+  user: User,
+  init: RequestInit,
+): Promise<TResponse> {
+  const idToken = await user.getIdToken();
+
+  const response = await fetch("/api/missions/v2", {
+    ...init,
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${idToken}`,
+      ...init.headers,
+    },
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.error ?? "Aanvraag aan de Mission Engine is mislukt.");
+  }
+
+  return data as TResponse;
+}
+
+export interface CreateMissionV2Input {
+  title: string;
+  objective: string;
+  successCriteria: string[];
+  constraints?: string[];
+}
+
+export async function createMissionV2(
+  user: User,
+  input: CreateMissionV2Input,
+): Promise<MissionV2> {
+  const data = await callMissionEngineApi<{ mission: MissionV2 }>(user, {
+    method: "POST",
+    body: JSON.stringify({ action: "create", ...input }),
+  });
+
+  return data.mission;
+}
+
+export async function getMissionV2(user: User, missionId: string): Promise<MissionV2> {
+  const idToken = await user.getIdToken();
+
+  const response = await fetch(
+    `/api/missions/v2?missionId=${encodeURIComponent(missionId)}`,
+    {
+      headers: { authorization: `Bearer ${idToken}` },
+      cache: "no-store",
+    },
+  );
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.error ?? "Mission ophalen is mislukt.");
+  }
+
+  return data.mission as MissionV2;
+}
+
+export async function dispatchMissionV2(
+  user: User,
+  missionId: string,
+): Promise<MissionV2> {
+  const data = await callMissionEngineApi<{ mission: MissionV2 }>(user, {
+    method: "POST",
+    body: JSON.stringify({ action: "dispatch", missionId }),
+  });
+
+  return data.mission;
+}
+
+export async function runMissionRoleV2(
+  user: User,
+  missionId: string,
+): Promise<{ mission: MissionV2; roleOutput: string }> {
+  return callMissionEngineApi<{ mission: MissionV2; roleOutput: string }>(user, {
+    method: "POST",
+    body: JSON.stringify({ action: "run-role", missionId }),
+  });
+}
