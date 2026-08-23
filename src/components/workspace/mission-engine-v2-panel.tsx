@@ -167,22 +167,30 @@ export function MissionEngineV2Panel() {
   const canAutoStep = mission && AUTO_STEP_STATUSES.includes(mission.status);
 
   return (
-    <section className="panel command-center-intro">
-      <div>
-        <p className="eyebrow">MISSION ENGINE V2</p>
-        <h1>Mission Engine — zelfstandige Director</h1>
-        <p className="muted">
-          Missies worden echt opgeslagen (Firestore). Eén knop laat de
-          Director zelf beslissen wat de eerstvolgende stap is — en voert
-          die (bij een dispatch naar de builder-rol) meteen ook uit via een
-          echte LLM-aanroep. De Director gebruikt daarbij ook goedgekeurde
-          kennis uit je Second Brain als achtergrond.
-        </p>
-      </div>
+    <>
+      <section className="panel command-center-intro">
+        <div>
+          <p className="eyebrow">MISSION ENGINE V2</p>
+          <h1>Mission Engine — zelfstandige Director</h1>
+          <p className="muted">
+            Missies worden echt opgeslagen (Firestore). Eén knop laat de
+            Director zelf beslissen wat de eerstvolgende stap is — en voert
+            die (bij een dispatch naar de builder-rol) meteen ook uit via een
+            echte LLM-aanroep. De Director gebruikt daarbij ook goedgekeurde
+            kennis uit je Second Brain als achtergrond.
+          </p>
+        </div>
+      </section>
 
       {recentMissions.length > 1 && (
-        <div className="command-center-quick-command">
-          <p className="eyebrow">RECENTE MISSIES</p>
+        <section className="panel">
+          <div className="section-title">
+            <div>
+              <p className="eyebrow">RECENTE MISSIES</p>
+              <h3>Kies een missie</h3>
+            </div>
+          </div>
+
           <div className="mission-list">
             {recentMissions.map((candidate) => (
               <button
@@ -198,10 +206,10 @@ export function MissionEngineV2Panel() {
               </button>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
-      <div className="command-center-main-grid">
+      <section className="command-center-main-grid">
         <div className="panel">
           <div className="section-title">
             <div>
@@ -315,9 +323,9 @@ export function MissionEngineV2Panel() {
             </div>
           )}
         </div>
-      </div>
+      </section>
 
       {error && <p className="error">{error}</p>}
-    </section>
+    </>
   );
 }
