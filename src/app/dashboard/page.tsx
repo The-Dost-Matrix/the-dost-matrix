@@ -2,6 +2,7 @@
 
 import { SecondBrainPanel } from "@/components/workspace/second-brain-panel";
 import { DirectorChat } from "@/components/workspace/director-chat";
+import { MissionEngineV2Panel } from "@/components/workspace/mission-engine-v2-panel";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -93,6 +94,8 @@ export default function DashboardPage() {
 
         <DirectorChat />
       </section>
+
+      <MissionEngineV2Panel />
 
       {error && <p className="error">{error}</p>}
     </>

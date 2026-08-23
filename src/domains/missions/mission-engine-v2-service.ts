@@ -52,6 +52,26 @@ export async function createMissionV2(
   return data.mission;
 }
 
+export async function listMissionsV2(user: User, limit = 5): Promise<MissionV2[]> {
+  const idToken = await user.getIdToken();
+
+  const response = await fetch(
+    `/api/missions/v2?list=1&limit=${encodeURIComponent(String(limit))}`,
+    {
+      headers: { authorization: `Bearer ${idToken}` },
+      cache: "no-store",
+    },
+  );
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.error ?? "Missies ophalen is mislukt.");
+  }
+
+  return (data.missions as MissionV2[]) ?? [];
+}
+
 export async function getMissionV2(user: User, missionId: string): Promise<MissionV2> {
   const idToken = await user.getIdToken();
 

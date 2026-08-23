@@ -173,3 +173,31 @@ export class FirestoreMissionEngineStore implements MissionEngineStore {
     );
   }
 }
+
+/**
+ * Geeft de meest recente missies van een eigenaar terug, nieuwste eerst.
+ *
+ * Dit hoort bewust niet bij MissionEngineStore (die interface gaat over
+ * command-verwerking van de state machine, niet over lijst-weergaven voor
+ * de UI) — net als de directe leesfuncties in knowledge-repository.ts is
+ * dit een simpele, losstaande Firestore-query.
+ *
+ * Let op: dit combineert een gelijkheidsfilter (ownerId) met een sortering
+ * op een ander veld (updatedAt). Firestore kan daarvoor om een eenmalige
+ * samengestelde index vragen — de foutmelding bevat dan een link die de
+ * juiste index automatisch aanmaakt (hetzelfde patroon als bij de bestaande
+ * V1-missielijst op het hoofdscherm).
+ */
+export async function listMissionsForOwner(
+  ownerId: EntityId,
+  limit = 5,
+): Promise<MissionV2[]> {
+  const snapshot = await adminDb
+    .collection(MISSIONS_COLLECTION)
+    .where("ownerId", "==", ownerId)
+    .orderBy("updatedAt", "desc")
+    .limit(limit)
+    .get();
+
+  return snapshot.docs.map((doc) => doc.data() as MissionV2);
+}

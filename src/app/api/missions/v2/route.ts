@@ -8,6 +8,7 @@ import type {
 } from "@/core/mission-engine/v2/commands";
 import { runDirectorStep } from "@/core/mission-engine/v2/director-runtime";
 import { createMissionEngineV2 } from "@/core/mission-engine/v2/engine-factory";
+import { listMissionsForOwner } from "@/core/mission-engine/v2/firestore-store";
 import type { MissionRiskLevel, MissionV2 } from "@/core/mission-engine/v2/mission";
 import { executeRoleAssignment } from "@/core/mission-engine/v2/role-runtime";
 import type { DirectorDecision, JsonValue } from "@/core/contracts/v2";
@@ -73,6 +74,20 @@ export async function GET(request: NextRequest) {
   }
 
   const missionId = request.nextUrl.searchParams.get("missionId");
+  const listParam = request.nextUrl.searchParams.get("list");
+
+  if (listParam) {
+    const parsedLimit = Number(request.nextUrl.searchParams.get("limit"));
+    const limit =
+      Number.isInteger(parsedLimit) && parsedLimit > 0 && parsedLimit <= 20 ? parsedLimit : 5;
+
+    try {
+      const missions = await listMissionsForOwner(ownerId, limit);
+      return NextResponse.json({ missions }, { headers: { "cache-control": "no-store" } });
+    } catch (error) {
+      return NextResponse.json({ error: publicError(error) }, { status: 400 });
+    }
+  }
 
   if (!missionId) {
     return NextResponse.json(
