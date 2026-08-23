@@ -88,13 +88,14 @@ export default function DashboardPage() {
       </section>
 
       <section className="command-center-main-grid command-center-main-grid--chat-focus command-center-main-grid--without-missions">
-        <div className="command-center-left-column">
+        <div className="command-center-left-column command-center-left-column--single">
           <SecondBrainPanel />
-          <MissionEngineV2Panel variant="compact" />
         </div>
 
         <DirectorChat />
       </section>
+
+      <MissionEngineV2Panel variant="compact" />
 
       {error && <p className="error">{error}</p>}
     </>
