@@ -1,46 +1,78 @@
-import type { ActorRef, CommandEnvelope, DirectorDecision, DomainEventEnvelope, EntityId, IsoDateTime, JsonValue, RoleResult } from "@/core/contracts/v2";
-import { assertCommandEnvelope, assertDirectorDecision, assertRoleResult } from "@/core/contracts/v2";
-import type { CreateMissionPayload } from "./commands";
+import type {
+  ActorRef,
+  CommandEnvelope,
+  DirectorDecision,
+  DomainEventEnvelope,
+  EntityId,
+  JsonValue,
+  RoleResult,
+} from "@/core/contracts/v2";
+import {
+  assertCommandEnvelope,
+  assertDirectorDecision,
+  assertNonEmptyString,
+  assertRoleResult,
+} from "@/core/contracts/v2";
+import type {
+  ApplyDirectorDecisionPayload,
+  CreateMissionPayload,
+  EvaluateCriterionPayload,
+  ReasonPayload,
+  RecordApprovalPayload,
+  RecordOwnerInputPayload,
+  RecordRoleResultPayload,
+} from "./commands";
 import type { MissionEventPayload, MissionEventType } from "./events";
-import type { MissionV2, MissionStatus } from "./mission";
-import { assertMission } from "./mission";
-import type { MissionV2Repository } from "./repository";
-import { MissionNotFoundError } from "./repository";
+import {
+  assertMission,
+  hasPassedAllCriteria,
+  type MissionAssignmentRecord,
+  type MissionStatus,
+  type MissionV2,
+} from "./mission";
 import { assertMissionTransition } from "./state-machine";
+import type { MissionEngineStore } from "./store";
+import { DuplicateCommandError, MissionNotFoundError } from "./store";
 
-export interface MissionEngineClock { now(): IsoDateTime; }
-export interface MissionEngineIds { nextId(prefix: string): EntityId; }
-export interface MissionEventPublisher { publish(event: DomainEventEnvelope<MissionEventPayload>): Promise<void>; }
+export interface MissionClock {
+  now(): string;
+}
 
-export class SystemClock implements MissionEngineClock { now(): IsoDateTime { return new Date().toISOString(); } }
-export class RandomMissionIds implements MissionEngineIds { nextId(prefix: string): EntityId { return `${prefix}_${crypto.randomUUID()}`; } }
+export interface MissionIdFactory {
+  nextId(prefix: string): EntityId;
+}
 
 export class MissionEngine {
   constructor(
-    private readonly repository: MissionV2Repository,
-    private readonly publisher: MissionEventPublisher,
-    private readonly clock: MissionEngineClock = new SystemClock(),
-    private readonly ids: MissionEngineIds = new RandomMissionIds(),
+    private readonly store: MissionEngineStore,
+    private readonly clock: MissionClock,
+    private readonly ids: MissionIdFactory,
   ) {}
 
-  async create(command: CommandEnvelope<CreateMissionPayload & JsonValue>): Promise<MissionV2> {
-    assertCommandEnvelope(command);
+  async create(command: CommandEnvelope<CreateMissionPayload>): Promise<MissionV2> {
+    this.assertCommand(command, "CreateMission");
+    await this.assertNotProcessed(command.commandId);
     const now = this.clock.now();
-    const payload = command.payload;
     const mission: MissionV2 = {
       missionId: command.targetId,
-      ownerId: payload.ownerId,
-      projectId: payload.projectId,
-      goalRefs: payload.goalRefs,
-      title: payload.title,
-      objective: payload.objective,
+      ownerId: command.payload.ownerId,
+      projectId: command.payload.projectId,
+      goalRefs: [...command.payload.goalRefs],
+      title: command.payload.title,
+      objective: command.payload.objective,
       status: "DRAFT",
-      priority: payload.priority,
-      riskLevel: payload.riskLevel,
-      budget: payload.budget,
+      priority: command.payload.priority,
+      riskLevel: command.payload.riskLevel,
+      budget: { ...command.payload.budget },
       spentCost: 0,
-      successCriteria: payload.successCriteria,
-      constraints: payload.constraints,
+      successCriteria: command.payload.successCriteria.map((description, index) => ({
+        criterionId: `${command.targetId}:criterion:${index + 1}`,
+        description,
+        status: "PENDING",
+        evidenceRefs: [],
+      })),
+      constraints: [...command.payload.constraints],
+      assignments: [],
       activeAssignmentIds: [],
       ownerApprovalState: "NOT_REQUIRED",
       version: 1,
@@ -48,113 +80,347 @@ export class MissionEngine {
       updatedAt: now,
     };
     assertMission(mission);
-    await this.repository.create(mission);
-    await this.publish(command, mission, "mission.created");
-    return mission;
+    await this.store.commitCreate(command.commandId, {
+      mission,
+      event: this.event(command, mission, "mission.created", null),
+    });
+    return structuredClone(mission);
   }
 
-  async markReady(command: CommandEnvelope<JsonValue>): Promise<MissionV2> { return this.transition(command, "READY", "mission.ready"); }
-  async activate(command: CommandEnvelope<JsonValue>): Promise<MissionV2> { return this.transition(command, "ACTIVE", "mission.activated"); }
-  async pause(command: CommandEnvelope<JsonValue>): Promise<MissionV2> { return this.transition(command, "PAUSED", "mission.state_changed"); }
-  async resume(command: CommandEnvelope<JsonValue>): Promise<MissionV2> { return this.transition(command, "ACTIVE", "mission.state_changed"); }
-
-  async applyDirectorDecision(command: CommandEnvelope<{ decision: DirectorDecision } & JsonValue>): Promise<MissionV2> {
-    assertCommandEnvelope(command);
-    assertDirectorDecision(command.payload.decision);
-    const decision = command.payload.decision;
-    const mission = await this.load(command.targetId);
-    if (decision.missionId !== mission.missionId) throw new Error("Director-besluit hoort bij een andere mission.");
-
-    const target = this.statusForDecision(decision);
-    const updated = this.withTransition(mission, target, command.expectedTargetVersion);
-    updated.currentDecisionId = decision.decisionId;
-    if (decision.decisionType === "REQUEST_APPROVAL") updated.ownerApprovalState = "PENDING";
-    await this.repository.save(updated, command.expectedTargetVersion);
-    await this.publish(command, updated, this.eventForDecision(decision), mission.status);
-    return updated;
+  async markReady(command: CommandEnvelope<Record<string, never>>): Promise<MissionV2> {
+    return this.transition(command, "MarkMissionReady", "READY", "mission.ready");
   }
 
-  async recordRoleResult(command: CommandEnvelope<{ result: RoleResult } & JsonValue>): Promise<MissionV2> {
-    assertCommandEnvelope(command);
-    assertRoleResult(command.payload.result);
-    const mission = await this.load(command.targetId);
-    const result = command.payload.result;
-    if (result.missionId !== mission.missionId) throw new Error("Rolresultaat hoort bij een andere mission.");
-    const updated = this.withTransition(mission, result.status === "FAILED" ? "REPLANNING" : "ACTIVE", command.expectedTargetVersion);
-    updated.activeAssignmentIds = updated.activeAssignmentIds.filter((id) => id !== result.assignmentId);
-    if (result.usage.cost) updated.spentCost += result.usage.cost;
-    assertMission(updated);
-    await this.repository.save(updated, command.expectedTargetVersion);
-    await this.publish(command, updated, "mission.state_changed", mission.status);
-    return updated;
+  async activate(command: CommandEnvelope<Record<string, never>>): Promise<MissionV2> {
+    return this.transition(command, "ActivateMission", "ACTIVE", "mission.activated");
   }
 
-  async complete(command: CommandEnvelope<JsonValue>): Promise<MissionV2> {
-    const mission = await this.load(command.targetId);
-    if (mission.activeAssignmentIds.length > 0) throw new Error("Mission heeft nog actieve roltoewijzingen.");
-    if (mission.ownerApprovalState === "PENDING" || mission.ownerApprovalState === "REJECTED") throw new Error("Mission kan niet worden voltooid zonder geldige goedkeuring.");
-    return this.transition(command, "COMPLETED", "mission.completed", { completedAt: this.clock.now() });
-  }
+  async applyDirectorDecision(
+    command: CommandEnvelope<ApplyDirectorDecisionPayload>,
+  ): Promise<MissionV2> {
+    this.assertCommand(command, "ApplyDirectorDecision");
+    const decision = command.payload.decision as unknown as DirectorDecision;
+    assertDirectorDecision(decision);
+    const mission = await this.loadForUpdate(command);
+    if (decision.missionId !== mission.missionId) {
+      throw new Error("Director-besluit hoort bij een andere mission.");
+    }
+    if (["DRAFT", "READY", "PAUSED", "COMPLETED", "FAILED", "CANCELLED"].includes(mission.status)) {
+      throw new Error(`Director-besluit is niet toegestaan vanuit ${mission.status}.`);
+    }
 
-  async fail(command: CommandEnvelope<{ reason: string } & JsonValue>): Promise<MissionV2> {
-    return this.transition(command, "FAILED", "mission.failed", { failureReason: command.payload.reason });
-  }
+    const previousStatus = mission.status;
+    mission.currentDecisionId = decision.decisionId;
+    let eventType: MissionEventType = "mission.decision_recorded";
+    let details: Partial<MissionEventPayload> = { decisionId: decision.decisionId };
 
-  async cancel(command: CommandEnvelope<{ reason: string } & JsonValue>): Promise<MissionV2> {
-    return this.transition(command, "CANCELLED", "mission.cancelled", { cancellationReason: command.payload.reason });
-  }
-
-  private async transition(command: CommandEnvelope<JsonValue>, status: MissionStatus, eventType: MissionEventType, patch: Partial<MissionV2> = {}): Promise<MissionV2> {
-    assertCommandEnvelope(command);
-    const mission = await this.load(command.targetId);
-    const updated = Object.assign(this.withTransition(mission, status, command.expectedTargetVersion), patch);
-    await this.repository.save(updated, command.expectedTargetVersion);
-    await this.publish(command, updated, eventType, mission.status);
-    return updated;
-  }
-
-  private withTransition(mission: MissionV2, status: MissionStatus, expectedVersion: number): MissionV2 {
-    if (mission.version !== expectedVersion) throw new Error(`Versieconflict: verwacht ${expectedVersion}, gevonden ${mission.version}.`);
-    assertMissionTransition(mission.status, status);
-    return { ...mission, status, version: mission.version + 1, updatedAt: this.clock.now() };
-  }
-
-  private async load(id: EntityId): Promise<MissionV2> {
-    const mission = await this.repository.findById(id);
-    if (!mission) throw new MissionNotFoundError(`Mission ${id} bestaat niet.`);
-    return mission;
-  }
-
-  private statusForDecision(decision: DirectorDecision): MissionStatus {
     switch (decision.decisionType) {
-      case "DISPATCH_ROLE": return "WAITING_FOR_ROLE";
-      case "REQUEST_OWNER_INPUT": return "WAITING_FOR_OWNER";
-      case "REQUEST_APPROVAL": return "WAITING_FOR_APPROVAL";
-      case "REPLAN": return "REPLANNING";
-      case "PAUSE_MISSION": return "PAUSED";
-      case "COMPLETE_MISSION": return "COMPLETED";
-      case "CANCEL_MISSION": return "CANCELLED";
+      case "DISPATCH_ROLE": {
+        const assignmentId = this.ids.nextId("assignment");
+        const now = this.clock.now();
+        const assignment: MissionAssignmentRecord = {
+          assignmentId,
+          decisionId: decision.decisionId,
+          roleId: decision.assignedRole!,
+          status: "ACTIVE",
+          objective: decision.nextAction,
+          successCriteria: [...decision.successCriteria],
+          createdAt: now,
+          updatedAt: now,
+        };
+        mission.assignments.push(assignment);
+        mission.activeAssignmentIds.push(assignmentId);
+        this.changeStatus(mission, "WAITING_FOR_ROLE");
+        eventType = "mission.role_dispatched";
+        details = { ...details, assignmentId };
+        break;
+      }
+      case "REQUEST_OWNER_INPUT": {
+        const requestId = this.ids.nextId("input");
+        mission.pendingOwnerInput = {
+          requestId,
+          question: decision.nextAction,
+          requestedAt: this.clock.now(),
+        };
+        this.changeStatus(mission, "WAITING_FOR_OWNER");
+        eventType = "mission.owner_input_requested";
+        details = { ...details, requestId };
+        break;
+      }
+      case "REQUEST_APPROVAL": {
+        const approvalId = this.ids.nextId("approval");
+        mission.pendingApproval = {
+          approvalId,
+          action: decision.nextAction,
+          reason: decision.reason,
+          requestedAt: this.clock.now(),
+        };
+        mission.ownerApprovalState = "PENDING";
+        this.changeStatus(mission, "WAITING_FOR_APPROVAL");
+        eventType = "mission.approval_requested";
+        details = { ...details, approvalId };
+        break;
+      }
+      case "REPLAN":
+        this.changeStatus(mission, "REPLANNING");
+        eventType = "mission.replanning_requested";
+        break;
+      case "PAUSE_MISSION":
+        this.changeStatus(mission, "PAUSED");
+        eventType = "mission.paused";
+        break;
+      case "COMPLETE_MISSION":
+        this.assertCompletable(mission);
+        this.changeStatus(mission, "COMPLETED");
+        mission.completedAt = this.clock.now();
+        eventType = "mission.completed";
+        break;
+      case "CANCEL_MISSION":
+        this.changeStatus(mission, "CANCELLED");
+        mission.cancellationReason = decision.reason;
+        eventType = "mission.cancelled";
+        break;
       case "STORE_KNOWLEDGE":
-      case "EVALUATE_RESULT": return "ACTIVE";
+      case "EVALUATE_RESULT":
+        break;
+    }
+
+    return this.commit(command, mission, previousStatus, eventType, details);
+  }
+
+  async recordRoleResult(
+    command: CommandEnvelope<RecordRoleResultPayload>,
+  ): Promise<MissionV2> {
+    this.assertCommand(command, "RecordRoleResult");
+    const result = command.payload.result as unknown as RoleResult;
+    assertRoleResult(result);
+    const mission = await this.loadForUpdate(command);
+    if (result.missionId !== mission.missionId) {
+      throw new Error("Rolresultaat hoort bij een andere mission.");
+    }
+    const assignment = mission.assignments.find(
+      (candidate) => candidate.assignmentId === result.assignmentId,
+    );
+    if (!assignment || assignment.status !== "ACTIVE") {
+      throw new Error(`Assignment ${result.assignmentId} is niet actief.`);
+    }
+
+    const previousStatus = mission.status;
+    assignment.resultId = result.resultId;
+    assignment.updatedAt = this.clock.now();
+    assignment.status = result.status;
+    mission.activeAssignmentIds = mission.activeAssignmentIds.filter(
+      (id) => id !== result.assignmentId,
+    );
+    mission.spentCost += result.usage.cost ?? 0;
+
+    switch (result.status) {
+      case "COMPLETED":
+        this.changeStatus(mission, "ACTIVE");
+        break;
+      case "FAILED":
+      case "CANCELLED":
+        this.changeStatus(mission, "REPLANNING");
+        break;
+      case "WAITING_FOR_INPUT": {
+        const requestId = this.ids.nextId("input");
+        mission.pendingOwnerInput = {
+          requestId,
+          question: result.uncertainties[0] ?? result.summary,
+          requestedAt: this.clock.now(),
+        };
+        this.changeStatus(mission, "WAITING_FOR_OWNER");
+        break;
+      }
+    }
+
+    return this.commit(command, mission, previousStatus, "mission.role_result_recorded", {
+      assignmentId: result.assignmentId,
+      resultId: result.resultId,
+    });
+  }
+
+  async recordOwnerInput(
+    command: CommandEnvelope<RecordOwnerInputPayload>,
+  ): Promise<MissionV2> {
+    this.assertCommand(command, "RecordOwnerInput");
+    assertNonEmptyString(command.payload.response, "response");
+    const mission = await this.loadForUpdate(command);
+    if (!mission.pendingOwnerInput || mission.pendingOwnerInput.requestId !== command.payload.requestId) {
+      throw new Error("Geen passend open inputverzoek gevonden.");
+    }
+    const previousStatus = mission.status;
+    const requestId = mission.pendingOwnerInput.requestId;
+    delete mission.pendingOwnerInput;
+    this.changeStatus(mission, "ACTIVE");
+    return this.commit(command, mission, previousStatus, "mission.owner_input_recorded", {
+      requestId,
+    });
+  }
+
+  async recordApproval(
+    command: CommandEnvelope<RecordApprovalPayload>,
+  ): Promise<MissionV2> {
+    this.assertCommand(command, "RecordApproval");
+    const mission = await this.loadForUpdate(command);
+    if (!mission.pendingApproval || mission.pendingApproval.approvalId !== command.payload.approvalId) {
+      throw new Error("Geen passend open goedkeuringsverzoek gevonden.");
+    }
+    const previousStatus = mission.status;
+    const approvalId = mission.pendingApproval.approvalId;
+    delete mission.pendingApproval;
+    mission.ownerApprovalState = command.payload.approved ? "APPROVED" : "REJECTED";
+    this.changeStatus(mission, command.payload.approved ? "ACTIVE" : "REPLANNING");
+    return this.commit(command, mission, previousStatus, "mission.approval_recorded", {
+      approvalId,
+      reason: command.payload.reason ?? undefined,
+    });
+  }
+
+  async evaluateCriterion(
+    command: CommandEnvelope<EvaluateCriterionPayload>,
+  ): Promise<MissionV2> {
+    this.assertCommand(command, "EvaluateMissionCriterion");
+    const mission = await this.loadForUpdate(command);
+    const criterion = mission.successCriteria.find(
+      (candidate) => candidate.criterionId === command.payload.criterionId,
+    );
+    if (!criterion) {
+      throw new Error(`Onbekend succescriterium: ${command.payload.criterionId}`);
+    }
+    const previousStatus = mission.status;
+    criterion.status = command.payload.passed ? "PASSED" : "FAILED";
+    criterion.evidenceRefs = [...command.payload.evidenceRefs];
+    criterion.evaluatedAt = this.clock.now();
+    return this.commit(command, mission, previousStatus, "mission.criterion_evaluated", {
+      criterionId: criterion.criterionId,
+    });
+  }
+
+  async pause(command: CommandEnvelope<ReasonPayload>): Promise<MissionV2> {
+    assertNonEmptyString(command.payload.reason, "reason");
+    return this.transition(command, "PauseMission", "PAUSED", "mission.paused", {
+      reason: command.payload.reason ?? undefined,
+    });
+  }
+
+  async resume(command: CommandEnvelope<Record<string, never>>): Promise<MissionV2> {
+    this.assertCommand(command, "ResumeMission");
+    const mission = await this.loadForUpdate(command);
+    const previousStatus = mission.status;
+    const target: MissionStatus = mission.currentDecisionId ? "REPLANNING" : "READY";
+    this.changeStatus(mission, target);
+    return this.commit(command, mission, previousStatus, "mission.resumed");
+  }
+
+  async fail(command: CommandEnvelope<ReasonPayload>): Promise<MissionV2> {
+    assertNonEmptyString(command.payload.reason, "reason");
+    const mission = await this.loadForUpdateWithType(command, "FailMission");
+    const previousStatus = mission.status;
+    this.changeStatus(mission, "FAILED");
+    mission.failureReason = command.payload.reason;
+    return this.commit(command, mission, previousStatus, "mission.failed", {
+      reason: command.payload.reason ?? undefined,
+    });
+  }
+
+  async cancel(command: CommandEnvelope<ReasonPayload>): Promise<MissionV2> {
+    assertNonEmptyString(command.payload.reason, "reason");
+    const mission = await this.loadForUpdateWithType(command, "CancelMission");
+    const previousStatus = mission.status;
+    this.changeStatus(mission, "CANCELLED");
+    mission.cancellationReason = command.payload.reason;
+    return this.commit(command, mission, previousStatus, "mission.cancelled", {
+      reason: command.payload.reason ?? undefined,
+    });
+  }
+
+  private async transition<TPayload extends JsonValue>(
+    command: CommandEnvelope<TPayload>,
+    commandType: string,
+    targetStatus: MissionStatus,
+    eventType: MissionEventType,
+    details: Partial<MissionEventPayload> = {},
+  ): Promise<MissionV2> {
+    this.assertCommand(command, commandType);
+    const mission = await this.loadForUpdate(command);
+    const previousStatus = mission.status;
+    this.changeStatus(mission, targetStatus);
+    return this.commit(command, mission, previousStatus, eventType, details);
+  }
+
+  private async loadForUpdate<TPayload extends JsonValue>(
+    command: CommandEnvelope<TPayload>,
+  ): Promise<MissionV2> {
+    await this.assertNotProcessed(command.commandId);
+    const mission = await this.store.findMission(command.targetId);
+    if (!mission) {
+      throw new MissionNotFoundError(`Mission ${command.targetId} bestaat niet.`);
+    }
+    if (mission.version !== command.expectedTargetVersion) {
+      throw new Error(
+        `Versieconflict: verwacht ${command.expectedTargetVersion}, gevonden ${mission.version}.`,
+      );
+    }
+    return mission;
+  }
+
+  private async loadForUpdateWithType<TPayload extends JsonValue>(
+    command: CommandEnvelope<TPayload>,
+    commandType: string,
+  ): Promise<MissionV2> {
+    this.assertCommand(command, commandType);
+    return this.loadForUpdate(command);
+  }
+
+  private async commit<TPayload extends JsonValue>(
+    command: CommandEnvelope<TPayload>,
+    mission: MissionV2,
+    previousStatus: MissionStatus,
+    eventType: MissionEventType,
+    details: Partial<MissionEventPayload> = {},
+  ): Promise<MissionV2> {
+    const expectedVersion = mission.version;
+    mission.version += 1;
+    mission.updatedAt = this.clock.now();
+    assertMission(mission);
+    await this.store.commitUpdate(command.commandId, expectedVersion, {
+      mission,
+      event: this.event(command, mission, eventType, previousStatus, details),
+    });
+    return structuredClone(mission);
+  }
+
+  private changeStatus(mission: MissionV2, targetStatus: MissionStatus): void {
+    assertMissionTransition(mission.status, targetStatus);
+    mission.status = targetStatus;
+  }
+
+  private assertCompletable(mission: MissionV2): void {
+    if (mission.activeAssignmentIds.length > 0) {
+      throw new Error("Mission heeft nog actieve assignments.");
+    }
+    if (mission.pendingOwnerInput || mission.pendingApproval) {
+      throw new Error("Mission heeft nog open owner-acties.");
+    }
+    if (mission.ownerApprovalState === "PENDING" || mission.ownerApprovalState === "REJECTED") {
+      throw new Error("Mission heeft geen geldige owner approval.");
+    }
+    if (!hasPassedAllCriteria(mission)) {
+      throw new Error("Niet alle succescriteria zijn behaald.");
     }
   }
 
-  private eventForDecision(decision: DirectorDecision): MissionEventType {
-    switch (decision.decisionType) {
-      case "DISPATCH_ROLE": return "mission.role_requested";
-      case "REQUEST_OWNER_INPUT": return "mission.owner_input_requested";
-      case "REQUEST_APPROVAL": return "mission.approval_requested";
-      case "REPLAN": return "mission.replanning_requested";
-      case "COMPLETE_MISSION": return "mission.completed";
-      case "CANCEL_MISSION": return "mission.cancelled";
-      default: return "mission.state_changed";
-    }
-  }
-
-  private async publish(command: CommandEnvelope<JsonValue>, mission: MissionV2, eventType: MissionEventType, previousStatus?: MissionStatus): Promise<void> {
-    const actor: ActorRef = command.actor;
-    await this.publisher.publish({
-      eventId: this.ids.nextId("evt"),
+  private event<TPayload extends JsonValue>(
+    command: CommandEnvelope<TPayload>,
+    mission: MissionV2,
+    eventType: MissionEventType,
+    previousStatus: MissionStatus | null,
+    details: Partial<MissionEventPayload> = {},
+  ): DomainEventEnvelope<MissionEventPayload> {
+    const now = this.clock.now();
+    return {
+      eventId: this.ids.nextId("event"),
       eventType,
       eventVersion: "1.0",
       aggregateType: "mission",
@@ -162,11 +428,32 @@ export class MissionEngine {
       aggregateVersion: mission.version,
       correlationId: command.correlationId,
       causationId: command.commandId,
-      actor,
-      occurredAt: this.clock.now(),
-      recordedAt: this.clock.now(),
-      payload: { missionId: mission.missionId, previousStatus: previousStatus ?? null, status: mission.status },
+      actor: command.actor as ActorRef,
+      occurredAt: now,
+      recordedAt: now,
+      payload: {
+        missionId: mission.missionId,
+        previousStatus,
+        status: mission.status,
+        ...details,
+      },
       metadata: {},
-    });
+    };
+  }
+
+  private assertCommand<TPayload extends JsonValue>(
+    command: CommandEnvelope<TPayload>,
+    expectedType: string,
+  ): void {
+    assertCommandEnvelope(command);
+    if (command.commandType !== expectedType) {
+      throw new Error(`Verwacht commandType ${expectedType}, ontvangen ${command.commandType}.`);
+    }
+  }
+
+  private async assertNotProcessed(commandId: EntityId): Promise<void> {
+    if (await this.store.hasProcessedCommand(commandId)) {
+      throw new DuplicateCommandError(`Command ${commandId} is al verwerkt.`);
+    }
   }
 }

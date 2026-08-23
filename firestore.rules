@@ -25,6 +25,19 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // chatMessages and knowledge are only ever written by the server
+    // (Admin SDK, via /api/chat) so that LLM/embedding calls never need
+    // secrets in the browser. The client may only read its own data.
+    match /chatMessages/{messageId} {
+      allow read: if ownsResource();
+      allow create, update, delete: if false;
+    }
+
+    match /knowledge/{entryId} {
+      allow read: if ownsResource();
+      allow create, update, delete: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

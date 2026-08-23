@@ -5,20 +5,22 @@ export const MISSION_EVENT_TYPES = [
   "mission.created",
   "mission.ready",
   "mission.activated",
-  "mission.state_changed",
-  "mission.role_requested",
+  "mission.role_dispatched",
+  "mission.role_result_recorded",
   "mission.owner_input_requested",
+  "mission.owner_input_recorded",
   "mission.approval_requested",
+  "mission.approval_recorded",
+  "mission.criterion_evaluated",
   "mission.replanning_requested",
+  "mission.paused",
+  "mission.resumed",
   "mission.completed",
   "mission.failed",
   "mission.cancelled",
+  "mission.decision_recorded",
 ] as const;
 
 export type MissionEventType = (typeof MISSION_EVENT_TYPES)[number];
 
-export interface MissionEventPayload extends Record<string, JsonValue> {
-  missionId: EntityId;
-  previousStatus: MissionStatus | null;
-  status: MissionStatus;
-}
+export type MissionEventPayload = Record<string, JsonValue>;
