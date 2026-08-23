@@ -17,10 +17,71 @@ import {
 import {
   createKnowledgeEntry,
 } from "@/core/repositories/knowledge-repository";
+import type { KnowledgeType } from "@/core/domain/knowledge/knowledge-entry";
 
 export const MAX_CHAT_CONTENT_LENGTH = 8_000;
 const MAX_MEMORY_CONTENT_LENGTH = 12_000;
 const MAX_CODEBASE_TREE_LENGTH = 24_000;
+
+/**
+ * Herkent of Director aan het einde van een antwoord een expliciet
+ * kennisvoorstel deed (zie SYSTEM_PROMPT: "Mogelijk kennisitem: ..."). Alleen
+ * wanneer dat blok aanwezig is en een titel bevat, slaan we iets op in de
+ * Second Brain — niet bij elk chatbericht. Dit voorkomt dat de
+ * goedkeuringswachtrij vervuilt met ruwe gesprekstranscripten die geen
+ * blijvende waarde hebben (smalltalk, tussenstappen, typecheckmeldingen).
+ */
+const KNOWLEDGE_PROPOSAL_HEADER = /mogelijk kennisitem\s*:?/i;
+
+interface KnowledgeProposal {
+  type?: string;
+  title: string;
+  reason: string;
+}
+
+function parseKnowledgeProposal(replyText: string): KnowledgeProposal | null {
+  const headerMatch = replyText.match(KNOWLEDGE_PROPOSAL_HEADER);
+  if (!headerMatch || headerMatch.index === undefined) return null;
+
+  const block = replyText.slice(headerMatch.index + headerMatch[0].length);
+
+  const typeMatch = block.match(/-\s*type\s*:\s*(.+)/i);
+  const titleMatch = block.match(/-\s*titel\s*:\s*(.+)/i);
+  const reasonMatch = block.match(/-\s*waarom relevant\s*:\s*(.+)/i);
+
+  const title = titleMatch?.[1]?.trim();
+  if (!title) return null;
+
+  return {
+    type: typeMatch?.[1]?.trim(),
+    title,
+    reason: reasonMatch?.[1]?.trim() ?? "",
+  };
+}
+
+const KNOWLEDGE_TYPE_VALUES: readonly KnowledgeType[] = [
+  "vision",
+  "goal",
+  "decision",
+  "architecture",
+  "project",
+  "process",
+  "preference",
+  "lesson",
+  "task",
+  "risk",
+  "open_question",
+  "person",
+  "company",
+  "fact",
+  "legacydocument",
+];
+
+function normalizeKnowledgeType(raw: string | undefined): KnowledgeType | undefined {
+  if (!raw) return undefined;
+  const normalized = raw.trim().toLowerCase().replace(/\s+/g, "_");
+  return KNOWLEDGE_TYPE_VALUES.find((value) => value === normalized);
+}
 
 const SYSTEM_PROMPT = `
 Je bent Director, de centrale AI-orkestrator van The Dost Matrix.
@@ -346,14 +407,23 @@ const contextBlock =
     MAX_MEMORY_CONTENT_LENGTH,
   );
 
+  // Alleen opslaan wanneer Director zelf een concreet kennisvoorstel deed
+  // (zie SYSTEM_PROMPT), niet bij elk bericht — zie parseKnowledgeProposal.
   // Reuse the query embedding instead of making a second paid API request.
-  await createKnowledgeEntry({
-    ownerId,
-    content: memoryContent,
-    source: "chat",
-    tags: ["conversation"],
-    embedding: queryEmbedding ?? [],
-  });
+  const knowledgeProposal = parseKnowledgeProposal(completion.content);
+
+  if (knowledgeProposal) {
+    await createKnowledgeEntry({
+      ownerId,
+      type: normalizeKnowledgeType(knowledgeProposal.type),
+      title: knowledgeProposal.title,
+      summary: knowledgeProposal.reason,
+      content: memoryContent,
+      source: "chat",
+      tags: ["conversation", "voorgesteld-door-director"],
+      embedding: queryEmbedding ?? [],
+    });
+  }
 
   await adminDb.collection("auditEvents").add({
     ownerId,
