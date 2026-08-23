@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 
 import { useAuth } from "@/domains/auth/auth-provider";
 import {
@@ -17,11 +18,17 @@ import type { KnowledgeEntry } from "@/core/domain/knowledge/knowledge-entry";
  * uitvoeren van die stap door de builder-rol (een echte LLM-aanroep), met
  * gebruik van goedgekeurde kennis uit het Second Brain als achtergrond.
  *
- * Losgetrokken uit de oorspronkelijke testpagina (/dashboard/missions-v2) tot
- * een herbruikbaar paneel, zodat Mission Engine V2 nu een vaste plek heeft op
- * het hoofdscherm (Command Center) én de standalone pagina blijft werken —
- * beide renderen exact dezelfde component, geen losse logica om uit elkaar te
- * laten lopen.
+ * Twee weergaven, via de `variant`-prop, met dezelfde onderliggende logica
+ * (geen losse code om uit elkaar te laten lopen):
+ * - "full"    → de oorspronkelijke testpagina (/dashboard/missions-v2):
+ *               uitleg, missielijst én het handmatige aanmaakformulier.
+ * - "compact" → het hoofdscherm (Command Center): alleen een kort
+ *               statusoverzicht van de meest recente missie plus de
+ *               "volgende stap"-knop, zonder uitleg, lijst of formulier —
+ *               zodat het hoofdscherm rustig blijft. Voor het aanmaken van
+ *               een nieuwe missie verwijst dit naar de volledige pagina.
+ *               (Zodra de chat straks zelf missies aanmaakt, is dat
+ *               handmatige formulier daar toch niet meer de hoofdroute.)
  */
 
 const AUTO_STEP_STATUSES: MissionV2["status"][] = ["ACTIVE", "WAITING_FOR_ROLE"];
@@ -44,7 +51,11 @@ function statusLabel(status: MissionV2["status"]): string {
   return labels[status] ?? status;
 }
 
-export function MissionEngineV2Panel() {
+export interface MissionEngineV2PanelProps {
+  variant?: "full" | "compact";
+}
+
+export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelProps) {
   const { user } = useAuth();
 
   const [title, setTitle] = useState("");
@@ -166,6 +177,101 @@ export function MissionEngineV2Panel() {
 
   const canAutoStep = mission && AUTO_STEP_STATUSES.includes(mission.status);
 
+  // Gedeeld tussen beide weergaven: de missiekaart, de "volgende stap"-knop
+  // en de feedback van de laatste stap (Director-beslissing, gebruikte
+  // kennis, resultaat van de builder-rol).
+  const progressBody = loadingRecent ? (
+    <div className="empty">Missies worden geladen...</div>
+  ) : !mission ? (
+    <div className="empty">
+      {variant === "compact" ? (
+        <>
+          Nog geen mission aangemaakt.{" "}
+          <Link href="/dashboard/missions-v2">Maak er hier een aan</Link>.
+        </>
+      ) : (
+        "Nog geen mission aangemaakt."
+      )}
+    </div>
+  ) : (
+    <div className="mission-list">
+      <article className="mission-card">
+        <div>
+          <span className="mission-status">{statusLabel(mission.status)}</span>
+          <p>{mission.title}</p>
+          <small>{mission.objective}</small>
+        </div>
+
+        <small>
+          versie {mission.version} · {mission.assignments.length} toewijzing(en)
+        </small>
+      </article>
+
+      <div className="command-center-quick-command">
+        <button
+          className="primary"
+          type="button"
+          disabled={!canAutoStep || busy !== null}
+          onClick={() => void handleAutoStep()}
+        >
+          {busy === "auto-step" ? "Director is bezig..." : "Laat de Director de volgende stap zetten"}
+        </button>
+      </div>
+
+      {!canAutoStep && mission.status !== "COMPLETED" && (
+        <p className="muted">
+          De Director kan hier nog niet automatisch mee verder (status: {statusLabel(mission.status)}).
+        </p>
+      )}
+
+      {mission.status === "COMPLETED" && <p className="muted">Deze missie is voltooid.</p>}
+
+      {directorReason && (
+        <article className="knowledge-card">
+          <strong>Beslissing van de Director</strong>
+          <p>{directorReason}</p>
+        </article>
+      )}
+
+      {usedKnowledge.length > 0 && (
+        <article className="knowledge-card">
+          <strong>Gebruikte kennis uit het Second Brain</strong>
+          <ul>
+            {usedKnowledge.map((entry) => (
+              <li key={entry.id}>{entry.title?.trim() || "(zonder titel)"}</li>
+            ))}
+          </ul>
+        </article>
+      )}
+
+      {roleOutput && (
+        <article className="knowledge-card">
+          <strong>Resultaat van de builder-rol</strong>
+          <p>{roleOutput}</p>
+        </article>
+      )}
+    </div>
+  );
+
+  if (variant === "compact") {
+    return (
+      <section className="panel">
+        <div className="section-title">
+          <div>
+            <p className="eyebrow">MISSION ENGINE V2</p>
+            <h3>Director &amp; uitvoering</h3>
+          </div>
+
+          {mission && <span className="badge">{statusLabel(mission.status)}</span>}
+        </div>
+
+        {progressBody}
+
+        {error && <p className="error">{error}</p>}
+      </section>
+    );
+  }
+
   return (
     <>
       <section className="panel command-center-intro">
@@ -254,74 +360,7 @@ export function MissionEngineV2Panel() {
             {mission && <span className="badge">{statusLabel(mission.status)}</span>}
           </div>
 
-          {loadingRecent ? (
-            <div className="empty">Missies worden geladen...</div>
-          ) : !mission ? (
-            <div className="empty">Nog geen mission aangemaakt.</div>
-          ) : (
-            <div className="mission-list">
-              <article className="mission-card">
-                <div>
-                  <span className="mission-status">{statusLabel(mission.status)}</span>
-                  <p>{mission.title}</p>
-                  <small>{mission.objective}</small>
-                </div>
-
-                <small>
-                  versie {mission.version} · {mission.assignments.length} toewijzing(en)
-                </small>
-              </article>
-
-              <div className="command-center-quick-command">
-                <button
-                  className="primary"
-                  type="button"
-                  disabled={!canAutoStep || busy !== null}
-                  onClick={() => void handleAutoStep()}
-                >
-                  {busy === "auto-step"
-                    ? "Director is bezig..."
-                    : "Laat de Director de volgende stap zetten"}
-                </button>
-              </div>
-
-              {!canAutoStep && mission.status !== "COMPLETED" && (
-                <p className="muted">
-                  De Director kan hier nog niet automatisch mee verder (status:{" "}
-                  {statusLabel(mission.status)}).
-                </p>
-              )}
-
-              {mission.status === "COMPLETED" && (
-                <p className="muted">Deze missie is voltooid.</p>
-              )}
-
-              {directorReason && (
-                <article className="knowledge-card">
-                  <strong>Beslissing van de Director</strong>
-                  <p>{directorReason}</p>
-                </article>
-              )}
-
-              {usedKnowledge.length > 0 && (
-                <article className="knowledge-card">
-                  <strong>Gebruikte kennis uit het Second Brain</strong>
-                  <ul>
-                    {usedKnowledge.map((entry) => (
-                      <li key={entry.id}>{entry.title?.trim() || "(zonder titel)"}</li>
-                    ))}
-                  </ul>
-                </article>
-              )}
-
-              {roleOutput && (
-                <article className="knowledge-card">
-                  <strong>Resultaat van de builder-rol</strong>
-                  <p>{roleOutput}</p>
-                </article>
-              )}
-            </div>
-          )}
+          {progressBody}
         </div>
       </section>
 
