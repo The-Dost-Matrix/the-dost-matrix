@@ -77,10 +77,43 @@ const KNOWLEDGE_TYPE_VALUES: readonly KnowledgeType[] = [
   "legacydocument",
 ];
 
+function stripToLetters(value: string): string {
+  return value.toLowerCase().replace(/[^a-z]/g, "");
+}
+
+const KNOWLEDGE_TYPE_BY_NORMALIZED: Readonly<Record<string, KnowledgeType>> =
+  Object.fromEntries(
+    KNOWLEDGE_TYPE_VALUES.map((value) => [stripToLetters(value), value]),
+  ) as Record<string, KnowledgeType>;
+
+// Director antwoordt in het Nederlands, dus "Type:" komt vaak binnen als een
+// Nederlands woord (bv. "Architectuurbeslissing") in plaats van de Engelse
+// waarde die het domeinmodel gebruikt. Zonder deze mapping zou zo'n item
+// stilzwijgend terugvallen op het generieke type "fact".
+const KNOWLEDGE_TYPE_SYNONYMS: Readonly<Record<string, KnowledgeType>> = {
+  visie: "vision",
+  doel: "goal",
+  besluit: "decision",
+  beslissing: "decision",
+  architectuurbeslissing: "architecture",
+  architectuur: "architecture",
+  voorkeur: "preference",
+  les: "lesson",
+  lering: "lesson",
+  taak: "task",
+  risico: "risk",
+  openvraag: "open_question",
+  persoon: "person",
+  bedrijf: "company",
+  feit: "fact",
+  legacy: "legacydocument",
+  legacydoc: "legacydocument",
+};
+
 function normalizeKnowledgeType(raw: string | undefined): KnowledgeType | undefined {
   if (!raw) return undefined;
-  const normalized = raw.trim().toLowerCase().replace(/\s+/g, "_");
-  return KNOWLEDGE_TYPE_VALUES.find((value) => value === normalized);
+  const normalized = stripToLetters(raw);
+  return KNOWLEDGE_TYPE_BY_NORMALIZED[normalized] ?? KNOWLEDGE_TYPE_SYNONYMS[normalized];
 }
 
 const SYSTEM_PROMPT = `
