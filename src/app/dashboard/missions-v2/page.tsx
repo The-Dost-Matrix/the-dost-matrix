@@ -5,19 +5,21 @@ import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/domains/auth/auth-provider";
 import {
+  autoStepMissionV2,
   createMissionV2,
-  dispatchMissionV2,
-  runMissionRoleV2,
 } from "@/domains/missions/mission-engine-v2-service";
 import type { MissionV2 } from "@/core/mission-engine/v2/mission";
 
 /**
  * Eerste werkende scherm voor Mission Engine V2: hier kun je een mission
- * aanmaken, hem laten oppakken door de (nog handmatig ingezette) builder-rol,
- * en die rol daadwerkelijk laten uitvoeren via de LLM-provider. Dit is
- * bewust een dun testscherm, geen eindontwerp — het bestaat om zichtbaar en
- * klikbaar te maken dat de motor nu écht werkt, met echte opslag.
+ * aanmaken en de Director zelf laten beslissen wat de eerstvolgende stap is
+ * — inclusief het écht laten uitvoeren van die stap door de builder-rol
+ * (een echte LLM-aanroep). Dit is bewust een dun testscherm, geen
+ * eindontwerp — het bestaat om zichtbaar en klikbaar te maken dat de motor
+ * nu écht werkt, met echte opslag en een zelfstandige beslisser.
  */
+
+const AUTO_STEP_STATUSES: MissionV2["status"][] = ["ACTIVE", "WAITING_FOR_ROLE"];
 
 function statusLabel(status: MissionV2["status"]): string {
   const labels: Record<MissionV2["status"], string> = {
@@ -47,8 +49,9 @@ export default function MissionsV2Page() {
 
   const [mission, setMission] = useState<MissionV2 | null>(null);
   const [roleOutput, setRoleOutput] = useState("");
+  const [directorReason, setDirectorReason] = useState("");
 
-  const [busy, setBusy] = useState<"create" | "dispatch" | "run-role" | null>(null);
+  const [busy, setBusy] = useState<"create" | "auto-step" | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -79,6 +82,7 @@ export default function MissionsV2Page() {
     setBusy("create");
     setError("");
     setRoleOutput("");
+    setDirectorReason("");
 
     try {
       const created = await createMissionV2(user, {
@@ -94,50 +98,38 @@ export default function MissionsV2Page() {
     }
   }
 
-  async function handleDispatch() {
+  async function handleAutoStep() {
     if (!user || !mission) return;
 
-    setBusy("dispatch");
+    setBusy("auto-step");
     setError("");
 
     try {
-      const updated = await dispatchMissionV2(user, mission.missionId);
-      setMission(updated);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Dispatch is mislukt.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handleRunRole() {
-    if (!user || !mission) return;
-
-    setBusy("run-role");
-    setError("");
-
-    try {
-      const result = await runMissionRoleV2(user, mission.missionId);
+      const result = await autoStepMissionV2(user, mission.missionId);
       setMission(result.mission);
-      setRoleOutput(result.roleOutput);
+      if (result.decision) setDirectorReason(result.decision.reason);
+      if (result.roleOutput) setRoleOutput(result.roleOutput);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Rol uitvoeren is mislukt.");
+      setError(caught instanceof Error ? caught.message : "De Director kon geen stap zetten.");
     } finally {
       setBusy(null);
     }
   }
+
+  const canAutoStep = mission && AUTO_STEP_STATUSES.includes(mission.status);
 
   return (
     <main className="dashboard-shell">
       <section className="panel command-center-intro">
         <div>
           <p className="eyebrow">MISSION ENGINE V2</p>
-          <h1>Mission Engine — eerste werkende versie</h1>
+          <h1>Mission Engine — zelfstandige Director</h1>
           <p className="muted">
-            Missies hier worden echt opgeslagen (Firestore) en de
-            builder-rol roept écht een LLM aan. Dispatch gebeurt voorlopig
-            handmatig via de knop hieronder — een zelfstandige Director-rol
-            die dat automatisch beslist volgt later.
+            Missies worden echt opgeslagen (Firestore). Eén knop laat de
+            Director zelf beslissen wat de eerstvolgende stap is — en voert
+            die (bij een dispatch naar de builder-rol) meteen ook uit via een
+            echte LLM-aanroep. Jij hoeft alleen nog op de knop te klikken
+            totdat de missie voltooid is.
           </p>
         </div>
       </section>
@@ -180,8 +172,8 @@ export default function MissionsV2Page() {
         <div className="panel">
           <div className="section-title">
             <div>
-              <p className="eyebrow">STAP 2 &amp; 3</p>
-              <h3>Status &amp; uitvoering</h3>
+              <p className="eyebrow">STAP 2</p>
+              <h3>Director &amp; uitvoering</h3>
             </div>
 
             {mission && <span className="badge">{statusLabel(mission.status)}</span>}
@@ -205,27 +197,39 @@ export default function MissionsV2Page() {
 
               <div className="command-center-quick-command">
                 <button
-                  className="secondary"
-                  type="button"
-                  disabled={mission.status !== "ACTIVE" || busy !== null}
-                  onClick={() => void handleDispatch()}
-                >
-                  {busy === "dispatch" ? "Bezig..." : "Dispatch naar builder-rol"}
-                </button>
-
-                <button
                   className="primary"
                   type="button"
-                  disabled={mission.status !== "WAITING_FOR_ROLE" || busy !== null}
-                  onClick={() => void handleRunRole()}
+                  disabled={!canAutoStep || busy !== null}
+                  onClick={() => void handleAutoStep()}
                 >
-                  {busy === "run-role" ? "Bezig..." : "Voer rol uit (LLM)"}
+                  {busy === "auto-step"
+                    ? "Director is bezig..."
+                    : "Laat de Director de volgende stap zetten"}
                 </button>
               </div>
 
+              {!canAutoStep && mission.status !== "COMPLETED" && (
+                <p className="muted">
+                  De Director kan hier nog niet automatisch mee verder (status:{" "}
+                  {statusLabel(mission.status)}). Dit soort situaties oplossen is
+                  nog niet gebouwd in dit testscherm.
+                </p>
+              )}
+
+              {mission.status === "COMPLETED" && (
+                <p className="muted">Deze missie is voltooid.</p>
+              )}
+
+              {directorReason && (
+                <article className="knowledge-card">
+                  <strong>Beslissing van de Director</strong>
+                  <p>{directorReason}</p>
+                </article>
+              )}
+
               {roleOutput && (
                 <article className="knowledge-card">
-                  <strong>Resultaat van de rol</strong>
+                  <strong>Resultaat van de builder-rol</strong>
                   <p>{roleOutput}</p>
                 </article>
               )}

@@ -6,6 +6,7 @@ import { verifyIdToken } from "@/core/firebase/admin";
 import type {
   CreateMissionPayload,
 } from "@/core/mission-engine/v2/commands";
+import { runDirectorStep } from "@/core/mission-engine/v2/director-runtime";
 import { createMissionEngineV2 } from "@/core/mission-engine/v2/engine-factory";
 import type { MissionRiskLevel, MissionV2 } from "@/core/mission-engine/v2/mission";
 import { executeRoleAssignment } from "@/core/mission-engine/v2/role-runtime";
@@ -32,6 +33,10 @@ export const dynamic = "force-dynamic";
  *                                       de "builder"-rol
  * - POST { action: "run-role", ... } → voert de actieve toewijzing echt uit
  *                                       via de LLM-provider
+ * - POST { action: "auto-step", ... } → laat de Director zelf beslissen wat
+ *                                       de volgende stap is, en voert die
+ *                                       (bij DISPATCH_ROLE) meteen ook uit —
+ *                                       dit is de "zelfstandige Director"-knop
  *
  * Alle acties zijn ownerId-scoped: een mission kan alleen worden bekeken of
  * bewerkt door de ingelogde gebruiker die hem heeft aangemaakt.
@@ -117,7 +122,12 @@ type RunRoleBody = {
   assignmentId?: unknown;
 };
 
-type PostBody = CreateBody | DispatchBody | RunRoleBody | { action?: unknown };
+type AutoStepBody = {
+  action: "auto-step";
+  missionId?: unknown;
+};
+
+type PostBody = CreateBody | DispatchBody | RunRoleBody | AutoStepBody | { action?: unknown };
 
 const ALLOWED_RISK_LEVELS: MissionRiskLevel[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 
@@ -327,6 +337,98 @@ async function handleRunRole(body: RunRoleBody, ownerId: string) {
   return NextResponse.json({ mission: updated, roleOutput });
 }
 
+function resolveActiveAssignmentId(
+  mission: MissionV2,
+  explicit: unknown,
+): { assignmentId: string } | { error: NextResponse } {
+  if (typeof explicit === "string" && explicit.trim()) {
+    return { assignmentId: explicit };
+  }
+  if (mission.activeAssignmentIds.length === 1) {
+    return { assignmentId: mission.activeAssignmentIds[0] };
+  }
+  if (mission.activeAssignmentIds.length === 0) {
+    return {
+      error: NextResponse.json(
+        { error: "Deze mission heeft geen actieve toewijzing om uit te voeren." },
+        { status: 400 },
+      ),
+    };
+  }
+  return {
+    error: NextResponse.json(
+      {
+        error:
+          "Deze mission heeft meerdere actieve toewijzingen — geef assignmentId expliciet mee.",
+      },
+      { status: 400 },
+    ),
+  };
+}
+
+async function handleAutoStep(body: AutoStepBody, ownerId: string) {
+  if (typeof body.missionId !== "string" || !body.missionId.trim()) {
+    return NextResponse.json({ error: "missionId ontbreekt." }, { status: 400 });
+  }
+
+  const engine = createMissionEngineV2();
+  let mission = await engine.getMission(body.missionId);
+
+  if (!mission) {
+    return NextResponse.json({ error: "Mission niet gevonden." }, { status: 404 });
+  }
+
+  assertOwnership(mission, ownerId);
+
+  if (mission.status === "ACTIVE") {
+    const { mission: afterDecision, decision } = await runDirectorStep({
+      engine,
+      missionId: mission.missionId,
+    });
+    mission = afterDecision;
+
+    if (decision.decisionType !== "DISPATCH_ROLE") {
+      // COMPLETE_MISSION (of een ander eindresultaat) — niets meer om
+      // meteen uit te voeren.
+      return NextResponse.json({ mission, decision });
+    }
+
+    const resolved = resolveActiveAssignmentId(
+      mission,
+      mission.activeAssignmentIds[mission.activeAssignmentIds.length - 1],
+    );
+    if ("error" in resolved) return resolved.error;
+
+    const { mission: afterRole, roleOutput } = await executeRoleAssignment({
+      engine,
+      missionId: mission.missionId,
+      assignmentId: resolved.assignmentId,
+    });
+
+    return NextResponse.json({ mission: afterRole, decision, roleOutput });
+  }
+
+  if (mission.status === "WAITING_FOR_ROLE") {
+    const resolved = resolveActiveAssignmentId(mission, undefined);
+    if ("error" in resolved) return resolved.error;
+
+    const { mission: afterRole, roleOutput } = await executeRoleAssignment({
+      engine,
+      missionId: mission.missionId,
+      assignmentId: resolved.assignmentId,
+    });
+
+    return NextResponse.json({ mission: afterRole, roleOutput });
+  }
+
+  return NextResponse.json(
+    {
+      error: `De Director kan hier nu niet automatisch mee verder (status: ${mission.status}).`,
+    },
+    { status: 400 },
+  );
+}
+
 export async function POST(request: NextRequest) {
   let ownerId: string;
 
@@ -353,6 +455,8 @@ export async function POST(request: NextRequest) {
         return await handleDispatch(body as DispatchBody, ownerId);
       case "run-role":
         return await handleRunRole(body as RunRoleBody, ownerId);
+      case "auto-step":
+        return await handleAutoStep(body as AutoStepBody, ownerId);
       default:
         return NextResponse.json({ error: "Onbekende actie." }, { status: 400 });
     }

@@ -1,4 +1,5 @@
 import type { User } from "firebase/auth";
+import type { DirectorDecision } from "@/core/contracts/v2";
 import type { MissionV2 } from "@/core/mission-engine/v2/mission";
 
 /**
@@ -89,5 +90,27 @@ export async function runMissionRoleV2(
   return callMissionEngineApi<{ mission: MissionV2; roleOutput: string }>(user, {
     method: "POST",
     body: JSON.stringify({ action: "run-role", missionId }),
+  });
+}
+
+export interface AutoStepMissionV2Result {
+  mission: MissionV2;
+  decision?: DirectorDecision;
+  roleOutput?: string;
+}
+
+/**
+ * Laat de Director zelf beslissen wat de eerstvolgende stap is, en voert die
+ * (bij een dispatch naar de builder-rol) meteen ook uit. Dit is de
+ * "zelfstandige Director"-actie — in plaats van zelf op dispatch + run-role
+ * te klikken, doet één druk op de knop de hele stap.
+ */
+export async function autoStepMissionV2(
+  user: User,
+  missionId: string,
+): Promise<AutoStepMissionV2Result> {
+  return callMissionEngineApi<AutoStepMissionV2Result>(user, {
+    method: "POST",
+    body: JSON.stringify({ action: "auto-step", missionId }),
   });
 }
