@@ -72,6 +72,21 @@ Benodigde index:
 - Field `ownerId`: Ascending
 - Field `createdAt`: Descending
 
+De missielijst van Mission Engine V2 (op het hoofdscherm en op
+`/dashboard/missions-v2`) gebruikt `ownerId` plus `updatedAt` op de
+`missionEngineV2Missions`-collectie en heeft om dezelfde reden een eigen
+index nodig:
+- Collection: `missionEngineV2Missions`
+- Field `ownerId`: Ascending
+- Field `updatedAt`: Descending
+
+Beide indexen staan al in `firestore.indexes.json` — je hoeft de link uit de
+foutmelding dus niet te gebruiken. Rol ze uit met:
+
+```bash
+firebase deploy --only firestore:indexes
+```
+
 ## Eerste account
 
 Open `/login`, kies **Account aanmaken** en gebruik je eigen e-mailadres met een
