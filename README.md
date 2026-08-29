@@ -161,11 +161,40 @@ de omgeving te schrijven waar de app op dat moment draait:
    (bijvoorbeeld een projectrepository).
 
 **Bekende beperking (bewust, voor v0)**: de Director ziet bij zijn
-eerstvolgende beslissing nog niet de inhoud van wat de Builder opleverde
-(dus ook niet of de pull request al gemerged is) — hij ziet alleen dat de
-toewijzing is afgerond. Controleer een pull request dus altijd zelf op
-GitHub, ongeacht wat de missiestatus zegt, totdat een QA-rol dit oordeel
-overneemt.
+eerstvolgende beslissing nog niet de inhoud van wat de Builder opleverde —
+hij ziet alleen dat de toewijzing is afgerond. Daarom bestaat de "qa"-rol
+hieronder: die vindt de pull request zelf (via de branchnaam) en beoordeelt
+die zelfstandig, in plaats van te vertrouwen op wat de Director erover zou
+kunnen navertellen.
+
+## QA-rol via GitHub (Mission Engine V2)
+
+Naast de "builder"-rol bestaat er nu ook een "qa"-rol. Die controleert of
+een pull request van de builder-rol daadwerkelijk aan de succescriteria van
+de missie voldoet, vóórdat de Director de missie als voltooid mag markeren:
+
+1. QA vindt de pull request die bij de missie hoort via de branchnaam die de
+   builder-rol aanmaakt (`director/mission-<id>-...`).
+2. Is er geen pull request, of is die nog niet gemerged? Dan faalt de
+   QA-toewijzing met een duidelijke reden en blijven de succescriteria
+   ongewijzigd — jij moet de pull request dan eerst zelf beoordelen en
+   mergen op GitHub.
+3. Is de pull request gemerged? Dan beoordeelt een LLM de diff tegen elk
+   succescriterium apart en zet dat criterium op PASSED of FAILED.
+4. Pas wanneer ALLE succescriteria van een missie op PASSED staan, mag de
+   Director de missie voltooien — de Director zelf beoordeelt dit niet meer
+   zelfstandig (dat was de vorige, bewust eerlijke beperking van v0).
+
+**Setup**: geen extra stappen — de qa-rol gebruikt dezelfde
+`GITHUB_BUILDER_TOKEN` als de builder-rol, met dezelfde permissies
+(Contents: read/write, Pull requests: read/write volstaat, QA heeft alleen
+leestoegang tot pull requests nodig).
+
+**Bekende beperking (bewust, voor v0)**: QA beoordeelt op basis van de diff
+(patches) van de pull request, niet de volledige bestandsinhoud — bij zeer
+grote pull requests kan dat onvolledig zijn. Ook is er geen automatische
+herbeoordeling wanneer je een afgekeurde pull request later aanpast; de
+Director moet dan zelf opnieuw de builder-rol inzetten.
 
 ## Volgende sprint
 
@@ -174,5 +203,6 @@ overneemt.
 - structured Director-plan;
 - Approval Center;
 - agent registry uit Firestore;
-- een echte QA-rol die de pull requests van de Builder beoordeelt voordat een
-  missie als voltooid mag gelden.
+- een multi-LLM "smart selector" die per taak (Director-beslissingen,
+  builder-codegeneratie, QA-beoordeling) automatisch de beste beschikbare
+  LLM kiest, plus enkele gratis LLM's met API-koppeling.

@@ -6,7 +6,7 @@ import { retrieveKnowledgeContext } from "@/core/application/knowledge/retrieval
 import type { KnowledgeEntry } from "@/core/domain/knowledge/knowledge-entry";
 
 import type { MissionEngine } from "./engine";
-import type { MissionV2 } from "./mission";
+import { hasPassedAllCriteria, type MissionV2 } from "./mission";
 
 /**
  * Director Runtime v0 voor Mission Engine V2.
@@ -20,15 +20,18 @@ import type { MissionV2 } from "./mission";
  * belandt die de rest van het systeem (nog) niet kan oplossen:
  * - Werkt alleen op missies met status ACTIVE (geen openstaande taak of
  *   verzoek — dat is het enige moment waarop er iets te beslissen valt).
- * - De Director mag alleen kiezen tussen DISPATCH_ROLE (opnieuw de
- *   builder-rol inzetten) en, alleen als er al minstens één afgeronde
- *   toewijzing is, COMPLETE_MISSION. De andere besluittypes (bv. een
- *   goedkeuring of vraag aan de eigenaar vragen) zijn uitgezet omdat er nog
- *   geen scherm is om daar iets mee te doen — die zouden een missie muurvast
- *   laten lopen.
- * - Bij COMPLETE_MISSION beoordeelt de Director zelf (niet een aparte
- *   QA-rol — die bestaat nog niet) of de succescriteria gehaald zijn. Dat is
- *   een bewuste, eerlijke beperking van deze eerste versie.
+ * - De Director mag alleen kiezen tussen DISPATCH_ROLE (de "builder"- of
+ *   "qa"-rol inzetten) en, alleen als alle succescriteria al PASSED zijn,
+ *   COMPLETE_MISSION. De andere besluittypes (bv. een goedkeuring of vraag
+ *   aan de eigenaar vragen) zijn uitgezet omdat er nog geen scherm is om
+ *   daar iets mee te doen — die zouden een missie muurvast laten lopen.
+ * - Sinds de QA-rol (zie qa-runtime.ts) beoordeelt de Director de
+ *   succescriteria niet meer zelf: `hasPassedAllCriteria(mission)` (uit
+ *   mission.ts) bepaalt of COMPLETE_MISSION mag, en criteria worden
+ *   uitsluitend nog op PASSED/FAILED gezet doordat de QA-rol dat oordeel
+ *   velt (toegepast in role-runtime.ts). Dit is een bewuste, eerlijke
+ *   verbetering ten opzichte van de eerdere versie, waarin de Director bij
+ *   het afronden van een missie alle criteria zelf als PASSED markeerde.
  *
  * Vanaf hier gebruikt de Director ook goedgekeurde kennis uit het Second
  * Brain (dezelfde kennis die je via de Kennis-pagina keurt) als achtergrond
@@ -97,11 +100,14 @@ function buildKnowledgeContextBlock(knowledge: KnowledgeEntry[]): string {
   return blocks.join("\n\n");
 }
 
+type DispatchableRole = "builder" | "qa";
+
 interface DirectorLlmDecision {
   decisionType: DirectorDecisionType;
   reason: string;
   nextAction: string;
   successCriteria: string[];
+  role: DispatchableRole;
 }
 
 function extractJson(text: string): string {
@@ -139,13 +145,13 @@ function buildDirectorPrompt(
 
   const allowedTypes = allowComplete
     ? '"DISPATCH_ROLE" of "COMPLETE_MISSION"'
-    : '"DISPATCH_ROLE" (COMPLETE_MISSION is nu niet toegestaan: er is nog geen afgeronde toewijzing)';
+    : '"DISPATCH_ROLE" (COMPLETE_MISSION is nu niet toegestaan: nog niet alle succescriteria staan op PASSED)';
 
   const userPrompt = [
     `Missie: "${mission.title}"`,
     `Doel: ${mission.objective}`,
     "",
-    "Succescriteria:",
+    "Succescriteria (COMPLETE_MISSION mag pas als deze ALLEMAAL op PASSED staan — dat bepaalt niemand anders dan de qa-rol, ook jij niet):",
     criteriaLines,
     "",
     "Eerdere toewijzingen:",
@@ -154,14 +160,17 @@ function buildDirectorPrompt(
     "Relevante goedgekeurde kennis uit het Second Brain (uitsluitend ter achtergrond — gebruik dit nooit om de succescriteria hierboven te vervangen of aan te vullen, en verzin geen kennis die hier niet expliciet staat):",
     buildKnowledgeContextBlock(knowledge),
     "",
-    'De enige beschikbare rol om taken aan toe te wijzen is "builder".',
+    'Er zijn twee rollen beschikbaar om taken aan toe te wijzen:',
+    '- "builder": past daadwerkelijk bestanden aan in de GitHub-repository en opent daarvoor een pull request.',
+    '- "qa": beoordeelt een pull request van de builder-rol tegen de succescriteria en zet criteria op PASSED/FAILED. Zet deze rol in nadat een builder-toewijzing is afgerond en VOORDAT je COMPLETE_MISSION overweegt — zonder een qa-toewijzing worden succescriteria nooit PASSED en kun je de missie dus nooit afronden.',
     `Kies één decisionType uit: ${allowedTypes}.`,
     "",
     "Antwoord exact in dit JSON-formaat, niets anders:",
     "{",
     '  "decisionType": "DISPATCH_ROLE" | "COMPLETE_MISSION",',
     '  "reason": "korte onderbouwing van je keuze",',
-    '  "nextAction": "concrete opdracht voor de builder-rol (alleen relevant bij DISPATCH_ROLE)",',
+    '  "role": "builder" | "qa" (alleen relevant bij DISPATCH_ROLE),',
+    '  "nextAction": "concrete opdracht voor de gekozen rol (alleen relevant bij DISPATCH_ROLE)",',
     '  "successCriteria": ["welke succescriteria deze toewijzing moet aanpakken (alleen bij DISPATCH_ROLE)"]',
     "}",
   ].join("\n");
@@ -225,21 +234,26 @@ async function decideNextStep(
       candidate.successCriteria.every((entry) => typeof entry === "string" && entry.trim())
         ? candidate.successCriteria
         : mission.successCriteria.map((criterion) => criterion.description),
+    // Standaard "builder" wanneer de Director geen (geldige) rol opgeeft —
+    // veiligste keuze, aangezien "qa" zonder een bijbehorende pull request
+    // toch niets zou kunnen beoordelen (zie qa-runtime.ts).
+    role: candidate.role === "qa" ? "qa" : "builder",
   };
 }
 
 /**
  * Laat de Director één beslissing nemen over een ACTIVE mission en past die
- * direct toe. Bij COMPLETE_MISSION worden eerst alle succescriteria als
- * PASSED gemarkeerd (self-assessment door de Director — zie module-uitleg
- * hierboven) zodat de engine de missie daadwerkelijk mag afronden.
+ * direct toe. Beoordeelt zelf geen succescriteria meer — dat gebeurt
+ * uitsluitend door de qa-rol (zie qa-runtime.ts en role-runtime.ts) — dus
+ * COMPLETE_MISSION mag pas wanneer `hasPassedAllCriteria(mission)` al waar
+ * is vóórdat deze functie wordt aangeroepen.
  */
 export async function runDirectorStep({
   engine,
   missionId,
   actor = { type: "director", id: "director" },
 }: RunDirectorStepInput): Promise<RunDirectorStepResult> {
-  let mission = await engine.getMission(missionId);
+  const mission = await engine.getMission(missionId);
 
   if (!mission) {
     throw new Error(`Mission ${missionId} bestaat niet.`);
@@ -251,9 +265,7 @@ export async function runDirectorStep({
     );
   }
 
-  const allowComplete =
-    mission.assignments.some((assignment) => assignment.status === "COMPLETED") &&
-    mission.activeAssignmentIds.length === 0;
+  const allowComplete = hasPassedAllCriteria(mission) && mission.activeAssignmentIds.length === 0;
 
   const usedKnowledge = await gatherRelevantKnowledge(mission);
   const llmDecision = await decideNextStep(mission, allowComplete, usedKnowledge);
@@ -265,7 +277,7 @@ export async function runDirectorStep({
     decisionType: llmDecision.decisionType,
     reason: llmDecision.reason,
     nextAction: llmDecision.nextAction,
-    assignedRole: llmDecision.decisionType === "DISPATCH_ROLE" ? "builder" : undefined,
+    assignedRole: llmDecision.decisionType === "DISPATCH_ROLE" ? llmDecision.role : undefined,
     requiredCapabilities: [],
     contextRequirements: [],
     modelConstraints: {},
@@ -277,33 +289,6 @@ export async function runDirectorStep({
     failureStrategy: "Bij falen opnieuw plannen (REPLANNING).",
     createdAt: now,
   };
-
-  if (decision.decisionType === "COMPLETE_MISSION") {
-    const lastCompleted = [...mission.assignments]
-      .reverse()
-      .find((assignment) => assignment.status === "COMPLETED");
-    const evidenceRefs = lastCompleted?.resultId ? [lastCompleted.resultId] : [];
-
-    for (const criterion of mission.successCriteria) {
-      if (criterion.status === "PASSED") continue;
-
-      mission = await engine.evaluateCriterion({
-        actor,
-        correlationId: decision.decisionId,
-        issuedAt: new Date().toISOString(),
-        commandVersion: "1.0",
-        commandId: randomUUID(),
-        commandType: "EvaluateMissionCriterion",
-        targetId: mission.missionId,
-        expectedTargetVersion: mission.version,
-        payload: {
-          criterionId: criterion.criterionId,
-          passed: true,
-          evidenceRefs,
-        },
-      });
-    }
-  }
 
   const updated = await engine.applyDirectorDecision({
     actor,

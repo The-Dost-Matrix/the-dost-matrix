@@ -8,6 +8,7 @@ export * from "./firestore-store";
 export * from "./github/github-client";
 export * from "./mission";
 export * from "./mission-factory";
+export * from "./qa-runtime";
 export * from "./role-runtime";
 export * from "./state-machine";
 export * from "./store";

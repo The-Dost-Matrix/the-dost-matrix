@@ -226,3 +226,61 @@ export async function createPullRequest(
 
   return { url: data.html_url, number: data.number };
 }
+
+export interface PullRequestSummary {
+  number: number;
+  headRef: string;
+  merged: boolean;
+  state: string;
+  url: string;
+  title: string;
+}
+
+/**
+ * Haalt pull requests op, meest recente eerst. Gebruikt door de QA-rol om de
+ * pull request te vinden die bij een missie hoort (via de branchnaam die de
+ * Builder-rol aanmaakt, zie builder-runtime.ts) en te controleren of die al
+ * gemerged is. `merged_at` (niet `merged`) zit al in de lijst-respons, dus
+ * hier is geen aparte aanvraag per pull request nodig.
+ */
+export async function listPullRequests(
+  target: GithubRepoTarget,
+  state: "open" | "closed" | "all" = "all",
+): Promise<PullRequestSummary[]> {
+  const data = await githubRequest<
+    { number: number; head: { ref: string }; merged_at: string | null; state: string; html_url: string; title: string }[]
+  >(
+    `/repos/${target.owner}/${target.repo}/pulls?state=${state}&per_page=100&sort=created&direction=desc`,
+  );
+
+  return data.map((pr) => ({
+    number: pr.number,
+    headRef: pr.head.ref,
+    merged: pr.merged_at !== null,
+    state: pr.state,
+    url: pr.html_url,
+    title: pr.title,
+  }));
+}
+
+export interface PullRequestFileChange {
+  filename: string;
+  status: string;
+  patch?: string;
+}
+
+/** Geeft de gewijzigde bestanden (met diff/patch waar beschikbaar) van een pull request. */
+export async function getPullRequestFiles(
+  target: GithubRepoTarget,
+  pullNumber: number,
+): Promise<PullRequestFileChange[]> {
+  const data = await githubRequest<
+    { filename: string; status: string; patch?: string }[]
+  >(`/repos/${target.owner}/${target.repo}/pulls/${pullNumber}/files?per_page=100`);
+
+  return data.map((file) => ({
+    filename: file.filename,
+    status: file.status,
+    patch: file.patch,
+  }));
+}

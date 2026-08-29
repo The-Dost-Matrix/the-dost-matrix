@@ -6,6 +6,7 @@ import { getChatProvider } from "@/core/llm/model-router";
 import { executeBuilderAssignment } from "./builder-runtime";
 import type { MissionEngine } from "./engine";
 import type { MissionV2 } from "./mission";
+import { executeQaAssignment, type CriterionVerdict } from "./qa-runtime";
 
 /**
  * Role Runtime v0 voor Mission Engine V2.
@@ -14,20 +15,26 @@ import type { MissionV2 } from "./mission";
  * voert dit de opdracht van die assignment daadwerkelijk uit en meldt het
  * resultaat terug aan de engine via `recordRoleResult`.
  *
- * Sinds de koppeling met GitHub (zie builder-runtime.ts) wordt hier per
- * rol bepaald HOE een toewijzing wordt uitgevoerd: de "builder"-rol past nu
- * echt bestanden aan via een GitHub pull request, in plaats van alleen een
- * tekstueel plan te geven. Andere/toekomstige rollen vallen terug op de
- * oorspronkelijke, simpele tekst-only uitvoering hieronder totdat zij hun
- * eigen, passende uitvoering krijgen.
+ * Sinds de koppeling met GitHub wordt hier per rol bepaald HOE een
+ * toewijzing wordt uitgevoerd:
+ * - "builder" (zie builder-runtime.ts) past echt bestanden aan via een
+ *   GitHub pull request, in plaats van alleen een tekstueel plan te geven.
+ *   Zelf velt de Builder geen oordeel over de succescriteria —
+ *   `successCriteriaResults` komt daar altijd leeg terug.
+ * - "qa" (zie qa-runtime.ts) beoordeelt een pull request van de Builder
+ *   tegen de succescriteria van de missie, en het resultaat daarvan wordt
+ *   hieronder direct toegepast via `engine.evaluateCriterion` — dat is de
+ *   enige plek in Mission Engine V2 waar succescriteria nog op PASSED/FAILED
+ *   gezet worden (zie ook de opruiming van de vroegere self-assessment in
+ *   director-runtime.ts).
+ * - Andere/toekomstige rollen vallen terug op de oorspronkelijke, simpele
+ *   tekst-only uitvoering hieronder totdat zij hun eigen, passende
+ *   uitvoering krijgen.
  *
  * Wat dit NIET is (nog): een autonome Director die zelf beslist wélke rol
  * wanneer moet worden ingezet (dat gebeurt via `applyDirectorDecision`,
  * vooralsnog handmatig/extern getriggerd — zie de "dispatch"-actie in de
- * API-route). Ook wordt hier geen automatisch oordeel geveld over de
- * succescriteria: `successCriteriaResults` komt terug als een leeg object,
- * zodat er geen vals "voltooid" wordt gesuggereerd. Een echte QA-rol die dat
- * oordeel velt is vervolgwerk.
+ * API-route).
  */
 
 export interface ExecuteRoleAssignmentInput {
@@ -102,11 +109,17 @@ export async function executeRoleAssignment({
 
   let result: RoleResult;
   let roleOutput: string;
+  let criteriaVerdicts: CriterionVerdict[] = [];
 
   if (assignment.roleId === "builder") {
     const builderOutcome = await executeBuilderAssignment({ mission, assignment });
     result = builderOutcome.result;
     roleOutput = builderOutcome.roleOutput;
+  } else if (assignment.roleId === "qa") {
+    const qaOutcome = await executeQaAssignment({ mission, assignment });
+    result = qaOutcome.result;
+    roleOutput = qaOutcome.roleOutput;
+    criteriaVerdicts = qaOutcome.criteriaVerdicts;
   } else {
     const provider = getChatProvider();
     const startedAt = Date.now();
@@ -141,7 +154,7 @@ export async function executeRoleAssignment({
     roleOutput = completion.content;
   }
 
-  const updatedMission = await engine.recordRoleResult({
+  let updatedMission = await engine.recordRoleResult({
     commandId: randomUUID(),
     commandType: "RecordRoleResult",
     commandVersion: "1.0",
@@ -152,6 +165,27 @@ export async function executeRoleAssignment({
     issuedAt: new Date().toISOString(),
     payload: { result: result as unknown as JsonValue },
   });
+
+  // Alleen de QA-rol levert verdicts op (zie qa-runtime.ts). Dit is de enige
+  // plek in Mission Engine V2 waar succescriteria nog worden geëvalueerd —
+  // de Director zelf doet dit niet meer (zie director-runtime.ts).
+  for (const verdict of criteriaVerdicts) {
+    updatedMission = await engine.evaluateCriterion({
+      commandId: randomUUID(),
+      commandType: "EvaluateMissionCriterion",
+      commandVersion: "1.0",
+      targetId: missionId,
+      expectedTargetVersion: updatedMission.version,
+      actor,
+      correlationId: randomUUID(),
+      issuedAt: new Date().toISOString(),
+      payload: {
+        criterionId: verdict.criterionId,
+        passed: verdict.passed,
+        evidenceRefs: [result.resultId],
+      },
+    });
+  }
 
   return { mission: updatedMission, roleOutput };
 }
