@@ -324,27 +324,30 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
             </div>
           </div>
 
-          <form className="command-center-quick-command" onSubmit={submitCreate}>
+          <form className="mission-create-form" onSubmit={submitCreate}>
             <input
+              className="mission-create-form-field"
               placeholder="Titel"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
             />
 
             <input
+              className="mission-create-form-field"
               placeholder="Doel (wat moet er bereikt worden?)"
               value={objective}
               onChange={(event) => setObjective(event.target.value)}
             />
 
             <textarea
-              rows={3}
+              className="mission-create-form-textarea"
+              rows={6}
               placeholder={"Succescriteria, één per regel"}
               value={successCriteriaText}
               onChange={(event) => setSuccessCriteriaText(event.target.value)}
             />
 
-            <button className="primary" disabled={busy === "create"}>
+            <button className="primary mission-create-form-submit" disabled={busy === "create"}>
               {busy === "create" ? "Bezig..." : "Mission aanmaken en starten"}
             </button>
           </form>
