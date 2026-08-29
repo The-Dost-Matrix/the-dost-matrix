@@ -45,6 +45,16 @@ import "./mission-engine-v2-panel.css";
  * bijbehorende stijlregels staan in ./mission-engine-v2-panel.css, dat
  * hierboven expliciet wordt geïmporteerd zodat deze klassen ook
  * daadwerkelijk effect hebben.
+ *
+ * Layout van de twee onderstaande panelen (Nieuwe missie aanmaken +
+ * Director & Uitvoering): deze gebruiken bewust hun eigen, toegewijde
+ * `mission-engine-v2-grid`-klasse in plaats van de elders (o.a. op het
+ * hoofddashboard) gedeelde `command-center-main-grid`-klasse. Die gedeelde
+ * klasse is gemaakt voor een drie-koloms indeling met vaste pixel-minima en
+ * schaalt daardoor niet netjes mee bij het in- en uitzoomen voor deze twee
+ * panelen. `mission-engine-v2-grid` gebruikt relatieve eenheden (fr) en
+ * heeft zijn eigen media query, zodat wijzigingen hier de gedeelde klasse
+ * en het hoofddashboard nooit raken.
  */
 
 const AUTO_STEP_STATUSES: MissionV2["status"][] = ["ACTIVE", "WAITING_FOR_ROLE"];
@@ -331,7 +341,7 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
         </section>
       )}
 
-      <section className="command-center-main-grid">
+      <section className="mission-engine-v2-grid">
         <div className="panel">
           <div className="section-title">
             <div>
