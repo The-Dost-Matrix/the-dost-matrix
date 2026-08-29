@@ -189,43 +189,57 @@ async function writeFiles(
     "",
     "Geef nu de VOLLEDIGE nieuwe inhoud van elk bestand terug (niet alleen het verschil). Schrijf productiekwaliteit code die aansluit bij de bestaande stijl. Verzin geen bestanden buiten de lijst hierboven.",
     "",
-    "Antwoord exact in dit JSON-formaat, niets anders:",
-    "{",
-    '  "summary": "korte beschrijving van wat je hebt gebouwd, voor in de missie-geschiedenis",',
-    '  "pullRequestTitle": "korte titel voor de pull request",',
-    '  "pullRequestBody": "beschrijving van de wijziging voor in de pull request",',
-    '  "files": [{ "path": "src/...", "content": "volledige bestandsinhoud" }]',
-    "}",
+    "BELANGRIJK: gebruik GEEN JSON voor de bestandsinhoud — bestandsinhoud kan aanhalingstekens, backticks en regeleindes bevatten die JSON breken. Antwoord EXACT in onderstaand tekstformaat, niets anders (geen markdown-codeblok eromheen):",
+    "",
+    'METADATA: {"summary": "korte beschrijving van wat je hebt gebouwd", "pullRequestTitle": "korte titel voor de pull request", "pullRequestBody": "beschrijving van de wijziging"}',
+    `===FILE: ${plan.paths[0] ?? "pad/naar/bestand"} ===`,
+    "(hier de volledige, letterlijke inhoud van dit bestand — geen aanhalingstekens escapen, gewoon de ruwe tekst)",
+    "===ENDFILE===",
+    "(herhaal het ===FILE=== / ===ENDFILE===-blok voor elk bestand uit de lijst hierboven; de METADATA-regel komt maar één keer, vóór het eerste bestand)",
   ].join("\n");
 
   const completion = await provider.chatCompletion(buildBuilderSystemPrompt(mission), [
     { role: "user", content: userPrompt },
   ]);
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(extractJson(completion.content));
-  } catch {
+  const text = completion.content;
+  const metadataIndex = text.search(/METADATA\s*:/i);
+  const firstFileIndex = text.search(/===\s*FILE\s*:/i);
+
+  if (metadataIndex === -1 || firstFileIndex === -1 || firstFileIndex <= metadataIndex) {
     throw new Error(
-      "De Builder gaf geen geldige bestandsinhoud terug (kon het antwoord niet als JSON lezen).",
+      "De Builder gaf geen antwoord in het verwachte format terug (metadata of bestandsblokken ontbreken).",
     );
   }
 
-  if (typeof parsed !== "object" || parsed === null) {
-    throw new Error("De Builder gaf een onverwacht antwoord terug.");
+  const metadataText = text
+    .slice(metadataIndex, firstFileIndex)
+    .replace(/METADATA\s*:/i, "")
+    .trim();
+
+  let metadata: unknown;
+  try {
+    metadata = JSON.parse(metadataText);
+  } catch {
+    throw new Error("De Builder gaf geen geldige metadata terug (kon het antwoord niet als JSON lezen).");
   }
 
-  const candidate = parsed as Partial<Omit<BuilderWriteResult, "model">>;
+  if (typeof metadata !== "object" || metadata === null) {
+    throw new Error("De Builder gaf onverwachte metadata terug.");
+  }
 
-  const files = Array.isArray(candidate.files)
-    ? candidate.files.filter(
-        (entry): entry is BuilderFileChange =>
-          typeof entry === "object" &&
-          entry !== null &&
-          typeof (entry as BuilderFileChange).path === "string" &&
-          typeof (entry as BuilderFileChange).content === "string",
-      )
-    : [];
+  const metadataCandidate = metadata as Partial<Omit<BuilderWriteResult, "model" | "files">>;
+
+  const fileBlockPattern = /===\s*FILE\s*:\s*(.+?)\s*===\r?\n([\s\S]*?)\r?\n===\s*ENDFILE\s*===/gi;
+  const files: BuilderFileChange[] = [];
+
+  for (const match of text.slice(firstFileIndex).matchAll(fileBlockPattern)) {
+    const path = match[1]?.trim();
+    const content = match[2] ?? "";
+    if (path) {
+      files.push({ path, content });
+    }
+  }
 
   if (files.length === 0) {
     throw new Error("De Builder gaf geen bestandsinhoud terug om weg te schrijven.");
@@ -233,16 +247,16 @@ async function writeFiles(
 
   return {
     summary:
-      typeof candidate.summary === "string" && candidate.summary.trim()
-        ? candidate.summary.trim()
+      typeof metadataCandidate.summary === "string" && metadataCandidate.summary.trim()
+        ? metadataCandidate.summary.trim()
         : plan.planSummary,
     pullRequestTitle:
-      typeof candidate.pullRequestTitle === "string" && candidate.pullRequestTitle.trim()
-        ? candidate.pullRequestTitle.trim()
+      typeof metadataCandidate.pullRequestTitle === "string" && metadataCandidate.pullRequestTitle.trim()
+        ? metadataCandidate.pullRequestTitle.trim()
         : `Director: ${mission.title}`,
     pullRequestBody:
-      typeof candidate.pullRequestBody === "string" && candidate.pullRequestBody.trim()
-        ? candidate.pullRequestBody.trim()
+      typeof metadataCandidate.pullRequestBody === "string" && metadataCandidate.pullRequestBody.trim()
+        ? metadataCandidate.pullRequestBody.trim()
         : assignment.objective,
     files,
     model: completion.model,
