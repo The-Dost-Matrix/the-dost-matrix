@@ -1,0 +1,14 @@
+.mission-engine-v2-form-field {
+  width: 100%;
+}
+
+.mission-engine-v2-form-textarea {
+  width: 100%;
+  min-height: 132px;
+  resize: vertical;
+}
+
+.mission-engine-v2-form-submit {
+  display: block;
+  width: 100%;
+}

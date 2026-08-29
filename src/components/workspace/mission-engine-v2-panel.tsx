@@ -12,6 +12,8 @@ import {
 import type { MissionV2 } from "@/core/mission-engine/v2/mission";
 import type { KnowledgeEntry } from "@/core/domain/knowledge/knowledge-entry";
 
+import "./mission-engine-v2-panel.css";
+
 /**
  * Mission Engine V2: hier kun je een mission aanmaken en de Director zelf
  * laten beslissen wat de eerstvolgende stap is — inclusief het écht laten
@@ -36,7 +38,9 @@ import type { KnowledgeEntry } from "@/core/domain/knowledge/knowledge-entry";
  * mission-engine-v2-form-textarea, mission-engine-v2-form-submit) zodat ze
  * de volledige paneelbreedte gebruiken. Dit is bewust losgekoppeld van de
  * elders gebruikte gedeelde stijlklasse voor een los invoerveld-plus-knop,
- * zodat die daar ongemoeid blijft.
+ * zodat die daar ongemoeid blijft. De bijbehorende stijlregels staan in
+ * ./mission-engine-v2-panel.css, dat hierboven expliciet wordt geïmporteerd
+ * zodat deze klassen ook daadwerkelijk effect hebben.
  */
 
 const AUTO_STEP_STATUSES: MissionV2["status"][] = ["ACTIVE", "WAITING_FOR_ROLE"];
