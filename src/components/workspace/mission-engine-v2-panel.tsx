@@ -353,7 +353,7 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
 
             <textarea
               className="mission-engine-v2-form-textarea"
-              rows={6}
+              rows={5}
               placeholder={"Succescriteria, één per regel"}
               value={successCriteriaText}
               onChange={(event) => setSuccessCriteriaText(event.target.value)}
