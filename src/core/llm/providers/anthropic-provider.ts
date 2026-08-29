@@ -1,6 +1,6 @@
 import type { ChatCompletionResult, LlmMessage, LlmProvider } from "@/core/llm/types";
 
-const ANTHROPIC_MODEL = process.env.ANTHROPIC_CHAT_MODEL || "claude-sonnet-4-20250514";
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_CHAT_MODEL || "claude-sonnet-5";
 const REQUEST_TIMEOUT_MS = 60_000;
 
 export function createAnthropicProvider(apiKey: string): LlmProvider {
