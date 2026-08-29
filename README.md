@@ -133,6 +133,40 @@ volgende vraag.
 - Second Brain-schrijven is nog ongefilterd; iedere uitwisseling wordt onthouden.
 - Retrieval leest maximaal 500 kennisitems; een vector-database is nodig voor grotere schaal.
 
+## Builder-rol via GitHub (Mission Engine V2)
+
+Vanaf nu past de "builder"-rol van Mission Engine V2 daadwerkelijk bestanden
+aan in plaats van alleen een tekstueel plan te geven. Dat gebeurt uitsluitend
+via de GitHub-repository, nooit door rechtstreeks in de lokale bestanden van
+de omgeving te schrijven waar de app op dat moment draait:
+
+1. De Builder leest de actuele bestandsboom en de betrokken bestanden op via
+   de GitHub REST API.
+2. Een LLM bepaalt de volledige nieuwe inhoud van maximaal 8 bestanden per
+   toewijzing.
+3. Die wijzigingen worden gecommit op een nieuwe branch
+   (`director/mission-<id>-<tijdstip>`) en aangeboden als pull request naar de
+   standaardbranch.
+4. Er wordt nooit automatisch gemerged — de eigenaar beoordeelt en merget de
+   pull request zelf op GitHub.
+
+**Setup**
+1. Maak een fine-grained personal access token aan op GitHub, gescoped tot
+   alleen de doelrepository, met permissies **Contents: Read and write** en
+   **Pull requests: Read and write**.
+2. Zet die sleutel in `.env.local` als `GITHUB_BUILDER_TOKEN` (nooit in Git
+   committen — zie `.env.local.example`).
+3. Optioneel: `GITHUB_BUILDER_REPO_OWNER` / `GITHUB_BUILDER_REPO_NAME` om een
+   andere repository te targeten dan `The-Dost-Matrix/the-dost-matrix`
+   (bijvoorbeeld een projectrepository).
+
+**Bekende beperking (bewust, voor v0)**: de Director ziet bij zijn
+eerstvolgende beslissing nog niet de inhoud van wat de Builder opleverde
+(dus ook niet of de pull request al gemerged is) — hij ziet alleen dat de
+toewijzing is afgerond. Controleer een pull request dus altijd zelf op
+GitHub, ongeacht wat de missiestatus zegt, totdat een QA-rol dit oordeel
+overneemt.
+
 ## Volgende sprint
 
 - server-side sessiebeveiliging;
@@ -140,4 +174,5 @@ volgende vraag.
 - structured Director-plan;
 - Approval Center;
 - agent registry uit Firestore;
-- GitHub-previewworkflow.
+- een echte QA-rol die de pull requests van de Builder beoordeelt voordat een
+  missie als voltooid mag gelden.

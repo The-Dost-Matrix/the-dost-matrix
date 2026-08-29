@@ -3,16 +3,23 @@ import { randomUUID } from "node:crypto";
 import type { ActorRef, JsonValue, RoleResult } from "@/core/contracts/v2";
 import { getChatProvider } from "@/core/llm/model-router";
 
+import { executeBuilderAssignment } from "./builder-runtime";
 import type { MissionEngine } from "./engine";
 import type { MissionV2 } from "./mission";
 
 /**
  * Role Runtime v0 voor Mission Engine V2.
  *
- * Dit is bewust een kleine, eerlijke eerste stap: gegeven een mission met
- * een actieve assignment (status WAITING_FOR_ROLE), roept dit een LLM aan
- * om de opdracht van die assignment daadwerkelijk uit te voeren, en meldt
- * het resultaat terug aan de engine via `recordRoleResult`.
+ * Gegeven een mission met een actieve assignment (status WAITING_FOR_ROLE),
+ * voert dit de opdracht van die assignment daadwerkelijk uit en meldt het
+ * resultaat terug aan de engine via `recordRoleResult`.
+ *
+ * Sinds de koppeling met GitHub (zie builder-runtime.ts) wordt hier per
+ * rol bepaald HOE een toewijzing wordt uitgevoerd: de "builder"-rol past nu
+ * echt bestanden aan via een GitHub pull request, in plaats van alleen een
+ * tekstueel plan te geven. Andere/toekomstige rollen vallen terug op de
+ * oorspronkelijke, simpele tekst-only uitvoering hieronder totdat zij hun
+ * eigen, passende uitvoering krijgen.
  *
  * Wat dit NIET is (nog): een autonome Director die zelf beslist wélke rol
  * wanneer moet worden ingezet (dat gebeurt via `applyDirectorDecision`,
@@ -93,37 +100,46 @@ export async function executeRoleAssignment({
     );
   }
 
-  const provider = getChatProvider();
-  const startedAt = Date.now();
-  const completion = await provider.chatCompletion(buildSystemPrompt(mission), [
-    { role: "user", content: buildUserPrompt(mission, assignment) },
-  ]);
-  const durationMs = Date.now() - startedAt;
+  let result: RoleResult;
+  let roleOutput: string;
 
-  const now = new Date().toISOString();
-  const result: RoleResult = {
-    resultId: randomUUID(),
-    assignmentId,
-    missionId,
-    status: "COMPLETED",
-    summary: completion.content.slice(0, 500),
-    deliverables: [completion.content],
-    evidence: [],
-    assumptions: [],
-    uncertainties: [],
-    risks: [],
-    recommendations: [],
-    // Bewust leeg: dit is een uitvoerende rol, geen QA-oordeel. Zie de
-    // module-documentatie hierboven.
-    successCriteriaResults: {},
-    artifactRefs: [],
-    usage: {
-      provider: provider.id,
-      model: completion.model,
-      durationMs,
-    },
-    createdAt: now,
-  };
+  if (assignment.roleId === "builder") {
+    const builderOutcome = await executeBuilderAssignment({ mission, assignment });
+    result = builderOutcome.result;
+    roleOutput = builderOutcome.roleOutput;
+  } else {
+    const provider = getChatProvider();
+    const startedAt = Date.now();
+    const completion = await provider.chatCompletion(buildSystemPrompt(mission), [
+      { role: "user", content: buildUserPrompt(mission, assignment) },
+    ]);
+    const durationMs = Date.now() - startedAt;
+
+    result = {
+      resultId: randomUUID(),
+      assignmentId,
+      missionId,
+      status: "COMPLETED",
+      summary: completion.content.slice(0, 500),
+      deliverables: [completion.content],
+      evidence: [],
+      assumptions: [],
+      uncertainties: [],
+      risks: [],
+      recommendations: [],
+      // Bewust leeg: dit is een uitvoerende rol, geen QA-oordeel. Zie de
+      // module-documentatie hierboven.
+      successCriteriaResults: {},
+      artifactRefs: [],
+      usage: {
+        provider: provider.id,
+        model: completion.model,
+        durationMs,
+      },
+      createdAt: new Date().toISOString(),
+    };
+    roleOutput = completion.content;
+  }
 
   const updatedMission = await engine.recordRoleResult({
     commandId: randomUUID(),
@@ -133,9 +149,9 @@ export async function executeRoleAssignment({
     expectedTargetVersion: mission.version,
     actor,
     correlationId: randomUUID(),
-    issuedAt: now,
+    issuedAt: new Date().toISOString(),
     payload: { result: result as unknown as JsonValue },
   });
 
-  return { mission: updatedMission, roleOutput: completion.content };
+  return { mission: updatedMission, roleOutput };
 }
