@@ -32,15 +32,19 @@ import "./mission-engine-v2-panel.css";
  *               (Zodra de chat straks zelf missies aanmaakt, is dat
  *               handmatige formulier daar toch niet meer de hoofdroute.)
  *
- * Let op (opmaak van het aanmaakformulier): de titel-, doel- en
- * succescriteria-velden en de submitknop gebruiken hun eigen, aan dit
- * formulier gebonden stijlklassen (mission-engine-v2-form-field,
- * mission-engine-v2-form-textarea, mission-engine-v2-form-submit) zodat ze
- * de volledige paneelbreedte gebruiken. Dit is bewust losgekoppeld van de
- * elders gebruikte gedeelde stijlklasse voor een los invoerveld-plus-knop,
- * zodat die daar ongemoeid blijft. De bijbehorende stijlregels staan in
- * ./mission-engine-v2-panel.css, dat hierboven expliciet wordt geïmporteerd
- * zodat deze klassen ook daadwerkelijk effect hebben.
+ * Let op (opmaak van het aanmaakformulier): de titel- en doel-velden staan
+ * elk in hun eigen `mission-engine-v2-form-group`-wrapper (display:block,
+ * width:100%) zodat ze de volledige paneelbreedte gebruiken in plaats van
+ * naast elkaar in een smalle kolom te staan. Het succescriteria-veld is een
+ * `<textarea>` met de klasse `mission-engine-v2-form-textarea`
+ * (min-height + width:100%) en de submitknop staat als sibling ná het
+ * laatste veld, met de extra klasse `mission-engine-v2-form-submit-block`
+ * (display:block, width:100%) naast de bestaande `mission-engine-v2-form-submit`-klasse.
+ * Dit is bewust losgekoppeld van de elders gebruikte gedeelde stijlklasse
+ * voor een los invoerveld-plus-knop, zodat die daar ongemoeid blijft. De
+ * bijbehorende stijlregels staan in ./mission-engine-v2-panel.css, dat
+ * hierboven expliciet wordt geïmporteerd zodat deze klassen ook
+ * daadwerkelijk effect hebben.
  */
 
 const AUTO_STEP_STATUSES: MissionV2["status"][] = ["ACTIVE", "WAITING_FOR_ROLE"];
@@ -337,29 +341,38 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
           </div>
 
           <form className="mission-create-form" onSubmit={submitCreate}>
-            <input
-              className="mission-engine-v2-form-field"
-              placeholder="Titel"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-            />
+            <div className="mission-engine-v2-form-group">
+              <input
+                className="mission-engine-v2-form-field"
+                placeholder="Titel"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+              />
+            </div>
 
-            <input
-              className="mission-engine-v2-form-field"
-              placeholder="Doel (wat moet er bereikt worden?)"
-              value={objective}
-              onChange={(event) => setObjective(event.target.value)}
-            />
+            <div className="mission-engine-v2-form-group">
+              <input
+                className="mission-engine-v2-form-field"
+                placeholder="Doel (wat moet er bereikt worden?)"
+                value={objective}
+                onChange={(event) => setObjective(event.target.value)}
+              />
+            </div>
 
-            <textarea
-              className="mission-engine-v2-form-textarea"
-              rows={5}
-              placeholder={"Succescriteria, één per regel"}
-              value={successCriteriaText}
-              onChange={(event) => setSuccessCriteriaText(event.target.value)}
-            />
+            <div className="mission-engine-v2-form-group">
+              <textarea
+                className="mission-engine-v2-form-textarea"
+                rows={6}
+                placeholder={"Succescriteria, één per regel"}
+                value={successCriteriaText}
+                onChange={(event) => setSuccessCriteriaText(event.target.value)}
+              />
+            </div>
 
-            <button className="primary mission-engine-v2-form-submit" disabled={busy === "create"}>
+            <button
+              className="primary mission-engine-v2-form-submit mission-engine-v2-form-submit-block"
+              disabled={busy === "create"}
+            >
               {busy === "create" ? "Bezig..." : "Mission aanmaken en starten"}
             </button>
           </form>

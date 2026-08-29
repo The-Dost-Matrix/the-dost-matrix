@@ -15,7 +15,7 @@
   display: block;
   width: 100%;
   box-sizing: border-box;
-  min-height: 132px;
+  min-height: 160px;
   resize: vertical;
 }
 
@@ -23,4 +23,11 @@
   display: block;
   margin-top: 16px;
   width: 100%;
+}
+
+.mission-engine-v2-form-submit-block {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+  box-sizing: border-box;
 }
