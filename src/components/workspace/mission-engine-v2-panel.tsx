@@ -37,8 +37,8 @@ import "./mission-engine-v2-panel.css";
  * width:100%) zodat ze de volledige paneelbreedte gebruiken in plaats van
  * naast elkaar in een smalle kolom te staan. Het succescriteria-veld is een
  * `<textarea>` met de klasse `mission-engine-v2-form-textarea`
- * (min-height + width:100%) en de submitknop staat als sibling ná het
- * laatste veld, met de extra klasse `mission-engine-v2-form-submit-block`
+ * (min-height + width:100%) en de submitknop staat als laatste child van dat
+ * formulier, met de extra klasse `mission-engine-v2-form-submit-block`
  * (display:block, width:100%) naast de bestaande `mission-engine-v2-form-submit`-klasse.
  * Dit is bewust losgekoppeld van de elders gebruikte gedeelde stijlklasse
  * voor een los invoerveld-plus-knop, zodat die daar ongemoeid blijft. De
@@ -46,13 +46,19 @@ import "./mission-engine-v2-panel.css";
  * hierboven expliciet wordt geïmporteerd zodat deze klassen ook
  * daadwerkelijk effect hebben.
  *
- * Layout van de twee hoofdpanelen ("Nieuwe missie aanmaken" en
- * "Director & Uitvoering"): deze gebruiken de eigen, aan Mission Engine V2
- * toegewijde `mission-engine-v2-grid`-klasse (zie ./mission-engine-v2-panel.css)
- * in plaats van de gedeelde `command-center-main-grid`-klasse die elders op
- * het dashboard wordt gebruikt. Zo kan deze layout onafhankelijk en
- * proportioneel (met fr-eenheden) meeschalen bij het in- en uitzoomen,
- * zonder de gedeelde klasse elders te beïnvloeden.
+ * Layout van de "full"-variant (bovenaan de pagina /dashboard/missions-v2):
+ * de twee hoofdpanelen ("Nieuwe missie aanmaken" en "Director & Uitvoering")
+ * staan naast elkaar in een eigen, uitsluitend aan dit component gebonden
+ * `mev2-top-grid`-container (twee kolommen: `mev2-col mev2-col-form` en
+ * `mev2-col mev2-col-director`, zie ./mission-engine-v2-panel.css). Deze
+ * klassen zijn bewust NIET de gedeelde `command-center-main-grid`-klasse die
+ * elders op het dashboard wordt gebruikt: zo kan deze layout onafhankelijk en
+ * proportioneel (met fr-eenheden, zonder vaste pixel-minimumbreedtes)
+ * meeschalen bij het in- en uitzoomen, zonder andere schermen te
+ * beïnvloeden. Binnen elke kolom staat de inhoud verticaal onder elkaar
+ * (`mev2-col-body`) met de bijbehorende actieknop als laatste element
+ * onderaan de kolom. Het "Recente missies"-blok staat hierónder in een
+ * bewust minder prominente `mev2-recent-missions`-wrapper.
  */
 
 const AUTO_STEP_STATUSES: MissionV2["status"][] = ["ACTIVE", "WAITING_FOR_ROLE"];
@@ -201,10 +207,12 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
 
   const canAutoStep = mission && AUTO_STEP_STATUSES.includes(mission.status);
 
-  // Gedeeld tussen beide weergaven: de missiekaart, de "volgende stap"-knop
-  // en de feedback van de laatste stap (Director-beslissing, gebruikte
-  // kennis, resultaat van de builder-rol).
-  const progressBody = loadingRecent ? (
+  // Gedeeld tussen beide weergaven: de missiekaart en de feedback van de
+  // laatste stap (Director-beslissing, gebruikte kennis, resultaat van de
+  // builder-rol). De "volgende stap"-knop zelf staat hier bewust NIET in,
+  // zodat we die in de "full"-variant als allerlaatste element van de
+  // "Director & Uitvoering"-kolom kunnen plaatsen (ná alle statusinformatie).
+  const progressDetails = loadingRecent ? (
     <div className="empty">Missies worden geladen...</div>
   ) : !mission ? (
     <div className="empty">
@@ -230,17 +238,6 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
           versie {mission.version} · {mission.assignments.length} toewijzing(en)
         </small>
       </article>
-
-      <div className="command-center-quick-command">
-        <button
-          className="primary"
-          type="button"
-          disabled={!canAutoStep || busy !== null}
-          onClick={() => void handleAutoStep()}
-        >
-          {busy === "auto-step" ? "Director is bezig..." : "Laat de Director de volgende stap zetten"}
-        </button>
-      </div>
 
       {!canAutoStep && mission.status !== "COMPLETED" && (
         <p className="muted">
@@ -277,6 +274,19 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
     </div>
   );
 
+  const autoStepButton = mission ? (
+    <div className="command-center-quick-command mev2-col-submit">
+      <button
+        className="primary"
+        type="button"
+        disabled={!canAutoStep || busy !== null}
+        onClick={() => void handleAutoStep()}
+      >
+        {busy === "auto-step" ? "Director is bezig..." : "Laat de Director de volgende stap zetten"}
+      </button>
+    </div>
+  ) : null;
+
   if (variant === "compact") {
     return (
       <section className="panel">
@@ -289,7 +299,8 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
           {mission && <span className="badge">{statusLabel(mission.status)}</span>}
         </div>
 
-        {progressBody}
+        {progressDetails}
+        {autoStepButton}
 
         {error && <p className="error">{error}</p>}
       </section>
@@ -312,35 +323,8 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
         </div>
       </section>
 
-      {recentMissions.length > 1 && (
-        <section className="panel">
-          <div className="section-title">
-            <div>
-              <p className="eyebrow">RECENTE MISSIES</p>
-              <h3>Kies een missie</h3>
-            </div>
-          </div>
-
-          <div className="mission-list">
-            {recentMissions.map((candidate) => (
-              <button
-                key={candidate.missionId}
-                type="button"
-                className={
-                  mission?.missionId === candidate.missionId ? "mission-card mission-card--active" : "mission-card"
-                }
-                onClick={() => selectMission(candidate)}
-              >
-                <span className="mission-status">{statusLabel(candidate.status)}</span>
-                <p>{candidate.title}</p>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
-
-      <section className="mission-engine-v2-grid">
-        <div className="panel">
+      <section className="mev2-top-grid">
+        <div className="panel mev2-col mev2-col-form">
           <div className="section-title">
             <div>
               <p className="eyebrow">NIEUWE MISSION</p>
@@ -348,7 +332,7 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
             </div>
           </div>
 
-          <form className="mission-create-form" onSubmit={submitCreate}>
+          <form className="mission-create-form mev2-col-body" onSubmit={submitCreate}>
             <div className="mission-engine-v2-form-group">
               <input
                 className="mission-engine-v2-form-field"
@@ -378,7 +362,7 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
             </div>
 
             <button
-              className="primary mission-engine-v2-form-submit mission-engine-v2-form-submit-block"
+              className="primary mission-engine-v2-form-submit mission-engine-v2-form-submit-block mev2-col-submit"
               disabled={busy === "create"}
             >
               {busy === "create" ? "Bezig..." : "Mission aanmaken en starten"}
@@ -386,7 +370,7 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
           </form>
         </div>
 
-        <div className="panel">
+        <div className="panel mev2-col mev2-col-director">
           <div className="section-title">
             <div>
               <p className="eyebrow">DIRECTOR &amp; UITVOERING</p>
@@ -396,9 +380,40 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
             {mission && <span className="badge">{statusLabel(mission.status)}</span>}
           </div>
 
-          {progressBody}
+          <div className="mev2-col-body">{progressDetails}</div>
+
+          {autoStepButton}
         </div>
       </section>
+
+      {recentMissions.length > 1 && (
+        <section className="panel mev2-recent-missions">
+          <div className="section-title mev2-recent-missions__header">
+            <div>
+              <p className="eyebrow mev2-recent-missions__eyebrow">RECENTE MISSIES</p>
+              <h3 className="mev2-recent-missions__title">Kies een missie</h3>
+            </div>
+          </div>
+
+          <div className="mission-list mev2-recent-missions__list">
+            {recentMissions.map((candidate) => (
+              <button
+                key={candidate.missionId}
+                type="button"
+                className={
+                  mission?.missionId === candidate.missionId
+                    ? "mission-card mission-card--active mev2-recent-missions__item"
+                    : "mission-card mev2-recent-missions__item"
+                }
+                onClick={() => selectMission(candidate)}
+              >
+                <span className="mission-status">{statusLabel(candidate.status)}</span>
+                <p>{candidate.title}</p>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       {error && <p className="error">{error}</p>}
     </>

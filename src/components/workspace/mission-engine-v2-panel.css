@@ -45,3 +45,81 @@
   margin-top: 16px;
   box-sizing: border-box;
 }
+
+.mev2-top-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  width: 100%;
+  box-sizing: border-box;
+  align-items: stretch;
+}
+
+@media (max-width: 56.25em) {
+  .mev2-top-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.mev2-col {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.mev2-col-form {
+  flex: 1 1 50%;
+}
+
+.mev2-col-director {
+  flex: 1 1 50%;
+}
+
+.mev2-col > * {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.mev2-col-spacer {
+  flex: 1 1 auto;
+}
+
+.mev2-col-submit {
+  margin-top: auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.mev2-recent-missions {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border, rgba(148, 163, 184, 0.2));
+  opacity: 0.9;
+}
+
+.mev2-recent-missions__title {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--muted-foreground, #94a3b8);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 0.5rem;
+}
+
+.mev2-recent-missions__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.mev2-recent-missions__item {
+  font-size: 0.8rem;
+  color: var(--muted-foreground, #94a3b8);
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.375rem;
+  background: transparent;
+}
