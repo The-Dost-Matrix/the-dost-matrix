@@ -183,6 +183,7 @@ export async function executeRoleAssignment({
         criterionId: verdict.criterionId,
         passed: verdict.passed,
         evidenceRefs: [result.resultId],
+        note: verdict.reason,
       },
     });
   }

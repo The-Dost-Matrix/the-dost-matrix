@@ -274,7 +274,7 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
 
       {roleOutput && (
         <article className="knowledge-card">
-          <strong>Resultaat van de builder-rol</strong>
+          <strong>Resultaat van de laatst uitgevoerde rol</strong>
           <p>{roleOutput}</p>
         </article>
       )}

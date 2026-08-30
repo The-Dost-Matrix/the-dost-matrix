@@ -46,6 +46,15 @@ export interface MissionCriterion {
   status: CriterionStatus;
   evidenceRefs: EntityId[];
   evaluatedAt?: IsoDateTime;
+  /**
+   * Toelichting van de laatste beoordeling (meestal van de qa-rol), bv.
+   * "geen CSS zichtbaar in de diff". Bewaard zodat de Director dit bij een
+   * volgende beslissing kan meenemen — zonder dit veld zag de Director bij
+   * een FAILED-criterium alleen de kale omschrijving terug, niet WAAROM het
+   * niet gehaald was, waardoor een nieuwe poging even ongericht kon zijn als
+   * de vorige.
+   */
+  lastEvaluationNote?: string;
 }
 
 export interface MissionAssignmentRecord {

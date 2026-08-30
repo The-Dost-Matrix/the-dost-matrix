@@ -43,6 +43,8 @@ export interface EvaluateCriterionPayload extends Record<string, JsonValue> {
   criterionId: EntityId;
   passed: boolean;
   evidenceRefs: EntityId[];
+  /** Toelichting bij dit oordeel (bv. van de qa-rol) — zie MissionCriterion.lastEvaluationNote. */
+  note: string | null;
 }
 
 export interface ReasonPayload extends Record<string, JsonValue> {

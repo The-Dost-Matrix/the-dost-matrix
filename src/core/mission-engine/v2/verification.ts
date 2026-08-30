@@ -116,6 +116,7 @@ export async function verifyMissionEngineV2(): Promise<void> {
       criterionId: afterResult.successCriteria[0].criterionId,
       passed: true,
       evidenceRefs: ["result_1"],
+      note: null,
     },
   });
   expect(evaluated.successCriteria[0].status === "PASSED", "Criterium wordt niet behaald.");

@@ -5,8 +5,20 @@ export interface LlmMessage {
 
 export interface ChatCompletionResult {
   content: string;
-  /** e.g. "anthropic/claude-sonnet-5" or "openai/gpt-5" — stored on the message for traceability. */
+  /** e.g. "anthropic/claude-sonnet-5" or "openai/gpt-5" — stored on de message voor traceerbaarheid. */
   model: string;
+  /**
+   * Waarom het model stopte met genereren (bv. Anthropic's "end_turn",
+   * "max_tokens", "stop_sequence"). Optioneel omdat niet elke provider dit
+   * teruggeeft. Cruciaal voor diagnose: als een aanroep geen bruikbaar
+   * antwoord teruggeeft, vertelt dit veld ONS of dat kwam doordat het
+   * antwoord echt is afgekapt door het tokenplafond ("max_tokens") — dan
+   * moet het plafond omhoog — of doordat het model zelf stopte met een
+   * verkeerd geformatteerd antwoord ("end_turn") — dan is het een
+   * prompt/parsing-probleem, geen tokenprobleem. Zonder dit veld moeten we
+   * daartussen gissen; zie builder-runtime.ts's writeSingleFile().
+   */
+  stopReason?: string;
 }
 
 export interface LlmProvider {

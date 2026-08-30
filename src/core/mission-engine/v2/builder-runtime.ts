@@ -42,7 +42,34 @@ import type { MissionV2 } from "./mission";
 
 const MAX_FILES_PER_ASSIGNMENT = 8;
 const MAX_TREE_LENGTH = 20_000;
-const MAX_FILE_CONTENT_LENGTH = 20_000;
+// GEVONDEN ROOT CAUSE (live, via de CSS-missie): deze grens stond op 20.000
+// tekens uit de tijd dat writeFiles() de inhoud van ALLE bestanden van een
+// toewijzing (tot MAX_FILES_PER_ASSIGNMENT = 8 stuks) in één gedeelde prompt
+// samenvoegde — toen moest elk bestand een klein deel van de totale ruimte
+// delen. Sinds writeSingleFile() per bestand een eigen aanroep doet, geldt
+// deze grens nog maar voor één bestand tegelijk, maar de waarde was nooit
+// meegeschaald.
+//
+// Het gevolg: globals.css is 37.915 tekens groot. Met de oude grens van
+// 20.000 werd bijna de helft (17.915 tekens) van het bestand stilzwijgend
+// afgekapt VOORDAT de LLM de opdracht ("huidige inhoud van dit bestand")
+// te zien kreeg. De LLM heeft dus nooit "onzorgvuldig" bestaande CSS laten
+// vallen — hij heeft simpelweg nooit geweten dat die CSS bestond, en
+// "reproduceerde" trouw precies wat hem wél werd voorgelegd. Dat verklaart
+// exact welke stukken verdwenen (alles voorbij teken 20.000) toen QA een
+// massale, ogenschijnlijk willekeurige verwijdering van bestaande CSS
+// constateerde.
+//
+// Om dit structureel onmogelijk te maken (niet alleen minder waarschijnlijk)
+// is dit niet zomaar een hoger getal: zie de expliciete controle in
+// writeSingleFile() hieronder die de toewijzing hard laat stoppen zodra een
+// bestand toch nog groter is dan deze grens, in plaats van het stilzwijgend
+// af te kappen. Zo kán een LLM nooit meer een onvolledige weergave van een
+// bestaand bestand als "de volledige huidige inhoud" gepresenteerd krijgen.
+// 300.000 tekens (~75.000-100.000 tokens) past ruim binnen het contextvenster
+// van claude-sonnet-5 en is ruim boven wat enig bestand in dit project nu
+// haalt.
+const MAX_FILE_CONTENT_LENGTH = 300_000;
 
 type AssignmentRecord = MissionV2["assignments"][number];
 
@@ -51,8 +78,34 @@ function buildBuilderSystemPrompt(mission: MissionV2): string {
     "Je bent de Builder-rol binnen The Dost Matrix, een persoonlijk AI-besturingssysteem.",
     `Je werkt aan de missie "${mission.title}" (doel: ${mission.objective}).`,
     "Je past de GitHub-repository van dit project aan door bestanden te lezen en te schrijven; je wijzigingen komen terecht in een pull request die de eigenaar zelf beoordeelt en merget.",
-    "Antwoord UITSLUITEND met geldige JSON, zonder uitleg of markdown eromheen.",
+    // Bewust GEEN "antwoord in JSON"-instructie meer hier: dat stond hier
+    // vroeger, terwijl geen van de aanroepen in dit bestand nog JSON
+    // gebruikt (zie de toelichting bij planFiles/planMetadata/writeSingleFile
+    // hieronder). Een systeeminstructie die iets anders zegt dan wat de
+    // gebruikersprompt vraagt, is zelf een bron van onbetrouwbaarheid.
+    "Volg exact het antwoordformaat dat in de instructie hieronder wordt gevraagd — niet automatisch JSON, tenzij dat expliciet gevraagd wordt.",
   ].join(" ");
+}
+
+/**
+ * Haalt de waarde van "LABEL: waarde" op de regel waar dat label begint
+ * (case-insensitief, ongeacht voorloopspaties). Gebruikt voor korte,
+ * één-regelige velden.
+ */
+function extractLabeledLine(text: string, label: string): string | null {
+  const match = text.match(new RegExp(`^[ \\t]*${label}\\s*:\\s*(.*)$`, "im"));
+  return match ? match[1].trim() : null;
+}
+
+/**
+ * Haalt alles op NA "LABEL:" tot het einde van de tekst — voor vrije,
+ * eventueel meerregelige velden (zoals een PR-beschrijving) die als
+ * laatste in het antwoordformaat staan.
+ */
+function extractLabeledBlock(text: string, label: string): string | null {
+  const match = text.match(new RegExp(`${label}\\s*:`, "i"));
+  if (!match || match.index === undefined) return null;
+  return text.slice(match.index + match[0].length).trim();
 }
 
 function buildAssignmentDescription(mission: MissionV2, assignment: AssignmentRecord): string {
@@ -71,16 +124,25 @@ function buildAssignmentDescription(mission: MissionV2, assignment: AssignmentRe
   return lines.join("\n");
 }
 
-function extractJson(text: string): string {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  return (fenced ? fenced[1] : text).trim();
-}
-
 interface BuilderPlan {
   paths: string[];
   planSummary: string;
 }
 
+/**
+ * Vraagt welke bestanden de Builder wil aanmaken/aanpassen.
+ *
+ * GEEN JSON meer (zoals een eerdere versie deed): "planSummary" is vrije,
+ * door de LLM geformuleerde tekst — en vrije tekst in een JSON-stringveld
+ * loopt tegen precies dezelfde escaping-problemen aan (aanhalingstekens,
+ * dubbele punten, regeleindes) die we al eerder bij de bestandsinhoud zelf
+ * hebben opgelost door daar JSON te laten varen (zie writeSingleFile). Dit
+ * bleek live ook echt mis te gaan: de zustergaanroep planMetadata() met
+ * dezelfde JSON-aanpak gaf op een gegeven moment de fout "kon het antwoord
+ * niet als JSON lezen" terug, puur omdat de vrije tekst niet JSON-veilig
+ * was. In plaats van dat risico ook hier te laten bestaan, gebruikt dit een
+ * simpel, labelgebaseerd tekstformaat zonder escaping-eisen.
+ */
 async function planFiles(
   mission: MissionV2,
   assignment: AssignmentRecord,
@@ -96,36 +158,25 @@ async function planFiles(
     "",
     `Geef een lijst van maximaal ${MAX_FILES_PER_ASSIGNMENT} bestandspaden (relatief aan de root van de repository) die je moet aanmaken of aanpassen om deze opdracht te voltooien. Gebruik alleen paden die logisch passen bij de bestaande structuur hierboven.`,
     "",
-    "Antwoord exact in dit JSON-formaat, niets anders:",
-    "{",
-    '  "planSummary": "korte beschrijving van je aanpak",',
-    '  "paths": ["src/..."]',
-    "}",
+    "BELANGRIJK: gebruik GEEN JSON. Antwoord EXACT in onderstaand tekstformaat, niets anders (geen markdown-codeblok eromheen, geen uitleg ervoor):",
+    "",
+    "BESTANDEN: pad/naar/bestand1, pad/naar/bestand2",
+    "SAMENVATTING:",
+    "(korte beschrijving van je aanpak, mag meerdere regels zijn — dit is de rest van je antwoord)",
   ].join("\n");
 
   const completion = await provider.chatCompletion(buildBuilderSystemPrompt(mission), [
     { role: "user", content: userPrompt },
   ]);
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(extractJson(completion.content));
-  } catch {
-    throw new Error("De Builder gaf geen geldig plan terug (kon het antwoord niet als JSON lezen).");
-  }
+  const bestandenLine = extractLabeledLine(completion.content, "BESTANDEN");
+  const summaryBlock = extractLabeledBlock(completion.content, "SAMENVATTING");
 
-  if (typeof parsed !== "object" || parsed === null) {
-    throw new Error("De Builder gaf een onverwacht plan terug.");
-  }
-
-  const candidate = parsed as Partial<BuilderPlan>;
-
-  const paths = Array.isArray(candidate.paths)
-    ? candidate.paths
-        .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
-        .map((entry) => entry.trim().replace(/^\/+/, ""))
-        .slice(0, MAX_FILES_PER_ASSIGNMENT)
-    : [];
+  const paths = (bestandenLine ?? "")
+    .split(",")
+    .map((entry) => entry.trim().replace(/^\/+/, ""))
+    .filter((entry) => entry.length > 0)
+    .slice(0, MAX_FILES_PER_ASSIGNMENT);
 
   if (paths.length === 0) {
     throw new Error("De Builder kon geen bestanden bepalen om aan te passen voor deze opdracht.");
@@ -133,10 +184,7 @@ async function planFiles(
 
   return {
     paths,
-    planSummary:
-      typeof candidate.planSummary === "string" && candidate.planSummary.trim()
-        ? candidate.planSummary.trim()
-        : "Geen samenvatting opgegeven.",
+    planSummary: summaryBlock && summaryBlock.length > 0 ? summaryBlock : "Geen samenvatting opgegeven.",
   };
 }
 
@@ -159,107 +207,245 @@ interface BuilderWriteResult {
   model: string;
 }
 
-async function writeFiles(
+interface BuilderMetadata {
+  summary: string;
+  pullRequestTitle: string;
+  pullRequestBody: string;
+}
+
+/**
+ * Vraagt de samenvattende informatie (summary, PR-titel, PR-body) op bij de
+ * LLM — NA het schrijven van de bestanden, niet ervoor.
+ *
+ * GEVONDEN ROOT CAUSE (live, opnieuw via de CSS-missie): deze aanroep
+ * gebeurde eerder VÓÓR writeSingleFile() — dus gebaseerd op alleen het plan
+ * (bestandspaden + een korte aanpak-samenvatting), zonder dat de LLM de
+ * daadwerkelijk te schrijven bestandsinhoud ooit te zien kreeg. Desondanks
+ * werd er in de PR-beschrijving een gedetailleerd "voor/na"-codevoorbeeld
+ * gegeven — dat kan op dat moment onmogelijk een feitelijke beschrijving
+ * zijn geweest, want de echte inhoud bestond nog niet. QA (die wél de
+ * echte diff via de GitHub API bekijkt) constateerde vervolgens dat de
+ * daadwerkelijke wijziging er heel anders uitzag dan de PR-beschrijving
+ * beweerde — precies het "LLM-verhaal versus werkelijke output"-probleem
+ * dat we deze sessie al vaker zijn tegengekomen, nu ontstaan doordat de
+ * beschrijving werd geschreven vóórdat er iets was om te beschrijven.
+ *
+ * Twee onafhankelijke maatregelen hiertegen: (1) deze aanroep gebeurt nu
+ * pas NA writeFiles(), zodat de bestanden die worden genoemd ook echt al
+ * geschreven zijn; (2) de instructie verbiedt nu expliciet het verzinnen
+ * van voor/na-codevoorbeelden in de beschrijving — de echte diff staat toch
+ * al op GitHub zelf, dus een tekstuele reconstructie daarvan is overbodig
+ * en, zoals nu gebleken, een reëel risico.
+ *
+ * GEEN JSON: "pullRequestBody" is per definitie vrije tekst (mag
+ * aanhalingstekens, dubbele punten, regeleindes bevatten) die niet
+ * betrouwbaar in een JSON-stringveld past — dit gaf hier eerder ook al
+ * live een storing. Labelgebaseerd tekstformaat zoals planFiles()
+ * hierboven, met per veld een eigen fallback.
+ */
+async function planMetadata(
   mission: MissionV2,
   assignment: AssignmentRecord,
   plan: BuilderPlan,
-  plannedFiles: PlannedFile[],
-): Promise<BuilderWriteResult> {
+  writtenFiles: BuilderFileChange[],
+): Promise<BuilderMetadata> {
   const provider = getChatProvider();
-
-  const fileBlocks = plannedFiles
-    .map((file) => {
-      const status =
-        file.currentContent === null ? "NIEUW BESTAND (bestaat nog niet)" : "BESTAAND BESTAND";
-      const content =
-        file.currentContent === null
-          ? ""
-          : `\n---\n${file.currentContent.slice(0, MAX_FILE_CONTENT_LENGTH)}\n---`;
-      return `### ${file.path} (${status})${content}`;
-    })
-    .join("\n\n");
 
   const userPrompt = [
     buildAssignmentDescription(mission, assignment),
     "",
     `Jouw plan: ${plan.planSummary}`,
+    `Bestanden die je zojuist daadwerkelijk hebt geschreven: ${writtenFiles.map((file) => file.path).join(", ")}`,
     "",
-    "Huidige inhoud van de betrokken bestanden:",
-    fileBlocks,
+    "Geef samenvattende informatie over de wijziging die je zojuist hebt doorgevoerd.",
     "",
-    "Geef nu de VOLLEDIGE nieuwe inhoud van elk bestand terug (niet alleen het verschil). Schrijf productiekwaliteit code die aansluit bij de bestaande stijl. Verzin geen bestanden buiten de lijst hierboven.",
+    'BELANGRIJK: beschrijf in gewone taal WAT er is veranderd en WAAROM — gebruik GEEN codevoorbeelden, geen "voor/na"-fragmenten en geen letterlijke regelnummers of code-snippets in je beschrijving. De echte, volledige wijziging is al zichtbaar in de diff van de pull request zelf; een tekstuele reconstructie daarvan voegt niets toe en kan afwijken van wat er echt staat.',
     "",
-    "BELANGRIJK: gebruik GEEN JSON voor de bestandsinhoud — bestandsinhoud kan aanhalingstekens, backticks en regeleindes bevatten die JSON breken. Antwoord EXACT in onderstaand tekstformaat, niets anders (geen markdown-codeblok eromheen):",
+    "BELANGRIJK: gebruik GEEN JSON — vrije tekst zoals een PR-beschrijving kan aanhalingstekens, dubbele punten en regeleindes bevatten die JSON breken. Antwoord EXACT in onderstaand tekstformaat, niets anders (geen markdown-codeblok eromheen, geen uitleg ervoor):",
     "",
-    'METADATA: {"summary": "korte beschrijving van wat je hebt gebouwd", "pullRequestTitle": "korte titel voor de pull request", "pullRequestBody": "beschrijving van de wijziging"}',
-    `===FILE: ${plan.paths[0] ?? "pad/naar/bestand"} ===`,
-    "(hier de volledige, letterlijke inhoud van dit bestand — geen aanhalingstekens escapen, gewoon de ruwe tekst)",
-    "===ENDFILE===",
-    "(herhaal het ===FILE=== / ===ENDFILE===-blok voor elk bestand uit de lijst hierboven; de METADATA-regel komt maar één keer, vóór het eerste bestand)",
+    "SAMENVATTING: (korte beschrijving van wat je hebt gebouwd, één regel)",
+    "PR_TITEL: (korte titel voor de pull request, één regel)",
+    "PR_BESCHRIJVING:",
+    "(beschrijving in gewone taal, geen code — mag meerdere regels bevatten — dit is de rest van je antwoord)",
   ].join("\n");
 
   const completion = await provider.chatCompletion(buildBuilderSystemPrompt(mission), [
     { role: "user", content: userPrompt },
   ]);
 
-  const text = completion.content;
-  const metadataIndex = text.search(/METADATA\s*:/i);
-  const firstFileIndex = text.search(/===\s*FILE\s*:/i);
+  const summary = extractLabeledLine(completion.content, "SAMENVATTING");
+  const pullRequestTitle = extractLabeledLine(completion.content, "PR_TITEL");
+  const pullRequestBody = extractLabeledBlock(completion.content, "PR_BESCHRIJVING");
 
-  if (metadataIndex === -1 || firstFileIndex === -1 || firstFileIndex <= metadataIndex) {
+  return {
+    summary: summary && summary.length > 0 ? summary : plan.planSummary,
+    pullRequestTitle:
+      pullRequestTitle && pullRequestTitle.length > 0
+        ? pullRequestTitle
+        : `Director: ${mission.title}`,
+    pullRequestBody:
+      pullRequestBody && pullRequestBody.length > 0 ? pullRequestBody : assignment.objective,
+  };
+}
+
+interface SingleFileWriteResult {
+  content: string;
+  model: string;
+}
+
+/**
+ * Verwijdert een eventueel markdown-codeblok (```taal ... ```) rondom de
+ * volledige inhoud van het antwoord — voor het geval het model, ondanks de
+ * instructie om dat niet te doen, de bestandsinhoud toch in een codeblok
+ * verpakt. Alleen een codeblok dat het HELE antwoord omvat wordt eraf
+ * gehaald; bij twijfel (bijvoorbeeld meerdere codeblokken) wordt de tekst
+ * onaangeroerd gelaten, om nooit per ongeluk echte bestandsinhoud te
+ * verminken.
+ */
+function stripSurroundingCodeFence(text: string): string {
+  const trimmed = text.trim();
+  const match = trimmed.match(/^```[a-zA-Z0-9_-]*\r?\n([\s\S]*?)\r?\n```$/);
+  return match ? match[1] : trimmed;
+}
+
+/**
+ * Vraagt de VOLLEDIGE inhoud van precies één bestand op bij de LLM.
+ *
+ * Waarom per bestand een eigen aanroep, in plaats van één aanroep voor de
+ * hele toewijzing (zoals de vorige versie deed): bij meerdere bestanden in
+ * één toewijzing (bijvoorbeeld een component + een CSS-bestand) moest de
+ * LLM voorheen de volledige inhoud van ALLE bestanden samen binnen één
+ * tokenplafond (MAX_OUTPUT_TOKENS) teruggeven. Door dit werk op te splitsen
+ * in één aanroep per bestand, blijft het benodigde tokenbudget per aanroep
+ * gelijk ongeacht hoeveel bestanden de toewijzing bevat.
+ *
+ * Waarom GEEN ===FILE===/===ENDFILE===-markeringen meer (zoals een eerdere
+ * versie deed): die markeringen waren alleen nodig om meerdere bestanden in
+ * één antwoord van elkaar te scheiden. Nu elke aanroep hier al maar één
+ * bestand betreft, is dat niet meer nodig — en die markeringen bleken juist
+ * zelf een bron van fouten: bij een lang bestand (bijvoorbeeld een CSS-
+ * bestand van 20K+ tekens) bleek het model soms de hele inhoud correct te
+ * schrijven maar de afsluitende ===ENDFILE===-regel simpelweg te vergeten
+ * (bevestigd via logging: stop_reason "end_turn", dus het model was gewoon
+ * klaar — dit was GEEN tokenlimiet-probleem). Door in plaats daarvan het
+ * volledige antwoord zelf als bestandsinhoud te behandelen, is er geen
+ * afsluitmarkering meer die vergeten kán worden.
+ */
+async function writeSingleFile(
+  mission: MissionV2,
+  assignment: AssignmentRecord,
+  plan: BuilderPlan,
+  file: PlannedFile,
+): Promise<SingleFileWriteResult> {
+  const provider = getChatProvider();
+
+  // Hard stoppen in plaats van stilzwijgend afkappen wanneer een bestaand
+  // bestand groter is dan MAX_FILE_CONTENT_LENGTH. Dit is de kern van de fix
+  // voor een live geconstateerde regressie: door eerder gewoon te knippen
+  // (.slice(0, MAX_FILE_CONTENT_LENGTH)) kreeg de LLM een ONVOLLEDIGE
+  // weergave van globals.css te zien alsof het de volledige, huidige inhoud
+  // was — met als gevolg dat de "volledige nieuwe inhoud" die de LLM
+  // teruggaf braaf overeenkwam met wat hem getoond werd, maar het gedeelte
+  // voorbij de afkapgrens (bijna de helft van het bestand) gewoon miste.
+  // QA ving dat gelukkig af, maar de juiste, structurele fix is dat dit
+  // scenario helemaal niet meer kán ontstaan: als een bestand ooit groter
+  // wordt dan wat we betrouwbaar in één keer kunnen meegeven, moet de
+  // toewijzing expliciet falen (en dus actief/herprobeerbaar blijven, net
+  // als andere Builder-fouten) in plaats van de LLM een vervalste "volledige
+  // inhoud" voor te schotelen.
+  if (file.currentContent !== null && file.currentContent.length > MAX_FILE_CONTENT_LENGTH) {
     throw new Error(
-      "De Builder gaf geen antwoord in het verwachte format terug (metadata of bestandsblokken ontbreken).",
+      `Bestand "${file.path}" is te groot om veilig in één keer te laten herschrijven (${file.currentContent.length} tekens, limiet ${MAX_FILE_CONTENT_LENGTH}). Om te voorkomen dat de Builder een onvolledige kopie van dit bestand als "volledige inhoud" gepresenteerd krijgt en daardoor per ongeluk bestaande inhoud laat verdwijnen — precies wat er eerder gebeurde met globals.css — wordt hier bewust gestopt in plaats van het bestand stilzwijgend af te kappen.`,
     );
   }
 
-  const metadataText = text
-    .slice(metadataIndex, firstFileIndex)
-    .replace(/METADATA\s*:/i, "")
-    .trim();
+  const status =
+    file.currentContent === null ? "NIEUW BESTAND (bestaat nog niet)" : "BESTAAND BESTAND";
+  const currentContentBlock =
+    file.currentContent === null
+      ? "Dit bestand bestaat nog niet — maak het volledig nieuw aan."
+      : `Huidige inhoud van dit bestand:\n---\n${file.currentContent}\n---`;
 
-  let metadata: unknown;
-  try {
-    metadata = JSON.parse(metadataText);
-  } catch {
-    throw new Error("De Builder gaf geen geldige metadata terug (kon het antwoord niet als JSON lezen).");
+  const otherPaths = plan.paths.filter((path) => path !== file.path);
+
+  const userPrompt = [
+    buildAssignmentDescription(mission, assignment),
+    "",
+    `Jouw plan: ${plan.planSummary}`,
+    otherPaths.length > 0
+      ? `Andere bestanden die in dezelfde toewijzing worden aangepast (schrijf die hier NIET — dat gebeurt in aparte stappen): ${otherPaths.join(", ")}`
+      : "",
+    "",
+    `Je schrijft nu UITSLUITEND het bestand "${file.path}" (${status}).`,
+    currentContentBlock,
+    "",
+    "Geef de VOLLEDIGE nieuwe inhoud van dit ene bestand terug (niet alleen het verschil). Schrijf productiekwaliteit code die aansluit bij de bestaande stijl.",
+    "",
+    "BELANGRIJK: je antwoord IS de nieuwe bestandsinhoud, van de allereerste tot de allerlaatste regel — niets ervoor, niets erna. Geen markdown-codeblok (geen ``` eromheen), geen uitleg, geen inleidende zin zoals \"Hier is de inhoud:\", geen ===FILE===- of andere markeringen. Begin direct met de eerste regel van het bestand en stop na de laatste regel.",
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+
+  const completion = await provider.chatCompletion(buildBuilderSystemPrompt(mission), [
+    { role: "user", content: userPrompt },
+  ]);
+
+  const content = stripSurroundingCodeFence(completion.content);
+
+  if (!content) {
+    // Log het echte antwoord naar de terminal van "npm run dev" — zo
+    // hoeven we bij een onverwachte lege inhoud niet te gissen naar de
+    // oorzaak, maar kunnen we het letterlijk zien.
+    console.error(
+      [
+        `Builder-antwoord voor "${file.path}" was leeg na verwerking.`,
+        `stop_reason: ${completion.stopReason ?? "onbekend"}`,
+        `Ruwe lengte van het antwoord: ${completion.content.length} tekens.`,
+      ].join("\n"),
+    );
+
+    const reasonHint =
+      completion.stopReason === "max_tokens"
+        ? `het antwoord werd afgekapt door het tokenplafond (ontving ${completion.content.length} tekens voordat het stopte)`
+        : `het model gaf zelf een leeg antwoord terug (stop_reason: ${completion.stopReason ?? "onbekend"})`;
+
+    throw new Error(
+      `De Builder gaf geen bestandsinhoud terug voor "${file.path}": ${reasonHint}. Bekijk de terminal van "npm run dev" voor meer details.`,
+    );
   }
 
-  if (typeof metadata !== "object" || metadata === null) {
-    throw new Error("De Builder gaf onverwachte metadata terug.");
-  }
+  return { content, model: completion.model };
+}
 
-  const metadataCandidate = metadata as Partial<Omit<BuilderWriteResult, "model" | "files">>;
-
-  const fileBlockPattern = /===\s*FILE\s*:\s*(.+?)\s*===\r?\n([\s\S]*?)\r?\n===\s*ENDFILE\s*===/gi;
+async function writeFiles(
+  mission: MissionV2,
+  assignment: AssignmentRecord,
+  plan: BuilderPlan,
+  plannedFiles: PlannedFile[],
+): Promise<BuilderWriteResult> {
   const files: BuilderFileChange[] = [];
+  let model = "";
 
-  for (const match of text.slice(firstFileIndex).matchAll(fileBlockPattern)) {
-    const path = match[1]?.trim();
-    const content = match[2] ?? "";
-    if (path) {
-      files.push({ path, content });
-    }
+  for (const file of plannedFiles) {
+    const written = await writeSingleFile(mission, assignment, plan, file);
+    files.push({ path: file.path, content: written.content });
+    model = written.model;
   }
 
   if (files.length === 0) {
     throw new Error("De Builder gaf geen bestandsinhoud terug om weg te schrijven.");
   }
 
+  // Bewust pas HIER, na het schrijven van alle bestanden — zie de
+  // toelichting bij planMetadata() voor waarom deze volgorde cruciaal is.
+  const metadata = await planMetadata(mission, assignment, plan, files);
+
   return {
-    summary:
-      typeof metadataCandidate.summary === "string" && metadataCandidate.summary.trim()
-        ? metadataCandidate.summary.trim()
-        : plan.planSummary,
-    pullRequestTitle:
-      typeof metadataCandidate.pullRequestTitle === "string" && metadataCandidate.pullRequestTitle.trim()
-        ? metadataCandidate.pullRequestTitle.trim()
-        : `Director: ${mission.title}`,
-    pullRequestBody:
-      typeof metadataCandidate.pullRequestBody === "string" && metadataCandidate.pullRequestBody.trim()
-        ? metadataCandidate.pullRequestBody.trim()
-        : assignment.objective,
+    summary: metadata.summary,
+    pullRequestTitle: metadata.pullRequestTitle,
+    pullRequestBody: metadata.pullRequestBody,
     files,
-    model: completion.model,
+    model,
   };
 }
 
@@ -344,12 +530,27 @@ export async function executeBuilderAssignment({
     });
   }
 
+  // Deterministische, door code bepaalde lijst van daadwerkelijk geschreven
+  // bestanden — NIET de vrije tekst van de LLM (writeResult.pullRequestBody).
+  // De LLM's eigen samenvatting kan meer beweren dan hij daadwerkelijk heeft
+  // geschreven (bijvoorbeeld claimen dat een CSS-bestand is aangepast terwijl
+  // er alleen een ===FILE===-blok voor het component kwam) — dat gebeurde
+  // hier ook echt. Door deze regel altijd zelf toe te voegen aan de
+  // pull-requestbeschrijving, hoeft de eigenaar niet te vertrouwen op wat de
+  // Builder zégt te hebben gedaan, en is dit ook zichtbaar op GitHub zelf
+  // (niet alleen in de app, waar dezelfde lijst al in roleOutput stond).
+  const filesLine = `Bestanden in deze pull request (bepaald door de code, niet door de LLM): ${filesToWrite
+    .map((file) => file.path)
+    .join(", ")}`;
+
   const pullRequest = await createPullRequest(target, {
     title: writeResult.pullRequestTitle,
     head: branchName,
     base: defaultBranch,
     body: [
       writeResult.pullRequestBody,
+      "",
+      filesLine,
       "",
       `Missie: ${mission.title}`,
       `Toewijzing: ${assignment.objective}`,

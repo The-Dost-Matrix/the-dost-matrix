@@ -304,6 +304,7 @@ export class MissionEngine {
     criterion.status = command.payload.passed ? "PASSED" : "FAILED";
     criterion.evidenceRefs = [...command.payload.evidenceRefs];
     criterion.evaluatedAt = this.clock.now();
+    criterion.lastEvaluationNote = command.payload.note ?? undefined;
     return this.commit(command, mission, previousStatus, "mission.criterion_evaluated", {
       criterionId: criterion.criterionId,
     });

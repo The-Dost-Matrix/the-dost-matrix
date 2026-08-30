@@ -130,7 +130,12 @@ function buildDirectorPrompt(
   ].join(" ");
 
   const criteriaLines = mission.successCriteria
-    .map((criterion) => `- (${criterion.status}) ${criterion.description}`)
+    .map((criterion) => {
+      const note = criterion.lastEvaluationNote?.trim();
+      return note
+        ? `- (${criterion.status}) ${criterion.description} — toelichting vorige beoordeling: ${note}`
+        : `- (${criterion.status}) ${criterion.description}`;
+    })
     .join("\n");
 
   const assignmentLines =
@@ -144,7 +149,7 @@ function buildDirectorPrompt(
           .join("\n");
 
   const allowedTypes = allowComplete
-    ? '"DISPATCH_ROLE" of "COMPLETE_MISSION"'
+    ? '"COMPLETE_MISSION" (VERPLICHT — zie hieronder) of "DISPATCH_ROLE"'
     : '"DISPATCH_ROLE" (COMPLETE_MISSION is nu niet toegestaan: nog niet alle succescriteria staan op PASSED)';
 
   const userPrompt = [
@@ -163,6 +168,10 @@ function buildDirectorPrompt(
     'Er zijn twee rollen beschikbaar om taken aan toe te wijzen:',
     '- "builder": past daadwerkelijk bestanden aan in de GitHub-repository en opent daarvoor een pull request.',
     '- "qa": beoordeelt een pull request van de builder-rol tegen de succescriteria en zet criteria op PASSED/FAILED. Zet deze rol in nadat een builder-toewijzing is afgerond en VOORDAT je COMPLETE_MISSION overweegt — zonder een qa-toewijzing worden succescriteria nooit PASSED en kun je de missie dus nooit afronden.',
+    "Staat een succescriterium op FAILED met een toelichting van de vorige beoordeling hierboven? Gebruik die toelichting dan expliciet om een preciezere 'nextAction' te formuleren voor de builder-rol (bijvoorbeeld: welk bestand nog mist, wat er specifiek nog ontbreekt) — herhaal niet zomaar dezelfde algemene opdracht die al tot een FAILED oordeel leidde.",
+    allowComplete
+      ? "BELANGRIJK: alle succescriteria hierboven staan al op (PASSED) — dat is al door de qa-rol geverifieerd, niet door jou aangenomen. Kies dan ALTIJD COMPLETE_MISSION. Zet in dat geval NOOIT opnieuw de qa-rol in ter herbevestiging — dat is overbodig, er is niets nieuws om te verifiëren."
+      : "",
     `Kies één decisionType uit: ${allowedTypes}.`,
     "",
     "Antwoord exact in dit JSON-formaat, niets anders:",
@@ -270,6 +279,17 @@ export async function runDirectorStep({
   const usedKnowledge = await gatherRelevantKnowledge(mission);
   const llmDecision = await decideNextStep(mission, allowComplete, usedKnowledge);
   const now = new Date().toISOString();
+
+  // Veiligheidsnet naast de prompt-instructie hierboven: als alle
+  // succescriteria al PASSED zijn (door de qa-rol geverifieerd) en er geen
+  // actieve toewijzing meer loopt, is een nieuwe qa-toewijzing per definitie
+  // overbodig — er is niets nieuws om te verifiëren. LLM's volgen instructies
+  // niet altijd waterdicht, dus dwing dit hier af in plaats van te vertrouwen
+  // op promptgehoorzaamheid alleen.
+  if (allowComplete && llmDecision.decisionType === "DISPATCH_ROLE" && llmDecision.role === "qa") {
+    llmDecision.decisionType = "COMPLETE_MISSION";
+    llmDecision.reason = `Alle succescriteria staan al op PASSED — geen nieuwe qa-toewijzing nodig. (Oorspronkelijke overweging van de Director: "${llmDecision.reason}")`;
+  }
 
   const decision: DirectorDecision = {
     decisionId: randomUUID(),
