@@ -238,7 +238,16 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
         <div>
           <span className="mission-status">{statusLabel(mission.status)}</span>
           <p>{mission.title}</p>
-          <small>{mission.objective}</small>
+          {/*
+            Bewust een <p> in plaats van <small>: de gedeelde stijl
+            `.mission-card small { white-space: nowrap }` (globals.css) is
+            bedoeld voor korte labels (zoals "versie X · Y toewijzingen"
+            hieronder), niet voor een volledige, mogelijk lange
+            doelomschrijving. Met <small> werd die tekst gedwongen op één
+            regel gezet en afgekapt zodra de kolom smaller was dan de
+            volledige zin. `.mission-card p` bestaat al en breekt gewoon af.
+          */}
+          <p className="mission-objective">{mission.objective}</p>
         </div>
 
         <small>
