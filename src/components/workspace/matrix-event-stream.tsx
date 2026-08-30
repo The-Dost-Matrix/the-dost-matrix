@@ -19,6 +19,18 @@ type MatrixEvent = {
   type: "mission" | "knowledge" | "chat";
 };
 
+type MatrixEventStreamProps = {
+  /**
+   * "panel" render de component als zelfstandig paneel (historisch gedrag,
+   * zoals eerder gebruikt in de rechter sidebar).
+   *
+   * "dropdown" render een compactere variant zonder eigen paneel-achtergrond
+   * en sectie-titel, bedoeld om als inhoud van een uitklapbaar topbar-paneel
+   * te dienen (bv. de "Recent Activity"-knop in de topbar).
+   */
+  variant?: "panel" | "dropdown";
+};
+
 function formatEventTime(value: Date | null): string {
   if (!value) return "zojuist";
 
@@ -29,7 +41,9 @@ function formatEventTime(value: Date | null): string {
   });
 }
 
-export function MatrixEventStream() {
+export function MatrixEventStream({
+  variant = "panel",
+}: MatrixEventStreamProps = {}) {
   const { user } = useAuth();
 
   const [missions, setMissions] = useState<Mission[]>([]);
@@ -106,16 +120,26 @@ export function MatrixEventStream() {
       .slice(0, 12);
   }, [missions, knowledge, messages]);
 
-  return (
-    <section className="panel command-center-activity">
-      <div className="section-title">
-        <div>
-          <p className="eyebrow">LIVE MATRIX</p>
-          <h3>Event Stream</h3>
-        </div>
+  const isDropdown = variant === "dropdown";
 
-        <span className="badge">LIVE</span>
-      </div>
+  return (
+    <section
+      className={
+        isDropdown
+          ? "command-center-activity command-center-activity--dropdown"
+          : "panel command-center-activity"
+      }
+    >
+      {!isDropdown && (
+        <div className="section-title">
+          <div>
+            <p className="eyebrow">LIVE MATRIX</p>
+            <h3>Event Stream</h3>
+          </div>
+
+          <span className="badge">LIVE</span>
+        </div>
+      )}
 
       <div className="command-center-activity-list">
         {events.length === 0 ? (
