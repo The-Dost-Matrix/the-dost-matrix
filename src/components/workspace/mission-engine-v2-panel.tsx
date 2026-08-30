@@ -57,8 +57,15 @@ import "./mission-engine-v2-panel.css";
  * meeschalen bij het in- en uitzoomen, zonder andere schermen te
  * beïnvloeden. Binnen elke kolom staat de inhoud verticaal onder elkaar
  * (`mev2-col-body`) met de bijbehorende actieknop als laatste element
- * onderaan de kolom. Het "Recente missies"-blok staat hierónder in een
- * bewust minder prominente `mev2-recent-missions`-wrapper.
+ * onderaan de kolom. Het `<form className="mev2-col-body">` van kolom 1 is
+ * zelf een flex-kolom (zie CSS: display:flex, flex-direction:column,
+ * flex-grow:1) die de volledige hoogte van `.mev2-col` inneemt; vlak vóór de
+ * submitknop staat daarom een `<div className="mev2-col-spacer" />` die de
+ * overgebleven ruimte opvult, zodat "Mission aanmaken en starten" altijd
+ * onderaan de kolom uitlijnt — net als de "volgende stap"-knop in kolom 2,
+ * die met dezelfde `.mev2-col-submit`-klasse werkt. Het "Recente
+ * missies"-blok staat hierónder in een bewust minder prominente
+ * `mev2-recent-missions`-wrapper.
  */
 
 const AUTO_STEP_STATUSES: MissionV2["status"][] = ["ACTIVE", "WAITING_FOR_ROLE"];
@@ -360,6 +367,8 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
                 onChange={(event) => setSuccessCriteriaText(event.target.value)}
               />
             </div>
+
+            <div className="mev2-col-spacer" />
 
             <button
               className="primary mission-engine-v2-form-submit mission-engine-v2-form-submit-block mev2-col-submit"
