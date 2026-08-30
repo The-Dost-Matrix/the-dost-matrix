@@ -63,9 +63,15 @@ import "./mission-engine-v2-panel.css";
  * submitknop staat daarom een `<div className="mev2-col-spacer" />` die de
  * overgebleven ruimte opvult, zodat "Mission aanmaken en starten" altijd
  * onderaan de kolom uitlijnt — net als de "volgende stap"-knop in kolom 2,
- * die met dezelfde `.mev2-col-submit`-klasse werkt. Het "Recente
- * missies"-blok staat hierónder in een bewust minder prominente
- * `mev2-recent-missions`-wrapper.
+ * die met dezelfde `.mev2-col-submit`-klasse werkt. Kolom 2 zelf
+ * (`mev2-col mev2-col-director`) is eveneens een flex-kolom: de
+ * status/missiekaart/Director-beslissing/gebruikte kennis/laatste
+ * rolresultaat staan samen in `.mev2-col-body` (dat de resterende ruimte
+ * opvult), en de "Laat de Director de volgende stap zetten"-knop staat
+ * daarna, als laatste child van `.mev2-col`, met de `.mev2-col-submit`-klasse
+ * zodat hij gegarandeerd onderaan de kolom blijft — analoog aan kolom 1. Het
+ * "Recente missies"-blok staat hierónder, ná de `mev2-top-grid`-wrapper, in
+ * een bewust minder prominente `mev2-recent-missions`-wrapper.
  */
 
 const AUTO_STEP_STATUSES: MissionV2["status"][] = ["ACTIVE", "WAITING_FOR_ROLE"];
@@ -339,6 +345,13 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
         </div>
       </section>
 
+      {/*
+        Nieuwe, uitsluitend aan deze pagina gebonden wrapper: plaatst de twee
+        hoofdpanelen naast elkaar (CSS Grid, twee gelijke kolommen, gap in
+        rem — zie mission-engine-v2-panel.css). Deze klasse is bewust géén
+        alias voor `command-center-main-grid`, zodat die layout elders
+        onaangeroerd blijft.
+      */}
       <section className="mev2-top-grid">
         <div className="panel mev2-col mev2-col-form">
           <div className="section-title">
@@ -377,6 +390,12 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
               />
             </div>
 
+            {/*
+              Vult de resterende ruimte in deze flex-kolom op, zodat de
+              submitknop hieronder altijd onderaan de kolom uitlijnt — ook
+              als de andere kolom (Director & Uitvoering) meer inhoud heeft
+              en dus hoger is.
+            */}
             <div className="mev2-col-spacer" />
 
             <button
@@ -398,12 +417,28 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
             {mission && <span className="badge">{statusLabel(mission.status)}</span>}
           </div>
 
+          {/*
+            Status, missiekaart, Director-beslissing, gebruikte kennis en het
+            resultaat van de laatst uitgevoerde rol staan hier samen
+            verticaal onder elkaar (`progressDetails`), binnen dezelfde
+            flex-kolom-body als kolom 1. De "volgende stap"-knop
+            (`autoStepButton`, met `.mev2-col-submit`) staat hierna, als
+            laatste child van `.mev2-col`, en komt zo — net als in kolom 1 —
+            gegarandeerd onderaan de kolom te staan.
+          */}
           <div className="mev2-col-body">{progressDetails}</div>
 
           {autoStepButton}
         </div>
       </section>
 
+      {/*
+        Het "Recente missies"-blok staat bewust NÁ (onder) de
+        `mev2-top-grid`-wrapper hierboven, en krijgt via `mev2-recent-missions`
+        een merkbaar minder prominente stijl (kleinere koppen, gedempte
+        kleuren, minder padding — zie mission-engine-v2-panel.css) dan de
+        twee kolommen erboven.
+      */}
       {recentMissions.length > 1 && (
         <section className="panel mev2-recent-missions">
           <div className="section-title mev2-recent-missions__header">
