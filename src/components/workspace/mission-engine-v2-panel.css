@@ -1,3 +1,17 @@
+.mission-engine-v2-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 900px) {
+  .mission-engine-v2-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .mission-engine-v2-form-group {
   display: block;
   width: 100%;
