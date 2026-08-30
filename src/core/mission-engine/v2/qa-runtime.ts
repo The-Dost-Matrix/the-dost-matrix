@@ -4,9 +4,13 @@ import type { RoleResult } from "@/core/contracts/v2";
 import { getChatProvider } from "@/core/llm/model-router";
 
 import {
+  getDefaultBranch,
+  getFileContent,
   getGithubRepoTarget,
   getPullRequestFiles,
   listPullRequests,
+  type GithubRepoTarget,
+  type PullRequestFileChange,
   type PullRequestSummary,
 } from "./github/github-client";
 import type { MissionV2 } from "./mission";
@@ -24,9 +28,13 @@ import type { MissionV2 } from "./mission";
  *    omdat Mission Engine V2 de volledige inhoud van een RoleResult nog niet
  *    ergens doorzoekbaar bewaart (zie engine.ts, recordRoleResult/commit).
  * 2. Is er geen pull request gevonden, of is de gevonden pull request nog
- *    niet gemerged? Dan faalt deze toewijzing met een duidelijke reden, en
- *    worden er GEEN succescriteria aangepast — ze blijven op hun huidige
- *    status staan zodat de Director het later opnieuw kan proberen.
+ *    niet gemerged? Dan gooit dit een duidelijke fout (net als de Builder-rol
+ *    doet bij haar eigen tijdelijke problemen) in plaats van een FAILED
+ *    RoleResult vast te leggen. Zo blijft de toewijzing actief staan — de
+ *    eigenaar kan na het mergen simpelweg opnieuw op dezelfde knop klikken.
+ *    Een FAILED RoleResult zou de mission naar REPLANNING zetten, een status
+ *    waar noch de Director noch de huidige dashboard-knop automatisch uit
+ *    verder komt.
  * 3. Is de pull request gemerged? Dan haalt dit de gewijzigde bestanden
  *    (diff) op en laat een LLM, met een strikte QA-houding, per
  *    succescriterium van de missie beoordelen of het gehaald is. De
@@ -36,15 +44,37 @@ import type { MissionV2 } from "./mission";
  *
  * Bewust beperkt (v0), zelfde geest als de rest van Mission Engine V2:
  * - beoordeelt alleen de meest recente pull request van deze missie;
- * - beoordeelt op basis van de diff (patches), niet de volledige
- *   bestandsinhoud — voor zeer grote pull requests kan dat onvolledig zijn;
  * - géén automatische re-run wanneer een pull request na afkeuring wordt
  *   aangepast; de Director moet dan opnieuw de builder-rol inzetten.
+ *
+ * Belangrijke correctie (na een live misser): QA beoordeelde criteria
+ * aanvankelijk uitsluitend op basis van de diff/patch van dé ene pull
+ * request die op dat moment beoordeeld werd. Voor een missie die in meerdere
+ * pull requests wordt afgerond (bijvoorbeeld: PR A bouwt de hoofdstructuur,
+ * PR B repareert daarna nog één afgekeurd criterium) toont de diff van PR B
+ * alléén de kleine vervolgwijziging — niet de structuur die PR A al had
+ * neergezet en die intussen al gemerged is. QA zag dan geen "bewijs" voor
+ * criteria die in werkelijkheid allang klopten, en keurde ze onterecht af.
+ * QA haalt daarom nu, per gewijzigd bestand, ook de HUIDIGE VOLLEDIGE
+ * INHOUD op (op de standaardbranch, dus inclusief alles wat eerder al is
+ * gemerged) en beoordeelt daarop — de diff van de specifieke pull request
+ * blijft daarnaast beschikbaar als aanvullende context (bijvoorbeeld om te
+ * zien of een verboden bestand niet is aangepast), maar is niet meer de
+ * enige bron van waarheid. Zie ook de les "nooit de 'huidige inhoud' van
+ * een bestand stilzwijgend afkappen voor een LLM" — dezelfde discipline
+ * geldt hier: bij een te groot bestand faalt dit expliciet in plaats van
+ * stilzwijgend een deel van de inhoud weg te knippen.
  */
 
 const QA_BRANCH_PREFIX = (missionId: string) => `director/mission-${missionId.slice(0, 8)}-`;
-const MAX_DIFF_LENGTH = 20_000;
 const MAX_FILES_CONSIDERED = 40;
+/**
+ * Zelfde grens en dezelfde reden als MAX_FILE_CONTENT_LENGTH in
+ * builder-runtime.ts: groot genoeg voor praktisch elk bestand in dit
+ * project, en bij overschrijding faalt dit hard met een duidelijke
+ * foutmelding in plaats van de inhoud stilzwijgend af te kappen.
+ */
+const MAX_FILE_CONTENT_LENGTH = 300_000;
 
 type AssignmentRecord = MissionV2["assignments"][number];
 
@@ -69,7 +99,10 @@ function buildQaSystemPrompt(mission: MissionV2): string {
   return [
     "Je bent de QA-rol binnen The Dost Matrix, een persoonlijk AI-besturingssysteem.",
     `Je beoordeelt of een pull request voor de missie "${mission.title}" (doel: ${mission.objective}) daadwerkelijk aan de succescriteria voldoet.`,
-    "Wees streng en eerlijk: keur alleen goed wat je in de diff daadwerkelijk kunt onderbouwen. Bij twijfel: afkeuren, niet het voordeel van de twijfel geven.",
+    "Je krijgt per gewijzigd bestand zowel de HUIDIGE VOLLEDIGE INHOUD (de daadwerkelijke, actuele staat van het bestand, inclusief alles wat eerder al gemerged is) als de DIFF van specifiek déze pull request.",
+    "Beoordeel elk succescriterium op basis van de HUIDIGE VOLLEDIGE INHOUD — dat is de bron van waarheid. Gebruik de diff alleen als aanvullende context, bijvoorbeeld om te controleren wat er in déze pull request specifiek is gewijzigd.",
+    "Een criterium mag GEHAALD zijn ook wanneer het niet zichtbaar is in de diff van déze pull request, zolang het wél klopt in de huidige volledige inhoud (bijvoorbeeld omdat het al in een eerdere, gemergede pull request van dezelfde missie is gerealiseerd). Keur nooit af puur omdat 'de diff het niet aantoont' terwijl de volledige inhoud het criterium wél waarmaakt.",
+    "Wees streng en eerlijk: keur alleen goed wat je in de daadwerkelijke bestandsinhoud kunt onderbouwen. Bij twijfel: afkeuren, niet het voordeel van de twijfel geven.",
     "Antwoord UITSLUITEND met geldige JSON, zonder uitleg of markdown eromheen.",
   ].join(" ");
 }
@@ -140,10 +173,71 @@ interface QaLlmVerdict {
   recommendation: string;
 }
 
-async function evaluateCriteriaAgainstDiff(
+interface QaFileEvidence {
+  filename: string;
+  status: string;
+  patch?: string;
+  fullContent: string | null;
+}
+
+/**
+ * Haalt, voor elk gewijzigd bestand van de pull request, de HUIDIGE
+ * VOLLEDIGE INHOUD op de standaardbranch op (dus ná deze pull request én
+ * alles wat daarvoor al gemerged was). Bestanden met status "removed"
+ * worden overgeslagen (die bestaan per definitie niet meer op de
+ * standaardbranch). Faalt expliciet bij een te groot bestand — zie de
+ * uitleg bovenaan dit bestand over waarom stilzwijgend afkappen hier
+ * bewust niet gebeurt.
+ */
+async function fetchFullFileContents(
+  target: GithubRepoTarget,
+  files: PullRequestFileChange[],
+  ref: string,
+): Promise<QaFileEvidence[]> {
+  const evidence: QaFileEvidence[] = [];
+
+  for (const file of files) {
+    if (file.status === "removed") {
+      evidence.push({ ...file, fullContent: null });
+      continue;
+    }
+
+    const fetched = await getFileContent(target, file.filename, ref);
+
+    if (fetched && fetched.content.length > MAX_FILE_CONTENT_LENGTH) {
+      throw new Error(
+        `Het bestand "${file.filename}" is ${fetched.content.length} tekens lang — groter dan de QA-limiet van ${MAX_FILE_CONTENT_LENGTH} tekens. QA weigert bewust stilzwijgend af te kappen; verhoog MAX_FILE_CONTENT_LENGTH in qa-runtime.ts als dit een legitiem groot bestand is.`,
+      );
+    }
+
+    evidence.push({ ...file, fullContent: fetched?.content ?? null });
+  }
+
+  return evidence;
+}
+
+function formatEvidenceForPrompt(evidence: QaFileEvidence[]): string {
+  return evidence
+    .map((file) => {
+      const parts = [`### ${file.filename} (${file.status})`];
+
+      parts.push(
+        file.fullContent !== null
+          ? `HUIDIGE VOLLEDIGE INHOUD (op de standaardbranch, ná deze pull request):\n${file.fullContent}`
+          : "(bestand is verwijderd of de inhoud kon niet worden opgehaald)",
+      );
+
+      parts.push(`DIFF van specifiek déze pull request:\n${file.patch ?? "(geen tekstuele diff beschikbaar)"}`);
+
+      return parts.join("\n\n");
+    })
+    .join("\n\n---\n\n");
+}
+
+async function evaluateCriteriaAgainstEvidence(
   mission: MissionV2,
   pr: PullRequestSummary,
-  diffText: string,
+  evidenceText: string,
 ): Promise<{ verdict: QaLlmVerdict; model: string }> {
   const provider = getChatProvider();
 
@@ -157,8 +251,8 @@ async function evaluateCriteriaAgainstDiff(
     "Succescriteria van de missie (beoordeel ELK criterium apart, gebruik het exacte criterionId):",
     criteriaLines,
     "",
-    `Diff van de pull request (ingekort tot ${MAX_DIFF_LENGTH} tekens indien nodig):`,
-    diffText.slice(0, MAX_DIFF_LENGTH),
+    "Bewijsmateriaal per gewijzigd bestand (huidige volledige inhoud + diff van déze pull request):",
+    evidenceText,
     "",
     "Antwoord exact in dit JSON-formaat, niets anders:",
     "{",
@@ -228,13 +322,20 @@ async function evaluateCriteriaAgainstDiff(
 /**
  * Voert een toewijzing van de QA-rol uit: vindt de bijbehorende pull request
  * op GitHub, controleert of die gemerged is, en laat (pas dan) een LLM per
- * succescriterium een PASSED/FAILED-oordeel vellen op basis van de diff.
+ * succescriterium een PASSED/FAILED-oordeel vellen op basis van de huidige
+ * volledige inhoud van de gewijzigde bestanden (aangevuld met de diff van
+ * déze specifieke pull request als context).
  *
- * In tegenstelling tot de Builder-rol gooit dit GEEN fout wanneer er (nog)
- * geen bruikbare pull request is — dat is een normale, verwachte uitkomst
- * (de eigenaar heeft simpelweg nog niet gemerged) en wordt afgehandeld als
- * een FAILED RoleResult met een duidelijke reden, zodat de Director weet dat
- * hij moet wachten of opnieuw moet plannen.
+ * Net als de Builder-rol (zie builder-runtime.ts) gooit dit een duidelijke
+ * fout wanneer er nog geen bruikbare pull request is, of wanneer die nog
+ * niet gemerged is — dit zijn normale, verwachte, tijdelijke situaties (de
+ * eigenaar moet eerst zelf beoordelen en mergen), GEEN mislukking van de
+ * QA-toewijzing zelf. Door hier te gooien in plaats van een FAILED
+ * RoleResult vast te leggen, blijft de toewijzing actief (mission blijft
+ * WAITING_FOR_ROLE) zodat de eigenaar het na het mergen simpelweg opnieuw
+ * kan proberen via dezelfde knop — een FAILED RoleResult zou de mission
+ * naar REPLANNING zetten, een status waar de Director (en de huidige
+ * dashboard-knop) niet automatisch uit verder komt.
  */
 export async function executeQaAssignment({
   mission,
@@ -247,52 +348,23 @@ export async function executeQaAssignment({
   const pr = findMissionPullRequest(prs, mission.missionId);
 
   if (!pr) {
-    const summary =
-      "Geen pull request gevonden die bij deze missie hoort. De Builder-rol moet eerst een pull request openen voordat QA kan beoordelen.";
-    return {
-      result: buildResult({
-        assignment,
-        mission,
-        status: "FAILED",
-        summary,
-        roleOutput: summary,
-        successCriteriaResults: {},
-        artifactRefs: [],
-        durationMs: Date.now() - startedAt,
-      }),
-      roleOutput: summary,
-      criteriaVerdicts: [],
-    };
+    throw new Error(
+      "Geen pull request gevonden die bij deze missie hoort. De Builder-rol moet eerst een pull request openen voordat QA kan beoordelen — probeer het na het aanmaken van de pull request opnieuw.",
+    );
   }
 
   if (!pr.merged) {
-    const summary = [
-      `Pull request #${pr.number} ("${pr.title}") is nog niet gemerged.`,
-      `Beoordeel en merge de pull request eerst zelf op GitHub voordat QA de succescriteria kan controleren: ${pr.url}`,
-    ].join(" ");
-    return {
-      result: buildResult({
-        assignment,
-        mission,
-        status: "FAILED",
-        summary,
-        roleOutput: summary,
-        successCriteriaResults: {},
-        artifactRefs: [pr.url],
-        durationMs: Date.now() - startedAt,
-      }),
-      roleOutput: summary,
-      criteriaVerdicts: [],
-    };
+    throw new Error(
+      `Pull request #${pr.number} ("${pr.title}") is nog niet gemerged. Beoordeel en merge de pull request eerst zelf op GitHub, en laat de Director daarna opnieuw een stap zetten: ${pr.url}`,
+    );
   }
 
   const files = await getPullRequestFiles(target, pr.number);
-  const diffText = files
-    .slice(0, MAX_FILES_CONSIDERED)
-    .map((file) => `### ${file.filename} (${file.status})\n${file.patch ?? "(geen tekstuele diff beschikbaar)"}`)
-    .join("\n\n");
+  const defaultBranch = await getDefaultBranch(target);
+  const evidence = await fetchFullFileContents(target, files.slice(0, MAX_FILES_CONSIDERED), defaultBranch);
+  const evidenceText = formatEvidenceForPrompt(evidence);
 
-  const { verdict, model } = await evaluateCriteriaAgainstDiff(mission, pr, diffText);
+  const { verdict, model } = await evaluateCriteriaAgainstEvidence(mission, pr, evidenceText);
 
   const successCriteriaResults: Record<string, boolean> = {};
   for (const entry of verdict.criteria) {
