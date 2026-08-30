@@ -6,7 +6,6 @@ type CommandCenterLayoutProps = {
   navigation: ReactNode;
   topbar: ReactNode;
   workspace: ReactNode;
-  monitor: ReactNode;
   footer?: ReactNode;
 };
 
@@ -14,7 +13,6 @@ export function CommandCenterLayout({
   navigation,
   topbar,
   workspace,
-  monitor,
   footer,
 }: CommandCenterLayoutProps) {
   return (
@@ -28,8 +26,6 @@ export function CommandCenterLayout({
           <section className="matrix-workspace">
             {workspace}
           </section>
-
-          {monitor}
         </div>
 
         {footer}
