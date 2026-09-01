@@ -422,13 +422,18 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
             resultaat van de laatst uitgevoerde rol staan hier samen
             verticaal onder elkaar (`progressDetails`), binnen dezelfde
             flex-kolom-body als kolom 1. De "volgende stap"-knop
-            (`autoStepButton`, met `.mev2-col-submit`) staat hierna, als
-            laatste child van `.mev2-col`, en komt zo — net als in kolom 1 —
-            gegarandeerd onderaan de kolom te staan.
+            (`autoStepButton`, met `.mev2-col-submit`) staat hierna, en komt
+            zo — net als in kolom 1 — gegarandeerd onderaan de kolom te
+            staan. Een eventuele foutmelding (bijv. een needs-signoff-melding
+            van de Director, of een mislukte stap) staat expres hierna, dus
+            direct ONDER die knop in plaats van helemaal onderaan de pagina
+            (na "Recente missies") — zodat de melding zichtbaar blijft bij de
+            actie die haar veroorzaakte.
           */}
           <div className="mev2-col-body">{progressDetails}</div>
 
           {autoStepButton}
+          {error && <p className="error">{error}</p>}
         </div>
       </section>
 
@@ -467,8 +472,6 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
           </div>
         </section>
       )}
-
-      {error && <p className="error">{error}</p>}
     </>
   );
 }

@@ -97,12 +97,15 @@
 }
 /*
  * Lange, niet-afbrekende tekst (een missie-ID, een URL, een aaneengesloten
- * stuk QA- of builder-uitvoer) mag deze kolom nooit breder maken dan de
- * beschikbare ruimte. Bewust gekoppeld aan .mev2-col-body als voorouder,
- * zodat dit alleen binnen dit paneel geldt en de gedeelde .knowledge-card
- * -klasse zelf niet wordt aangepast (die wordt ook elders gebruikt).
+ * stuk QA- of builder-uitvoer, of een foutmelding met een GitHub PR-link)
+ * mag deze kolom nooit breder maken dan de beschikbare ruimte. Bewust
+ * gekoppeld aan .mev2-col als voorouder (niet alleen .mev2-col-body — de
+ * foutmelding onder de "volgende stap"-knop staat er als sibling naast,
+ * niet erin), zodat dit alleen binnen dit paneel geldt en de gedeelde
+ * .knowledge-card-klasse zelf niet wordt aangepast (die wordt ook elders
+ * gebruikt).
  */
-.mev2-col-body :where(p, pre, code, a, small) {
+.mev2-col :where(p, pre, code, a, small) {
   overflow-wrap: anywhere;
   word-break: break-word;
   min-width: 0;
