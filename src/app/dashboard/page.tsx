@@ -87,12 +87,23 @@ export default function DashboardPage() {
         </div>
       </section>
 
+      {/*
+        Twee kolommen naast elkaar: chat links, Second Brain rechts (zie
+        .command-center-main-grid--chat-focus in globals.css voor de
+        daadwerkelijke grid-CSS). Eerder stonden SecondBrainPanel en
+        DirectorChat hier gewoon onder elkaar in DOM-volgorde, met
+        klassenamen ("command-center-main-grid--chat-focus",
+        "command-center-left-column") die een kolomindeling al suggereerden
+        maar waarvoor nooit CSS was geschreven.
+      */}
       <section className="command-center-main-grid command-center-main-grid--chat-focus command-center-main-grid--without-missions">
-        <div className="command-center-left-column command-center-left-column--single">
-          <SecondBrainPanel />
+        <div className="command-center-left-column">
+          <DirectorChat />
         </div>
 
-        <DirectorChat />
+        <div className="command-center-right-column">
+          <SecondBrainPanel />
+        </div>
       </section>
 
       <MissionEngineV2Panel variant="compact" />

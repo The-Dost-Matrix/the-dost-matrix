@@ -134,6 +134,7 @@ function buildQaSystemPrompt(mission: MissionV2): string {
     "Beoordeel elk succescriterium op basis van de VOLLEDIGE INHOUD — dat is de bron van waarheid. Gebruik de diff alleen als aanvullende context, bijvoorbeeld om te controleren wat er in déze pull request specifiek is gewijzigd.",
     "Een criterium mag GEHAALD zijn ook wanneer het niet zichtbaar is in de diff van déze pull request, zolang het wél klopt in de volledige inhoud (bijvoorbeeld omdat het al in een eerdere, gemergede pull request van dezelfde missie is gerealiseerd). Keur nooit af puur omdat 'de diff het niet aantoont' terwijl de volledige inhoud het criterium wél waarmaakt.",
     "Wees streng en eerlijk: keur alleen goed wat je in de daadwerkelijke bestandsinhoud kunt onderbouwen. Bij twijfel: afkeuren, niet het voordeel van de twijfel geven.",
+    "Je mag naast de per-criterium oordelen ook één algemene 'recommendation' geven. Onderscheid daarbij expliciet twee soorten: (a) een puur cosmetische of optionele suggestie die niets aan de daadwerkelijke werking of het doel van de missie verandert (bijvoorbeeld een stijlvoorkeur) — zet dan recommendationBlocksCompletion op false; (b) een concreet, aanwijsbaar gebrek dat een succescriterium in de praktijk breekt of onvolledig maakt (bijvoorbeeld een klassenaam die niet overeenkomt tussen twee bestanden waardoor bedoelde styling niet wordt toegepast) — zet dan recommendationBlocksCompletion op true EN geef in recommendationCriterionId het criterionId van het succescriterium waar dit gebrek het meest op van toepassing is. Wees hier terughoudend en eerlijk: gebruik recommendationBlocksCompletion=true uitsluitend voor een echt gebrek dat de eigenaar zou willen laten oplossen vóórdat dit wordt afgerond, nooit voor smaakkwesties.",
     "Antwoord UITSLUITEND met geldige JSON, zonder uitleg of markdown eromheen.",
   ].join(" ");
 }
@@ -202,6 +203,19 @@ interface QaLlmVerdict {
   overallSummary: string;
   criteria: { criterionId: string; passed: boolean; reason: string }[];
   recommendation: string;
+  /**
+   * Wanneer waar (en `recommendation` niet leeg is), betekent dit dat QA een
+   * concreet, aanwijsbaar gebrek heeft gevonden dat niet mag worden genegeerd
+   * — zie `applyBlockingRecommendation` hieronder, die dit vertaalt naar een
+   * FAILED-status op het meest relevante succescriterium. Dit is bewust
+   * ingebouwd nadat de eigenaar aangaf dat een door QA gesignaleerd gebrek
+   * (een CSS-klassenaam-mismatch die per ongeluk als "GEHAALD, met een
+   * aandachtspunt" werd doorgelaten) altijd eerst door de builder-rol
+   * verholpen moet worden — nooit alleen als vrijblijvende suggestie in de
+   * UI blijven staan terwijl de missie toch al voltooid mag worden.
+   */
+  recommendationBlocksCompletion: boolean;
+  recommendationCriterionId: string;
 }
 
 interface QaFileEvidence {
@@ -292,7 +306,9 @@ async function evaluateCriteriaAgainstEvidence(
     '  "criteria": [',
     '    { "criterionId": "...", "passed": true, "reason": "korte onderbouwing" }',
     "  ],",
-    '  "recommendation": "korte aanbeveling voor de eigenaar"',
+    '  "recommendation": "korte aanbeveling voor de eigenaar, of een lege string als er niets te melden valt",',
+    '  "recommendationBlocksCompletion": false,',
+    '  "recommendationCriterionId": "criterionId waar de aanbeveling het meest op van toepassing is (alleen verplicht wanneer recommendationBlocksCompletion true is)"',
     "}",
   ].join("\n");
 
@@ -346,9 +362,63 @@ async function evaluateCriteriaAgainstEvidence(
         typeof candidate.recommendation === "string" && candidate.recommendation.trim()
           ? candidate.recommendation.trim()
           : "",
+      recommendationBlocksCompletion: candidate.recommendationBlocksCompletion === true,
+      recommendationCriterionId:
+        typeof candidate.recommendationCriterionId === "string" &&
+        validCriterionIds.has(candidate.recommendationCriterionId)
+          ? candidate.recommendationCriterionId
+          : "",
     },
     model: completion.model,
   };
+}
+
+/**
+ * Vertaalt een blokkerende QA-aanbeveling (zie QaLlmVerdict hierboven) naar
+ * een FAILED-verdict op het meest relevante succescriterium — ook wanneer
+ * de LLM dat criterium zelf al als GEHAALD had beoordeeld. Dit is de
+ * daadwerkelijke handhaving van de eigenaar-wens: een concreet gebrek dat QA
+ * signaleert mag nooit alleen als vrijblijvende opmerking in de UI
+ * verschijnen terwijl de missie via `hasPassedAllCriteria` (mission.ts) toch
+ * al afgerond zou mogen worden. Door hier het onderliggende criterium op
+ * FAILED te zetten (met de aanbeveling als `reason`, die later als
+ * `lastEvaluationNote` wordt opgeslagen — zie role-runtime.ts), blijft
+ * `hasPassedAllCriteria` vanzelf false totdat een nieuwe builder-toewijzing
+ * dit verholpen heeft en QA opnieuw akkoord geeft. Geen wijziging nodig aan
+ * mission.ts, engine.ts of director-runtime.ts: dit hergebruikt volledig het
+ * bestaande FAILED-criterium-mechanisme.
+ *
+ * Is er geen valide `recommendationCriterionId` opgegeven (de LLM vergat
+ * hem, of gaf een onbekend criterionId), dan valt dit terug op het eerst
+ * beoordeelde criterium — beter een enigszins arbitraire, maar wél
+ * afdwingende koppeling dan de aanbeveling stilzwijgend laten vervallen.
+ */
+function applyBlockingRecommendation(
+  criteria: QaLlmVerdict["criteria"],
+  verdict: QaLlmVerdict,
+): QaLlmVerdict["criteria"] {
+  if (!verdict.recommendation || !verdict.recommendationBlocksCompletion) {
+    return criteria;
+  }
+
+  const targetId = verdict.recommendationCriterionId || criteria[0]?.criterionId;
+  const targetIndex = criteria.findIndex((entry) => entry.criterionId === targetId);
+
+  if (targetIndex === -1) {
+    return criteria;
+  }
+
+  const target = criteria[targetIndex];
+  const updated = [...criteria];
+  updated[targetIndex] = {
+    ...target,
+    passed: false,
+    reason: target.passed
+      ? `QA-aanbeveling vereist eerst actie voordat dit criterium als gehaald mag gelden: ${verdict.recommendation} (oorspronkelijke beoordeling van dit criterium op zich: "${target.reason}")`
+      : `${target.reason} Daarnaast: ${verdict.recommendation}`,
+  };
+
+  return updated;
 }
 
 /**
@@ -403,19 +473,27 @@ export async function executeQaAssignment({
   const evidenceText = formatEvidenceForPrompt(evidence);
 
   const { verdict, model } = await evaluateCriteriaAgainstEvidence(mission, pr, evidenceText);
+  const effectiveCriteria = applyBlockingRecommendation(verdict.criteria, verdict);
+  const wasOverridden = effectiveCriteria !== verdict.criteria;
 
   const successCriteriaResults: Record<string, boolean> = {};
-  for (const entry of verdict.criteria) {
+  for (const entry of effectiveCriteria) {
     successCriteriaResults[entry.criterionId] = entry.passed;
   }
 
   const roleOutput = [
     verdict.overallSummary,
     "",
-    ...verdict.criteria.map(
+    ...effectiveCriteria.map(
       (entry) => `- (${entry.passed ? "GEHAALD" : "NIET GEHAALD"}) ${entry.criterionId}: ${entry.reason}`,
     ),
-    verdict.recommendation ? `\nAanbeveling: ${verdict.recommendation}` : "",
+    verdict.recommendation
+      ? `\nAanbeveling: ${verdict.recommendation}${
+          wasOverridden
+            ? " — LET OP: hierdoor is een succescriterium hierboven bewust op NIET GEHAALD gezet, ook al leek de inhoud op zich in orde. De missie kan pas weer voltooid worden nadat de builder-rol dit heeft opgelost en QA opnieuw akkoord geeft."
+            : ""
+        }`
+      : "",
     pr.merged
       ? `\nBeoordeeld op basis van pull request #${pr.number} (al gemerged): ${pr.url}`
       : `\nBeoordeeld op basis van pull request #${pr.number} (NOG NIET gemerged — dit is een beoordeling vóóraf): ${pr.url}`,
@@ -435,7 +513,7 @@ export async function executeQaAssignment({
     durationMs: Date.now() - startedAt,
   });
 
-  const criteriaVerdicts: CriterionVerdict[] = verdict.criteria.map((entry) => ({
+  const criteriaVerdicts: CriterionVerdict[] = effectiveCriteria.map((entry) => ({
     criterionId: entry.criterionId,
     passed: entry.passed,
     reason: entry.reason,

@@ -124,8 +124,21 @@ input:focus, textarea:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px r
 .knowledge-card p { margin: 0; color: var(--text); font-size: .85rem; line-height: 1.5; }
 .knowledge-card small { display: block; margin-top: 6px; color: var(--muted); font-size: .65rem; text-transform: uppercase; letter-spacing: .08em; }
 
+/*
+ * De klassenamen command-center-main-grid--chat-focus/command-center-left-
+ * column/command-center-right-column bestonden al in dashboard/page.tsx en
+ * suggereerden een kolomindeling (chat links, Second Brain rechts), maar
+ * hadden nooit bijbehorende CSS gekregen — de twee panelen vielen daardoor
+ * gewoon onder elkaar. min-width: 0 op de kolommen voorkomt dat brede inhoud
+ * (met name de WebGL-canvas van de Second Brain-illustratie) de kolom breder
+ * maakt dan de beschikbare ruimte, dezelfde reden als bij .mev2-col elders.
+ */
+.command-center-main-grid--chat-focus { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
+.command-center-left-column, .command-center-right-column { min-width: 0; }
+
 @media (max-width: 950px) {
   .main-grid { grid-template-columns: 1fr; }
+  .command-center-main-grid--chat-focus { grid-template-columns: 1fr; }
   .hero { align-items: flex-start; flex-direction: column; }
 }
 @media (max-width: 650px) {

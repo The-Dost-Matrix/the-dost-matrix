@@ -87,39 +87,18 @@ export function DirectorChat() {
         </span>
       </div>
 
-      <form
-        className="chat-input-row chat-input-row--top"
-        onSubmit={submitMessage}
-      >
-        <textarea
-          rows={5}
-          placeholder="Vraag Director iets of geef een opdracht..."
-          value={draft}
-          onChange={(event) => {
-            setDraft(event.target.value);
-          }}
-          onKeyDown={(event) => {
-            if (
-              event.key === "Enter" &&
-              !event.shiftKey
-            ) {
-              event.preventDefault();
-              void sendCurrentDraft();
-            }
-          }}
-        />
-
-        <button
-          className="primary"
-          disabled={busy || !draft.trim()}
-        >
-          {busy ? "Bezig..." : "Verstuur"}
-        </button>
-      </form>
-
-      {error && <p className="error">{error}</p>}
-
-      <div className="chat-log chat-log--below-input">
+      {/*
+        Chatgeschiedenis staat bewust VOOR het invoerformulier hieronder: bij
+        plain flex-column stacking (zie .chat-panel in globals.css) bepaalt
+        de DOM-volgorde de visuele volgorde. Eerder stond het formulier hier
+        eerst (met dode, ongestylede modifierklassen "chat-input-row--top" en
+        "chat-log--below-input" die de bedoeling wél beschreven maar niets
+        deden) waardoor het invoerveld per ongeluk BOVEN de geschiedenis
+        verscheen. Nu dezelfde, al langer correct werkende volgorde als het
+        losstaande chatpaneel op /dashboard/chat (zie page.tsx daar): log
+        eerst, invoerveld daaronder.
+      */}
+      <div className="chat-log">
         {messages.length === 0 ? (
           <div className="empty">
             Director staat klaar. Geef een opdracht of stel een vraag.
@@ -147,6 +126,38 @@ export function DirectorChat() {
 
         <div ref={listEnd} />
       </div>
+
+      {error && <p className="error">{error}</p>}
+
+      <form
+        className="chat-input-row"
+        onSubmit={submitMessage}
+      >
+        <textarea
+          rows={5}
+          placeholder="Vraag Director iets of geef een opdracht..."
+          value={draft}
+          onChange={(event) => {
+            setDraft(event.target.value);
+          }}
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey
+            ) {
+              event.preventDefault();
+              void sendCurrentDraft();
+            }
+          }}
+        />
+
+        <button
+          className="primary"
+          disabled={busy || !draft.trim()}
+        >
+          {busy ? "Bezig..." : "Verstuur"}
+        </button>
+      </form>
     </section>
   );
 }
