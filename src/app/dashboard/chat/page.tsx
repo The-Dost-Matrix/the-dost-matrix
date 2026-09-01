@@ -19,6 +19,7 @@ import {
   subscribeToChatMessages,
 } from "@/domains/chat/chat-service";
 import { subscribeToKnowledge } from "@/domains/knowledge/knowledge-service";
+import { SecondBrainPanel } from "@/components/workspace/second-brain-panel";
 
 import type { Mission } from "@/shared/types/mission";
 import type { ChatMessage } from "@/core/domain/chat/chat-message";
@@ -116,11 +117,6 @@ export default function DashboardPage() {
         (entry) =>
           !entry.status || entry.status === "approved",
       ),
-    [knowledge],
-  );
-
-  const recentKnowledge = useMemo(
-    () => knowledge.slice(0, 5),
     [knowledge],
   );
 
@@ -381,154 +377,108 @@ export default function DashboardPage() {
           </form>
         </div>
 
-        <div className="panel chat-panel command-center-chat">
-          <div className="section-title">
-            <div>
-              <p className="eyebrow">
-                DIRECTOR
-              </p>
-              <h3>Chat & Assistant</h3>
+        <div className="command-center-columns">
+          <div className="panel chat-panel command-center-chat">
+            <div className="section-title">
+              <div>
+                <p className="eyebrow">
+                  DIRECTOR
+                </p>
+                <h3>Chat & Assistant</h3>
+              </div>
+
+              <span className="badge">
+                {messages.length} BERICHTEN
+              </span>
             </div>
 
-            <span className="badge">
-              {messages.length} BERICHTEN
-            </span>
-          </div>
+            <div className="chat-log">
+              {messages.length === 0 ? (
+                <div className="empty">
+                  Director staat klaar. Geef een
+                  opdracht of stel een vraag.
+                </div>
+              ) : (
+                messages.map((message) => (
+                  <article
+                    className={`chat-bubble chat-bubble--${message.role}`}
+                    key={message.id}
+                  >
+                    <p>{message.content}</p>
 
-          <div className="chat-log">
-            {messages.length === 0 ? (
-              <div className="empty">
-                Director staat klaar. Geef een
-                opdracht of stel een vraag.
-              </div>
-            ) : (
-              messages.map((message) => (
-                <article
-                  className={`chat-bubble chat-bubble--${message.role}`}
-                  key={message.id}
-                >
-                  <p>{message.content}</p>
+                    <small>
+                      {message.role === "assistant" &&
+                      message.model
+                        ? `${message.model} · `
+                        : ""}
 
-                  <small>
-                    {message.role === "assistant" &&
-                    message.model
-                      ? `${message.model} · `
-                      : ""}
+                      {message.createdAt
+                        ? message.createdAt.toLocaleTimeString(
+                            "nl-NL",
+                          )
+                        : "verzenden..."}
+                    </small>
+                  </article>
+                ))
+              )}
 
-                    {message.createdAt
-                      ? message.createdAt.toLocaleTimeString(
-                          "nl-NL",
-                        )
-                      : "verzenden..."}
-                  </small>
-                </article>
-              ))
-            )}
+              <div ref={listEnd} />
+            </div>
 
-            <div ref={listEnd} />
-          </div>
-
-          <form
-            className="chat-input-row"
-            onSubmit={submitMessage}
-          >
-            <textarea
-              rows={2}
-              placeholder="Vraag Director iets of geef een opdracht..."
-              value={draft}
-              onChange={(event) =>
-                setDraft(event.target.value)
-              }
-              onKeyDown={(event) => {
-                if (
-                  event.key === "Enter" &&
-                  !event.shiftKey
-                ) {
-                  event.preventDefault();
-                  void sendCurrentDraft();
+            <form
+              className="chat-input-row"
+              onSubmit={submitMessage}
+            >
+              <textarea
+                rows={2}
+                placeholder="Vraag Director iets of geef een opdracht..."
+                value={draft}
+                onChange={(event) =>
+                  setDraft(event.target.value)
                 }
-              }}
-            />
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Enter" &&
+                    !event.shiftKey
+                  ) {
+                    event.preventDefault();
+                    void sendCurrentDraft();
+                  }
+                }}
+              />
 
-            <button
-              className="primary"
-              disabled={chatBusy || !draft.trim()}
-            >
-              {chatBusy ? "Bezig..." : "Verstuur"}
-            </button>
-          </form>
-        </div>
+              <button
+                className="primary"
+                disabled={chatBusy || !draft.trim()}
+              >
+                {chatBusy ? "Bezig..." : "Verstuur"}
+              </button>
+            </form>
+          </div>
 
-        <div className="panel command-center-brain">
-          <div className="section-title">
-            <div>
-              <p className="eyebrow">
-                SECOND BRAIN
-              </p>
-              <h3>Connected Knowledge</h3>
+          <div className="panel command-center-brain">
+            <div className="section-title">
+              <div>
+                <p className="eyebrow">
+                  SECOND BRAIN
+                </p>
+                <h3>Connected Knowledge</h3>
+              </div>
+
+              <button
+                className="secondary"
+                onClick={() =>
+                  router.push("/dashboard/knowledge")
+                }
+                type="button"
+              >
+                Open
+              </button>
             </div>
 
-            <button
-              className="secondary"
-              onClick={() =>
-                router.push("/dashboard/knowledge")
-              }
-              type="button"
-            >
-              Open
-            </button>
-          </div>
-
-          <div className="command-center-brain-stats">
-            <article>
-              <span>Totaal</span>
-              <strong>{knowledge.length}</strong>
-            </article>
-
-            <article>
-              <span>Goedgekeurd</span>
-              <strong>{approvedKnowledge.length}</strong>
-            </article>
-
-            <article>
-              <span>In review</span>
-              <strong>{pendingKnowledge.length}</strong>
-            </article>
-          </div>
-
-          <div className="knowledge-list command-center-knowledge-list">
-            {recentKnowledge.length === 0 ? (
-              <div className="empty">
-                Nog geen kennis beschikbaar.
-              </div>
-            ) : (
-              recentKnowledge.map((entry) => (
-                <article
-                  className="knowledge-card"
-                  key={entry.id}
-                >
-                  <strong>
-                    {entry.title || "Kennisitem"}
-                  </strong>
-
-                  <p>
-                    {entry.content.length > 150
-                      ? `${entry.content.slice(0, 150)}…`
-                      : entry.content}
-                  </p>
-
-                  <small>
-                    {entry.type ?? "fact"} ·{" "}
-                    {entry.status ?? "approved"} ·{" "}
-                    {entry.createdAt
-                      ? entry.createdAt.toLocaleString(
-                          "nl-NL",
-                        )
-                      : "..."}
-                  </small>
-                </article>
-              ))
-            )}
+            <div className="command-center-brain-visual">
+              <SecondBrainPanel />
+            </div>
           </div>
         </div>
       </section>

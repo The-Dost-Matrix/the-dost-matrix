@@ -977,3 +977,51 @@ input:focus, textarea:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px r
   margin-top: 6px;
   text-align: center;
 }
+
+/* =========================================================
+   COMMAND CENTER — CHAT + SECOND BRAIN TWEE-KOLOMS LAYOUT
+   Nieuwe, specifieke klasse. De gedeelde "command-center-main-grid"
+   klasse blijft ongewijzigd; deze klasse wordt aanvullend gebruikt
+   om alleen het chat-paneel en het brain-paneel naast elkaar te
+   zetten, met het missies-paneel er los van, over de volle breedte.
+   ========================================================= */
+
+.command-center-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr);
+  align-items: start;
+  gap: 22px;
+  margin-top: 22px;
+}
+
+.command-center-columns .command-center-chat,
+.command-center-columns .command-center-brain {
+  min-width: 0;
+  min-height: 0;
+}
+
+.command-center-columns .command-center-brain {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.command-center-brain-illustration {
+  position: relative;
+  width: 100%;
+  min-height: 420px;
+  flex: 1;
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+@media (max-width: 900px) {
+  .command-center-columns {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .command-center-brain-illustration {
+    min-height: 340px;
+  }
+}
