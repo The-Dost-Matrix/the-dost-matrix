@@ -91,7 +91,13 @@ import type { MissionV2 } from "./mission";
  * plaats van stilzwijgend een onvolledig oordeel te geven.
  */
 
-const QA_BRANCH_PREFIX = (missionId: string) => `director/mission-${missionId.slice(0, 8)}-`;
+/**
+ * Geëxporteerd (niet langer module-lokaal) omdat director-runtime.ts dit nu
+ * ook nodig heeft: vóórdat een missie op COMPLETED mag, moet zij kunnen
+ * controleren of de bijbehorende pull request al gemerged is — zie de
+ * toelichting bij `findUnmergedCompletionBlocker` in director-runtime.ts.
+ */
+export const QA_BRANCH_PREFIX = (missionId: string) => `director/mission-${missionId.slice(0, 8)}-`;
 const MAX_FILES_CONSIDERED = 40;
 /**
  * Zelfde grens en dezelfde reden als MAX_FILE_CONTENT_LENGTH in
@@ -143,7 +149,7 @@ function extractJsonObject(text: string): string {
   return text.slice(start, end + 1);
 }
 
-function findMissionPullRequest(
+export function findMissionPullRequest(
   prs: PullRequestSummary[],
   missionId: string,
 ): PullRequestSummary | null {

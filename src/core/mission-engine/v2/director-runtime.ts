@@ -6,7 +6,12 @@ import { retrieveKnowledgeContext } from "@/core/application/knowledge/retrieval
 import type { KnowledgeEntry } from "@/core/domain/knowledge/knowledge-entry";
 
 import type { MissionEngine } from "./engine";
+import {
+  getGithubRepoTarget,
+  listPullRequests,
+} from "./github/github-client";
 import { hasPassedAllCriteria, type MissionV2 } from "./mission";
+import { findMissionPullRequest } from "./qa-runtime";
 
 /**
  * Director Runtime v0 voor Mission Engine V2.
@@ -39,6 +44,21 @@ import { hasPassedAllCriteria, type MissionV2 } from "./mission";
  * tot uitsluitend goedgekeurde kennis (retrieveKnowledgeContext filtert al
  * op status "approved") en wordt nooit boven de missie zelf gesteld: de
  * succescriteria en het doel van de missie blijven leidend.
+ *
+ * Belangrijke invariant (expliciet zo gewenst door de eigenaar, ná de
+ * pre-merge QA-wijziging in qa-runtime.ts): een missie met status COMPLETED
+ * moet altijd betekenen dat de bijbehorende pull request ook daadwerkelijk
+ * gemerged is op GitHub — nooit alleen dat QA de inhoud heeft goedgekeurd.
+ * Sinds QA een pull request al ver vóór het mergen mag beoordelen (zodat de
+ * eigenaar een oordeel krijgt vóórdat hij de merge-beslissing neemt), zou
+ * zonder deze controle een missie kunnen "voltooien" terwijl de wijziging
+ * nog helemaal niet live is. `findUnmergedCompletionBlocker` hieronder
+ * bewaakt dit: zolang alle succescriteria al PASSED zijn maar de meest
+ * recente pull request van de missie nog niet gemerged is, wordt
+ * COMPLETE_MISSION geblokkeerd met een duidelijke foutmelding in plaats van
+ * de LLM-Director te laten kiezen — dezelfde stijl als de andere
+ * "verwachte, tijdelijke situatie"-fouten in qa-runtime.ts en
+ * builder-runtime.ts.
  */
 
 const ALLOWED_AUTONOMOUS_DECISIONS: DirectorDecisionType[] = [
@@ -251,11 +271,34 @@ async function decideNextStep(
 }
 
 /**
+ * Controleert, uitsluitend wanneer alle succescriteria al PASSED zijn, of de
+ * meest recente pull request van deze missie al gemerged is. Geeft `null`
+ * terug wanneer er niets in de weg staat (geen PR gevonden — bijvoorbeeld
+ * een missie zonder builder-toewijzing — of de PR is al gemerged). Geeft een
+ * duidelijke, aan de eigenaar te tonen foutmelding terug wanneer de PR nog
+ * open staat, zodat `runDirectorStep` COMPLETE_MISSION kan weigeren in
+ * plaats van de missie te laten "voltooien" terwijl de wijziging nog
+ * helemaal niet live is. Zie de module-documentatie hierboven voor waarom
+ * dit nodig is sinds QA een pull request al vóór het mergen mag beoordelen.
+ */
+async function findUnmergedCompletionBlocker(mission: MissionV2): Promise<string | null> {
+  const target = getGithubRepoTarget();
+  const prs = await listPullRequests(target, "all");
+  const pr = findMissionPullRequest(prs, mission.missionId);
+
+  if (!pr || pr.merged) return null;
+
+  return `Alle succescriteria van deze missie zijn al gehaald (goedgekeurd door de qa-rol), maar pull request #${pr.number} ("${pr.title}") is nog niet gemerged. Een missie mag in The Dost Matrix pas als voltooid gelden wanneer de wijziging ook daadwerkelijk op GitHub gemerged is. Merge de pull request eerst zelf, en laat de Director daarna opnieuw een stap zetten om de missie af te ronden: ${pr.url}`;
+}
+
+/**
  * Laat de Director één beslissing nemen over een ACTIVE mission en past die
  * direct toe. Beoordeelt zelf geen succescriteria meer — dat gebeurt
  * uitsluitend door de qa-rol (zie qa-runtime.ts en role-runtime.ts) — dus
  * COMPLETE_MISSION mag pas wanneer `hasPassedAllCriteria(mission)` al waar
- * is vóórdat deze functie wordt aangeroepen.
+ * is vóórdat deze functie wordt aangeroepen, ÉN (zie
+ * `findUnmergedCompletionBlocker` hierboven) de bijbehorende pull request al
+ * gemerged is.
  */
 export async function runDirectorStep({
   engine,
@@ -275,6 +318,13 @@ export async function runDirectorStep({
   }
 
   const allowComplete = hasPassedAllCriteria(mission) && mission.activeAssignmentIds.length === 0;
+
+  if (allowComplete) {
+    const blocker = await findUnmergedCompletionBlocker(mission);
+    if (blocker) {
+      throw new Error(blocker);
+    }
+  }
 
   const usedKnowledge = await gatherRelevantKnowledge(mission);
   const llmDecision = await decideNextStep(mission, allowComplete, usedKnowledge);
