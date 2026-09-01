@@ -1,4 +1,5 @@
 ---
+---
 # The Dost Matrix v0.3.1
 
 De eerste echte Next.js- en Firebase-codebase.
@@ -134,6 +135,18 @@ volgende vraag.
 - Second Brain-schrijven is nog ongefilterd; iedere uitwisseling wordt onthouden.
 - Retrieval leest maximaal 500 kennisitems; een vector-database is nodig voor grotere schaal.
 
+## Mission Engine V2
+
+Mission Engine V2 is een nieuwe, zelfstandige implementatie van het
+missiesysteem die zonder externe afhankelijkheden werkt. Ze draait naast de
+bestaande Mission Engine V1-runtime, zodat beide versies naast elkaar kunnen
+functioneren zonder dat bestaande missies of workflows breken. Dankzij deze
+opzet blijft de applicatie volledig compatibel met wat er al werkt, terwijl
+V2 een moderne, overzichtelijke en onderhoudbare architectuur biedt. Nieuwe
+functionaliteit — zoals de Builder- en QA-rollen via GitHub hieronder — wordt
+daarom bewust in Mission Engine V2 gebouwd. Op termijn kan V1 worden
+uitgefaseerd zodra V2 alle benodigde functionaliteit dekt.
+
 ## Builder-rol via GitHub (Mission Engine V2)
 
 Vanaf nu past de "builder"-rol van Mission Engine V2 daadwerkelijk bestanden
@@ -212,4 +225,5 @@ Director moet dan zelf opnieuw de builder-rol inzetten.
 
 Pre-merge QA test
 
+---
 ---
