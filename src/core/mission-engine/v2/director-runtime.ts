@@ -9,11 +9,13 @@ import type { MissionEngine } from "./engine";
 import {
   GithubApiError,
   getGithubRepoTarget,
+  getPullRequestFiles,
   listPullRequests,
   mergePullRequest,
 } from "./github/github-client";
 import { hasPassedAllCriteria, type MissionV2 } from "./mission";
 import { findMissionPullRequest } from "./qa-runtime";
+import { classifyPullRequestRisk } from "./risk-classification";
 
 /**
  * Director Runtime v0 voor Mission Engine V2.
@@ -54,18 +56,32 @@ import { findMissionPullRequest } from "./qa-runtime";
  * goedgekeurd. Sinds QA een pull request al ver vóór het mergen mag
  * beoordelen (zodat er een oordeel is vóórdat er gemerged wordt), voert de
  * Director de merge nu ZELF uit op het moment dat alle succescriteria al
- * PASSED zijn: `ensureMissionPullRequestMerged` hieronder merget de meest
- * recente pull request van de missie (een gewone merge-commit, via de
+ * PASSED zijn — MAAR alleen wanneer de risicoclassificatie (zie
+ * risk-classification.ts) van de bijbehorende pull request "auto-approve"
+ * is: `ensureMissionPullRequestMerged` hieronder merget in dat geval de
+ * meest recente pull request van de missie (een gewone merge-commit, via de
  * GitHub API — zie mergePullRequest in github-client.ts) vóórdat de LLM-
  * Director de kans krijgt om COMPLETE_MISSION te kiezen. Eén klik van de
- * eigenaar op "volgende stap" resulteert dus zowel in de merge als in het
- * voltooien van de missie. Lukt de merge niet (bijvoorbeeld een
+ * eigenaar op "volgende stap" resulteert dan zowel in de merge als in het
+ * voltooien van de missie.
+ *
+ * Is de risicoclassificatie in plaats daarvan "needs-signoff" (de pull
+ * request wijzigt meerdere bestanden tegelijk, verwijdert een bestand, of
+ * raakt een gedeelde/kritieke bestandslocatie), dan mergt de Director NIET
+ * zelf: hij gooit een duidelijke foutmelding met de reden en de PR-link, en
+ * de missie blijft ACTIEF totdat de eigenaar de wijziging zelf heeft bekeken
+ * en op GitHub gemerged — pas daarna kan de Director de missie afronden.
+ * Een in-app "Goedkeuring & Mergen"-knop (zodat dit ook voor needs-signoff
+ * zonder naar GitHub.com te hoeven) is bewust nog niet gebouwd; dit is de
+ * eerste, kleinere stap.
+ *
+ * Lukt een toegestane automatische merge onverwacht niet (bijvoorbeeld een
  * mergeconflict, of de pull request is inmiddels handmatig gesloten), dan
- * gooit dit een duidelijke foutmelding in plaats van de missie alsnog als
- * voltooid te markeren — dezelfde stijl als de andere "verwachte,
+ * gooit dit ook een duidelijke foutmelding in plaats van de missie alsnog
+ * als voltooid te markeren — dezelfde stijl als de andere "verwachte,
  * tijdelijke situatie"-fouten in qa-runtime.ts en builder-runtime.ts. Is de
  * pull request al (handmatig) gemerged, dan doet dit niets — geen dubbele
- * merge-poging.
+ * merge-poging en geen risicoclassificatie meer nodig.
  */
 
 const ALLOWED_AUTONOMOUS_DECISIONS: DirectorDecisionType[] = [
@@ -280,16 +296,21 @@ async function decideNextStep(
 /**
  * Zorgt ervoor dat de meest recente pull request van deze missie gemerged
  * is, uitsluitend aangeroepen wanneer alle succescriteria al PASSED zijn
- * (dus al door de qa-rol inhoudelijk goedgekeurd). Drie mogelijke uitkomsten:
+ * (dus al door de qa-rol inhoudelijk goedgekeurd). Mogelijke uitkomsten:
  * geen pull request gevonden (bijvoorbeeld een missie zonder builder-
  * toewijzing) → niets te doen; de pull request is al gemerged (bijvoorbeeld
  * omdat de eigenaar hem net zelf handmatig heeft gemerged) → ook niets te
- * doen, geen dubbele poging; de pull request staat nog open → deze wordt nu
- * zelf gemerged via de GitHub API (zie mergePullRequest in
- * github-client.ts). Gooit een duidelijke, aan de eigenaar te tonen fout
- * wanneer die merge mislukt (bijvoorbeeld een mergeconflict), zodat
- * `runDirectorStep` COMPLETE_MISSION nooit kiest voor een missie waarvan de
- * wijziging niet daadwerkelijk is doorgevoerd.
+ * doen, geen dubbele poging of classificatie meer nodig; de pull request
+ * staat nog open → eerst wordt het risico geclassificeerd (zie
+ * risk-classification.ts) op basis van de gewijzigde bestanden. Bij
+ * "auto-approve" wordt de pull request nu zelf gemerged via de GitHub API
+ * (zie mergePullRequest in github-client.ts). Bij "needs-signoff" wordt NIET
+ * gemerged: dit gooit een duidelijke fout met de reden en de PR-link, zodat
+ * de eigenaar de wijziging eerst zelf bekijkt en handmatig mergt. Gooit ook
+ * een duidelijke, aan de eigenaar te tonen fout wanneer een toegestane
+ * automatische merge onverwacht mislukt (bijvoorbeeld een mergeconflict),
+ * zodat `runDirectorStep` COMPLETE_MISSION nooit kiest voor een missie
+ * waarvan de wijziging niet daadwerkelijk is doorgevoerd.
  */
 async function ensureMissionPullRequestMerged(mission: MissionV2): Promise<void> {
   const target = getGithubRepoTarget();
@@ -298,16 +319,25 @@ async function ensureMissionPullRequestMerged(mission: MissionV2): Promise<void>
 
   if (!pr || pr.merged) return;
 
+  const files = await getPullRequestFiles(target, pr.number);
+  const risk = classifyPullRequestRisk(files);
+
+  if (risk.level === "needs-signoff") {
+    throw new Error(
+      `Alle succescriteria van deze missie zijn al gehaald, maar pull request #${pr.number} ("${pr.title}") vereist eerst jouw eigen goedkeuring voordat de Director hem mag mergen (risicoclassificatie: needs-signoff). Reden: ${risk.reason} Bekijk de wijziging zelf op GitHub en merge hem daar wanneer je tevreden bent — laat de Director daarna opnieuw een stap zetten om de missie af te ronden: ${pr.url}`,
+    );
+  }
+
   try {
     await mergePullRequest(target, pr.number, {
       mergeMethod: "merge",
       commitTitle: `Director: ${mission.title} (#${pr.number})`.slice(0, 200),
-      commitMessage: `Automatisch gemerged door de Director nadat de qa-rol alle succescriteria van missie "${mission.title}" heeft goedgekeurd.`,
+      commitMessage: `Automatisch gemerged door de Director (risicoclassificatie: auto-approve — ${risk.reason}) nadat de qa-rol alle succescriteria van missie "${mission.title}" heeft goedgekeurd.`,
     });
   } catch (error) {
     const detail = error instanceof GithubApiError ? error.message : String(error);
     throw new Error(
-      `Alle succescriteria van deze missie zijn al gehaald, maar het automatisch mergen van pull request #${pr.number} ("${pr.title}") is mislukt: ${detail}. Bekijk en merge de pull request zelf op GitHub, en laat de Director daarna opnieuw een stap zetten om de missie af te ronden: ${pr.url}`,
+      `Alle succescriteria van deze missie zijn al gehaald, en de risicoclassificatie liet automatisch mergen toe (auto-approve — ${risk.reason}), maar het mergen van pull request #${pr.number} ("${pr.title}") is mislukt: ${detail}. Bekijk en merge de pull request zelf op GitHub, en laat de Director daarna opnieuw een stap zetten om de missie af te ronden: ${pr.url}`,
     );
   }
 }
