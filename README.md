@@ -1,3 +1,4 @@
+---
 # The Dost Matrix v0.3.1
 
 De eerste echte Next.js- en Firebase-codebase.
@@ -206,3 +207,9 @@ Director moet dan zelf opnieuw de builder-rol inzetten.
 - een multi-LLM "smart selector" die per taak (Director-beslissingen,
   builder-codegeneratie, QA-beoordeling) automatisch de beste beschikbare
   LLM kiest, plus enkele gratis LLM's met API-koppeling.
+
+## QA
+
+Pre-merge QA test
+
+---
