@@ -318,6 +318,59 @@ export async function compareBranches(
   return { status: data.status, behindBy: data.behind_by, aheadBy: data.ahead_by };
 }
 
+export interface MergePullRequestInput {
+  /** Standaard "merge" (een gewone merge-commit) — expliciet zo gekozen door de eigenaar. */
+  mergeMethod?: "merge" | "squash" | "rebase";
+  commitTitle?: string;
+  commitMessage?: string;
+}
+
+export interface MergePullRequestResult {
+  merged: boolean;
+  sha: string;
+  message: string;
+}
+
+/**
+ * Merget een pull request op GitHub — dezelfde actie als de groene "Merge
+ * pull request"-knop op GitHub.com, nu uitgevoerd via de API.
+ *
+ * Gebruikt door de Director (zie director-runtime.ts) om, uitsluitend
+ * wanneer de qa-rol een pull request al volledig heeft goedgekeurd (alle
+ * succescriteria PASSED), de missie in één stap te mergen én af te ronden —
+ * dit is een expliciete, bewuste keuze van de eigenaar (ná de pre-merge
+ * QA-wijziging) om niet langer zelf op GitHub te hoeven klikken voor dit
+ * soort al-goedgekeurd werk. Dit blijft een gewone GitHub-merge van een
+ * bestaande, door de eigenaar zichtbare pull request — er wordt nooit
+ * rechtstreeks naar de standaardbranch geschreven buiten deze pull-request-
+ * flow om.
+ *
+ * Gooit een `GithubApiError` wanneer de pull request niet gemergd kan
+ * worden (bijvoorbeeld een mergeconflict, of de PR is inmiddels gesloten
+ * zonder te mergen) — de aanroeper (director-runtime.ts) vertaalt dat naar
+ * een duidelijke melding voor de eigenaar in plaats van de missie alsnog als
+ * voltooid te markeren.
+ */
+export async function mergePullRequest(
+  target: GithubRepoTarget,
+  pullNumber: number,
+  input: MergePullRequestInput = {},
+): Promise<MergePullRequestResult> {
+  const data = await githubRequest<{ merged: boolean; sha: string; message: string }>(
+    `/repos/${target.owner}/${target.repo}/pulls/${pullNumber}/merge`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        merge_method: input.mergeMethod ?? "merge",
+        ...(input.commitTitle ? { commit_title: input.commitTitle } : {}),
+        ...(input.commitMessage ? { commit_message: input.commitMessage } : {}),
+      }),
+    },
+  );
+
+  return { merged: data.merged, sha: data.sha, message: data.message };
+}
+
 export interface PullRequestFileChange {
   filename: string;
   status: string;

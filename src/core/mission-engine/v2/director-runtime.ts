@@ -7,8 +7,10 @@ import type { KnowledgeEntry } from "@/core/domain/knowledge/knowledge-entry";
 
 import type { MissionEngine } from "./engine";
 import {
+  GithubApiError,
   getGithubRepoTarget,
   listPullRequests,
+  mergePullRequest,
 } from "./github/github-client";
 import { hasPassedAllCriteria, type MissionV2 } from "./mission";
 import { findMissionPullRequest } from "./qa-runtime";
@@ -45,20 +47,25 @@ import { findMissionPullRequest } from "./qa-runtime";
  * op status "approved") en wordt nooit boven de missie zelf gesteld: de
  * succescriteria en het doel van de missie blijven leidend.
  *
- * Belangrijke invariant (expliciet zo gewenst door de eigenaar, ná de
- * pre-merge QA-wijziging in qa-runtime.ts): een missie met status COMPLETED
- * moet altijd betekenen dat de bijbehorende pull request ook daadwerkelijk
- * gemerged is op GitHub — nooit alleen dat QA de inhoud heeft goedgekeurd.
- * Sinds QA een pull request al ver vóór het mergen mag beoordelen (zodat de
- * eigenaar een oordeel krijgt vóórdat hij de merge-beslissing neemt), zou
- * zonder deze controle een missie kunnen "voltooien" terwijl de wijziging
- * nog helemaal niet live is. `findUnmergedCompletionBlocker` hieronder
- * bewaakt dit: zolang alle succescriteria al PASSED zijn maar de meest
- * recente pull request van de missie nog niet gemerged is, wordt
- * COMPLETE_MISSION geblokkeerd met een duidelijke foutmelding in plaats van
- * de LLM-Director te laten kiezen — dezelfde stijl als de andere
- * "verwachte, tijdelijke situatie"-fouten in qa-runtime.ts en
- * builder-runtime.ts.
+ * Belangrijke invariant + gedrag (expliciet zo gewenst door de eigenaar, ná
+ * de pre-merge QA-wijziging in qa-runtime.ts): een missie met status
+ * COMPLETED moet altijd betekenen dat de bijbehorende pull request ook
+ * daadwerkelijk gemerged is op GitHub — nooit alleen dat QA de inhoud heeft
+ * goedgekeurd. Sinds QA een pull request al ver vóór het mergen mag
+ * beoordelen (zodat er een oordeel is vóórdat er gemerged wordt), voert de
+ * Director de merge nu ZELF uit op het moment dat alle succescriteria al
+ * PASSED zijn: `ensureMissionPullRequestMerged` hieronder merget de meest
+ * recente pull request van de missie (een gewone merge-commit, via de
+ * GitHub API — zie mergePullRequest in github-client.ts) vóórdat de LLM-
+ * Director de kans krijgt om COMPLETE_MISSION te kiezen. Eén klik van de
+ * eigenaar op "volgende stap" resulteert dus zowel in de merge als in het
+ * voltooien van de missie. Lukt de merge niet (bijvoorbeeld een
+ * mergeconflict, of de pull request is inmiddels handmatig gesloten), dan
+ * gooit dit een duidelijke foutmelding in plaats van de missie alsnog als
+ * voltooid te markeren — dezelfde stijl als de andere "verwachte,
+ * tijdelijke situatie"-fouten in qa-runtime.ts en builder-runtime.ts. Is de
+ * pull request al (handmatig) gemerged, dan doet dit niets — geen dubbele
+ * merge-poging.
  */
 
 const ALLOWED_AUTONOMOUS_DECISIONS: DirectorDecisionType[] = [
@@ -271,24 +278,38 @@ async function decideNextStep(
 }
 
 /**
- * Controleert, uitsluitend wanneer alle succescriteria al PASSED zijn, of de
- * meest recente pull request van deze missie al gemerged is. Geeft `null`
- * terug wanneer er niets in de weg staat (geen PR gevonden — bijvoorbeeld
- * een missie zonder builder-toewijzing — of de PR is al gemerged). Geeft een
- * duidelijke, aan de eigenaar te tonen foutmelding terug wanneer de PR nog
- * open staat, zodat `runDirectorStep` COMPLETE_MISSION kan weigeren in
- * plaats van de missie te laten "voltooien" terwijl de wijziging nog
- * helemaal niet live is. Zie de module-documentatie hierboven voor waarom
- * dit nodig is sinds QA een pull request al vóór het mergen mag beoordelen.
+ * Zorgt ervoor dat de meest recente pull request van deze missie gemerged
+ * is, uitsluitend aangeroepen wanneer alle succescriteria al PASSED zijn
+ * (dus al door de qa-rol inhoudelijk goedgekeurd). Drie mogelijke uitkomsten:
+ * geen pull request gevonden (bijvoorbeeld een missie zonder builder-
+ * toewijzing) → niets te doen; de pull request is al gemerged (bijvoorbeeld
+ * omdat de eigenaar hem net zelf handmatig heeft gemerged) → ook niets te
+ * doen, geen dubbele poging; de pull request staat nog open → deze wordt nu
+ * zelf gemerged via de GitHub API (zie mergePullRequest in
+ * github-client.ts). Gooit een duidelijke, aan de eigenaar te tonen fout
+ * wanneer die merge mislukt (bijvoorbeeld een mergeconflict), zodat
+ * `runDirectorStep` COMPLETE_MISSION nooit kiest voor een missie waarvan de
+ * wijziging niet daadwerkelijk is doorgevoerd.
  */
-async function findUnmergedCompletionBlocker(mission: MissionV2): Promise<string | null> {
+async function ensureMissionPullRequestMerged(mission: MissionV2): Promise<void> {
   const target = getGithubRepoTarget();
   const prs = await listPullRequests(target, "all");
   const pr = findMissionPullRequest(prs, mission.missionId);
 
-  if (!pr || pr.merged) return null;
+  if (!pr || pr.merged) return;
 
-  return `Alle succescriteria van deze missie zijn al gehaald (goedgekeurd door de qa-rol), maar pull request #${pr.number} ("${pr.title}") is nog niet gemerged. Een missie mag in The Dost Matrix pas als voltooid gelden wanneer de wijziging ook daadwerkelijk op GitHub gemerged is. Merge de pull request eerst zelf, en laat de Director daarna opnieuw een stap zetten om de missie af te ronden: ${pr.url}`;
+  try {
+    await mergePullRequest(target, pr.number, {
+      mergeMethod: "merge",
+      commitTitle: `Director: ${mission.title} (#${pr.number})`.slice(0, 200),
+      commitMessage: `Automatisch gemerged door de Director nadat de qa-rol alle succescriteria van missie "${mission.title}" heeft goedgekeurd.`,
+    });
+  } catch (error) {
+    const detail = error instanceof GithubApiError ? error.message : String(error);
+    throw new Error(
+      `Alle succescriteria van deze missie zijn al gehaald, maar het automatisch mergen van pull request #${pr.number} ("${pr.title}") is mislukt: ${detail}. Bekijk en merge de pull request zelf op GitHub, en laat de Director daarna opnieuw een stap zetten om de missie af te ronden: ${pr.url}`,
+    );
+  }
 }
 
 /**
@@ -297,8 +318,8 @@ async function findUnmergedCompletionBlocker(mission: MissionV2): Promise<string
  * uitsluitend door de qa-rol (zie qa-runtime.ts en role-runtime.ts) — dus
  * COMPLETE_MISSION mag pas wanneer `hasPassedAllCriteria(mission)` al waar
  * is vóórdat deze functie wordt aangeroepen, ÉN (zie
- * `findUnmergedCompletionBlocker` hierboven) de bijbehorende pull request al
- * gemerged is.
+ * `ensureMissionPullRequestMerged` hierboven) de bijbehorende pull request
+ * gemerged is — die merge voert de Director in dat geval hier zelf uit.
  */
 export async function runDirectorStep({
   engine,
@@ -320,10 +341,7 @@ export async function runDirectorStep({
   const allowComplete = hasPassedAllCriteria(mission) && mission.activeAssignmentIds.length === 0;
 
   if (allowComplete) {
-    const blocker = await findUnmergedCompletionBlocker(mission);
-    if (blocker) {
-      throw new Error(blocker);
-    }
+    await ensureMissionPullRequestMerged(mission);
   }
 
   const usedKnowledge = await gatherRelevantKnowledge(mission);
