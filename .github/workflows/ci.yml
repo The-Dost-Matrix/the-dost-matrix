@@ -1,0 +1,31 @@
+# Draait automatisch bij elke pull request naar main, nog vóórdat iemand
+# (of de QA-rol van Mission Engine V2) er inhoudelijk naar hoeft te kijken.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-checks:
+    name: Typecheck & import-check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository uitchecken
+        uses: actions/checkout@v4
+
+      - name: Node.js instellen
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Dependencies installeren
+        run: npm ci
+
+      - name: TypeScript-controle (tsc --noEmit)
+        run: npm run typecheck
+
+      - name: Import-controle (ontbrekende lokale imports)
+        run: npm run verify-imports

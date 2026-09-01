@@ -4,6 +4,7 @@ import type { RoleResult } from "@/core/contracts/v2";
 import { getChatProvider } from "@/core/llm/model-router";
 
 import {
+  compareBranches,
   getDefaultBranch,
   getFileContent,
   getGithubRepoTarget,
@@ -27,43 +28,67 @@ import type { MissionV2 } from "./mission";
  *    zie builder-runtime.ts) — niet via tekstuele koppeling met de Director,
  *    omdat Mission Engine V2 de volledige inhoud van een RoleResult nog niet
  *    ergens doorzoekbaar bewaart (zie engine.ts, recordRoleResult/commit).
- * 2. Is er geen pull request gevonden, of is de gevonden pull request nog
- *    niet gemerged? Dan gooit dit een duidelijke fout (net als de Builder-rol
- *    doet bij haar eigen tijdelijke problemen) in plaats van een FAILED
- *    RoleResult vast te leggen. Zo blijft de toewijzing actief staan — de
- *    eigenaar kan na het mergen simpelweg opnieuw op dezelfde knop klikken.
- *    Een FAILED RoleResult zou de mission naar REPLANNING zetten, een status
- *    waar noch de Director noch de huidige dashboard-knop automatisch uit
- *    verder komt.
- * 3. Is de pull request gemerged? Dan haalt dit de gewijzigde bestanden
- *    (diff) op en laat een LLM, met een strikte QA-houding, per
- *    succescriterium van de missie beoordelen of het gehaald is. De
- *    toewijzing zelf is dan altijd COMPLETED (QA heeft haar werk gedaan) —
- *    de daadwerkelijke uitkomst zit in de per-criterium PASSED/FAILED
- *    verdicts, niet in de status van de toewijzing.
+ * 2. Is er geen pull request gevonden? Dan gooit dit een duidelijke fout
+ *    (net als de Builder-rol doet bij haar eigen tijdelijke problemen) in
+ *    plaats van een FAILED RoleResult vast te leggen. Zo blijft de
+ *    toewijzing actief staan — de eigenaar kan na het aanmaken van de pull
+ *    request simpelweg opnieuw op dezelfde knop klikken. Een FAILED
+ *    RoleResult zou de mission naar REPLANNING zetten, een status waar noch
+ *    de Director noch de huidige dashboard-knop automatisch uit verder komt.
+ * 3. QA hoeft NIET meer te wachten tot een pull request gemergd is (zie de
+ *    correctie hieronder) — ze haalt de gewijzigde bestanden (diff) én de
+ *    volledige inhoud daarvan op de PR-branch zelf op, en laat een LLM, met
+ *    een strikte QA-houding, per succescriterium van de missie beoordelen of
+ *    het gehaald is. De toewijzing zelf is dan altijd COMPLETED (QA heeft
+ *    haar werk gedaan) — de daadwerkelijke uitkomst zit in de per-criterium
+ *    PASSED/FAILED verdicts, niet in de status van de toewijzing.
  *
  * Bewust beperkt (v0), zelfde geest als de rest van Mission Engine V2:
  * - beoordeelt alleen de meest recente pull request van deze missie;
  * - géén automatische re-run wanneer een pull request na afkeuring wordt
  *   aangepast; de Director moet dan opnieuw de builder-rol inzetten.
  *
- * Belangrijke correctie (na een live misser): QA beoordeelde criteria
+ * Belangrijke correctie #1 (na een live misser): QA beoordeelde criteria
  * aanvankelijk uitsluitend op basis van de diff/patch van dé ene pull
  * request die op dat moment beoordeeld werd. Voor een missie die in meerdere
  * pull requests wordt afgerond (bijvoorbeeld: PR A bouwt de hoofdstructuur,
  * PR B repareert daarna nog één afgekeurd criterium) toont de diff van PR B
  * alléén de kleine vervolgwijziging — niet de structuur die PR A al had
- * neergezet en die intussen al gemerged is. QA zag dan geen "bewijs" voor
- * criteria die in werkelijkheid allang klopten, en keurde ze onterecht af.
- * QA haalt daarom nu, per gewijzigd bestand, ook de HUIDIGE VOLLEDIGE
- * INHOUD op (op de standaardbranch, dus inclusief alles wat eerder al is
- * gemerged) en beoordeelt daarop — de diff van de specifieke pull request
- * blijft daarnaast beschikbaar als aanvullende context (bijvoorbeeld om te
- * zien of een verboden bestand niet is aangepast), maar is niet meer de
- * enige bron van waarheid. Zie ook de les "nooit de 'huidige inhoud' van
- * een bestand stilzwijgend afkappen voor een LLM" — dezelfde discipline
- * geldt hier: bij een te groot bestand faalt dit expliciet in plaats van
- * stilzwijgend een deel van de inhoud weg te knippen.
+ * neergezet. QA zag dan geen "bewijs" voor criteria die in werkelijkheid
+ * allang klopten, en keurde ze onterecht af. QA haalt daarom nu, per
+ * gewijzigd bestand, ook de VOLLEDIGE INHOUD op en beoordeelt daarop — de
+ * diff van de specifieke pull request blijft daarnaast beschikbaar als
+ * aanvullende context (bijvoorbeeld om te zien of een verboden bestand niet
+ * is aangepast), maar is niet meer de enige bron van waarheid. Zie ook de
+ * les "nooit de 'huidige inhoud' van een bestand stilzwijgend afkappen voor
+ * een LLM" — dezelfde discipline geldt hier: bij een te groot bestand faalt
+ * dit expliciet in plaats van stilzwijgend een deel van de inhoud weg te
+ * knippen.
+ *
+ * Belangrijke correctie #2 (bewuste architectuurwijziging, geen bugfix): de
+ * VOLLEDIGE INHOUD hierboven werd aanvankelijk opgehaald van de
+ * standaardbranch (bv. "main") — dat loste correctie #1 op, maar had als
+ * onbedoeld neveneffect dat QA alleen ZINVOL kon oordelen NADAT de eigenaar
+ * de pull request al zelf had gemerged. QA kon dus per definitie geen
+ * "voordat we mergen"-oordeel meer geven. Sinds deze correctie haalt QA de
+ * volledige bestandsinhoud op van de PR-BRANCH ZELF (`pr.headSha`, zie
+ * github-client.ts) in plaats van de standaardbranch — dat geeft dezelfde
+ * volledige, kloppende bestandsinhoud, maar dan zoals die eruit zou zien
+ * ZODRA deze pull request gemerged wordt, zonder dat er al gemerged hoeft te
+ * zijn. QA werkt dus nu op elke openstaande pull request, niet meer alleen
+ * op al-gemergde.
+ *
+ * Eén restrisico daarbij: de Builder-rol maakt elke nieuwe branch weliswaar
+ * altijd aan vanaf de op dát moment actuele standaardbranch (zie
+ * builder-runtime.ts, `getBranchHeadSha`), maar als er ná het aanmaken van
+ * die branch nog iets anders naar de standaardbranch wordt gemerged, mist de
+ * PR-branch die latere wijziging — exact hetzelfde soort onvolledige-bewijs-
+ * probleem als correctie #1, nu vanuit de andere richting. Daarom controleert
+ * `executeQaAssignment` hieronder, vóórdat ze een nog-niet-gemergde PR-branch
+ * als bewijs gebruikt, expliciet via `compareBranches` of die branch nog wel
+ * gelijk loopt met de standaardbranch — loopt de branch achter, dan faalt dit
+ * expliciet met een duidelijke foutmelding (bijwerken en opnieuw proberen) in
+ * plaats van stilzwijgend een onvolledig oordeel te geven.
  */
 
 const QA_BRANCH_PREFIX = (missionId: string) => `director/mission-${missionId.slice(0, 8)}-`;
@@ -98,10 +123,10 @@ export interface ExecuteQaAssignmentOutput {
 function buildQaSystemPrompt(mission: MissionV2): string {
   return [
     "Je bent de QA-rol binnen The Dost Matrix, een persoonlijk AI-besturingssysteem.",
-    `Je beoordeelt of een pull request voor de missie "${mission.title}" (doel: ${mission.objective}) daadwerkelijk aan de succescriteria voldoet.`,
-    "Je krijgt per gewijzigd bestand zowel de HUIDIGE VOLLEDIGE INHOUD (de daadwerkelijke, actuele staat van het bestand, inclusief alles wat eerder al gemerged is) als de DIFF van specifiek déze pull request.",
-    "Beoordeel elk succescriterium op basis van de HUIDIGE VOLLEDIGE INHOUD — dat is de bron van waarheid. Gebruik de diff alleen als aanvullende context, bijvoorbeeld om te controleren wat er in déze pull request specifiek is gewijzigd.",
-    "Een criterium mag GEHAALD zijn ook wanneer het niet zichtbaar is in de diff van déze pull request, zolang het wél klopt in de huidige volledige inhoud (bijvoorbeeld omdat het al in een eerdere, gemergede pull request van dezelfde missie is gerealiseerd). Keur nooit af puur omdat 'de diff het niet aantoont' terwijl de volledige inhoud het criterium wél waarmaakt.",
+    `Je beoordeelt of een pull request voor de missie "${mission.title}" (doel: ${mission.objective}) daadwerkelijk aan de succescriteria voldoet — dit mag zowel vóór als na het mergen van die pull request.`,
+    "Je krijgt per gewijzigd bestand zowel de VOLLEDIGE INHOUD VAN DAT BESTAND OP DE PULL REQUEST-BRANCH (dus zoals het bestand eruit zou zien zodra deze pull request gemerged wordt, inclusief alles wat in eerdere, al gemergede pull requests van dezelfde missie is gerealiseerd) als de DIFF van specifiek déze pull request.",
+    "Beoordeel elk succescriterium op basis van de VOLLEDIGE INHOUD — dat is de bron van waarheid. Gebruik de diff alleen als aanvullende context, bijvoorbeeld om te controleren wat er in déze pull request specifiek is gewijzigd.",
+    "Een criterium mag GEHAALD zijn ook wanneer het niet zichtbaar is in de diff van déze pull request, zolang het wél klopt in de volledige inhoud (bijvoorbeeld omdat het al in een eerdere, gemergede pull request van dezelfde missie is gerealiseerd). Keur nooit af puur omdat 'de diff het niet aantoont' terwijl de volledige inhoud het criterium wél waarmaakt.",
     "Wees streng en eerlijk: keur alleen goed wat je in de daadwerkelijke bestandsinhoud kunt onderbouwen. Bij twijfel: afkeuren, niet het voordeel van de twijfel geven.",
     "Antwoord UITSLUITEND met geldige JSON, zonder uitleg of markdown eromheen.",
   ].join(" ");
@@ -181,13 +206,14 @@ interface QaFileEvidence {
 }
 
 /**
- * Haalt, voor elk gewijzigd bestand van de pull request, de HUIDIGE
- * VOLLEDIGE INHOUD op de standaardbranch op (dus ná deze pull request én
- * alles wat daarvoor al gemerged was). Bestanden met status "removed"
- * worden overgeslagen (die bestaan per definitie niet meer op de
- * standaardbranch). Faalt expliciet bij een te groot bestand — zie de
- * uitleg bovenaan dit bestand over waarom stilzwijgend afkappen hier
- * bewust niet gebeurt.
+ * Haalt, voor elk gewijzigd bestand van de pull request, de VOLLEDIGE INHOUD
+ * op van het opgegeven `ref` — in de praktijk de PR-branch zelf (`pr.headSha`,
+ * zie de aanroep in `executeQaAssignment`), zodat QA ook vóór het mergen al
+ * de volledige, kloppende bestandsinhoud ziet in plaats van alleen een diff.
+ * Bestanden met status "removed" worden overgeslagen (die bestaan per
+ * definitie niet meer op deze ref). Faalt expliciet bij een te groot bestand
+ * — zie de uitleg bovenaan dit bestand over waarom stilzwijgend afkappen
+ * hier bewust niet gebeurt.
  */
 async function fetchFullFileContents(
   target: GithubRepoTarget,
@@ -223,7 +249,7 @@ function formatEvidenceForPrompt(evidence: QaFileEvidence[]): string {
 
       parts.push(
         file.fullContent !== null
-          ? `HUIDIGE VOLLEDIGE INHOUD (op de standaardbranch, ná deze pull request):\n${file.fullContent}`
+          ? `VOLLEDIGE INHOUD OP DE PULL REQUEST-BRANCH:\n${file.fullContent}`
           : "(bestand is verwijderd of de inhoud kon niet worden opgehaald)",
       );
 
@@ -321,21 +347,23 @@ async function evaluateCriteriaAgainstEvidence(
 
 /**
  * Voert een toewijzing van de QA-rol uit: vindt de bijbehorende pull request
- * op GitHub, controleert of die gemerged is, en laat (pas dan) een LLM per
- * succescriterium een PASSED/FAILED-oordeel vellen op basis van de huidige
- * volledige inhoud van de gewijzigde bestanden (aangevuld met de diff van
- * déze specifieke pull request als context).
+ * op GitHub en laat een LLM per succescriterium een PASSED/FAILED-oordeel
+ * vellen op basis van de volledige inhoud van de gewijzigde bestanden zoals
+ * die op de PR-branch zelf staat (aangevuld met de diff van déze specifieke
+ * pull request als context) — dit werkt zowel vóór als na het mergen; zie de
+ * uitleg bovenaan dit bestand ("Belangrijke correctie #2") voor waarom.
  *
  * Net als de Builder-rol (zie builder-runtime.ts) gooit dit een duidelijke
- * fout wanneer er nog geen bruikbare pull request is, of wanneer die nog
- * niet gemerged is — dit zijn normale, verwachte, tijdelijke situaties (de
- * eigenaar moet eerst zelf beoordelen en mergen), GEEN mislukking van de
- * QA-toewijzing zelf. Door hier te gooien in plaats van een FAILED
- * RoleResult vast te leggen, blijft de toewijzing actief (mission blijft
- * WAITING_FOR_ROLE) zodat de eigenaar het na het mergen simpelweg opnieuw
- * kan proberen via dezelfde knop — een FAILED RoleResult zou de mission
- * naar REPLANNING zetten, een status waar de Director (en de huidige
- * dashboard-knop) niet automatisch uit verder komt.
+ * fout wanneer er nog geen bruikbare pull request is, of wanneer een nog
+ * niet gemergde PR-branch inmiddels achterloopt op de standaardbranch (zie
+ * de `compareBranches`-controle hieronder) — dit zijn normale, verwachte,
+ * tijdelijke situaties, GEEN mislukking van de QA-toewijzing zelf. Door hier
+ * te gooien in plaats van een FAILED RoleResult vast te leggen, blijft de
+ * toewijzing actief (mission blijft WAITING_FOR_ROLE) zodat de eigenaar het
+ * na het oplossen simpelweg opnieuw kan proberen via dezelfde knop — een
+ * FAILED RoleResult zou de mission naar REPLANNING zetten, een status waar
+ * de Director (en de huidige dashboard-knop) niet automatisch uit verder
+ * komt.
  */
 export async function executeQaAssignment({
   mission,
@@ -354,14 +382,18 @@ export async function executeQaAssignment({
   }
 
   if (!pr.merged) {
-    throw new Error(
-      `Pull request #${pr.number} ("${pr.title}") is nog niet gemerged. Beoordeel en merge de pull request eerst zelf op GitHub, en laat de Director daarna opnieuw een stap zetten: ${pr.url}`,
-    );
+    const defaultBranch = await getDefaultBranch(target);
+    const comparison = await compareBranches(target, defaultBranch, pr.headRef);
+
+    if (comparison.behindBy > 0) {
+      throw new Error(
+        `Pull request #${pr.number} ("${pr.title}") loopt ${comparison.behindBy} commit(s) achter op de standaardbranch "${defaultBranch}" — er is dus, ná het aanmaken van deze branch, al iets anders naar "${defaultBranch}" gemerged. QA kan op basis van deze verouderde branch geen volledig betrouwbaar oordeel geven. Werk de branch eerst bij (bijvoorbeeld door "${defaultBranch}" erin te mergen) en probeer het daarna opnieuw: ${pr.url}`,
+      );
+    }
   }
 
   const files = await getPullRequestFiles(target, pr.number);
-  const defaultBranch = await getDefaultBranch(target);
-  const evidence = await fetchFullFileContents(target, files.slice(0, MAX_FILES_CONSIDERED), defaultBranch);
+  const evidence = await fetchFullFileContents(target, files.slice(0, MAX_FILES_CONSIDERED), pr.headSha);
   const evidenceText = formatEvidenceForPrompt(evidence);
 
   const { verdict, model } = await evaluateCriteriaAgainstEvidence(mission, pr, evidenceText);
@@ -378,7 +410,9 @@ export async function executeQaAssignment({
       (entry) => `- (${entry.passed ? "GEHAALD" : "NIET GEHAALD"}) ${entry.criterionId}: ${entry.reason}`,
     ),
     verdict.recommendation ? `\nAanbeveling: ${verdict.recommendation}` : "",
-    `\nBeoordeeld op basis van pull request #${pr.number}: ${pr.url}`,
+    pr.merged
+      ? `\nBeoordeeld op basis van pull request #${pr.number} (al gemerged): ${pr.url}`
+      : `\nBeoordeeld op basis van pull request #${pr.number} (NOG NIET gemerged — dit is een beoordeling vóóraf): ${pr.url}`,
   ]
     .filter((line) => line !== "")
     .join("\n");

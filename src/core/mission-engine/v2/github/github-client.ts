@@ -230,6 +230,16 @@ export async function createPullRequest(
 export interface PullRequestSummary {
   number: number;
   headRef: string;
+  /**
+   * De exacte commit-SHA van de laatste stand van de PR-branch. Gebruikt
+   * (in plaats van de branchnaam) als `ref` bij het ophalen van
+   * bestandsinhoud voor QA — zie qa-runtime.ts. Een SHA blijft geldig ook
+   * nadat een branch na het mergen is verwijderd (de commit blijft bestaan
+   * als voorouder van de merge-commit), en verandert nooit onder je vandaan
+   * terwijl QA bezig is, in tegenstelling tot een branchnaam die door een
+   * nieuwe push kan verschuiven.
+   */
+  headSha: string;
   merged: boolean;
   state: string;
   url: string;
@@ -239,7 +249,7 @@ export interface PullRequestSummary {
 /**
  * Haalt pull requests op, meest recente eerst. Gebruikt door de QA-rol om de
  * pull request te vinden die bij een missie hoort (via de branchnaam die de
- * Builder-rol aanmaakt, zie builder-runtime.ts) en te controleren of die al
+ * Builder-rol aanmaakt, zie builder-runtime.ts) en om te bepalen of die al
  * gemerged is. `merged_at` (niet `merged`) zit al in de lijst-respons, dus
  * hier is geen aparte aanvraag per pull request nodig.
  */
@@ -248,7 +258,14 @@ export async function listPullRequests(
   state: "open" | "closed" | "all" = "all",
 ): Promise<PullRequestSummary[]> {
   const data = await githubRequest<
-    { number: number; head: { ref: string }; merged_at: string | null; state: string; html_url: string; title: string }[]
+    {
+      number: number;
+      head: { ref: string; sha: string };
+      merged_at: string | null;
+      state: string;
+      html_url: string;
+      title: string;
+    }[]
   >(
     `/repos/${target.owner}/${target.repo}/pulls?state=${state}&per_page=100&sort=created&direction=desc`,
   );
@@ -256,11 +273,49 @@ export async function listPullRequests(
   return data.map((pr) => ({
     number: pr.number,
     headRef: pr.head.ref,
+    headSha: pr.head.sha,
     merged: pr.merged_at !== null,
     state: pr.state,
     url: pr.html_url,
     title: pr.title,
   }));
+}
+
+export interface BranchComparison {
+  status: "identical" | "ahead" | "behind" | "diverged";
+  /** Aantal commits dat `base` heeft en dat NIET in `head` zit. */
+  behindBy: number;
+  /** Aantal commits dat `head` heeft en dat NIET in `base` zit. */
+  aheadBy: number;
+}
+
+/**
+ * Vergelijkt `head` (bijvoorbeeld een PR-branch) ten opzichte van `base`
+ * (bijvoorbeeld de standaardbranch). `behindBy > 0` betekent dat er op
+ * `base` inmiddels commits staan die niet in `head` zitten — dus dat `head`
+ * niet meer de meest actuele stand van `base` bevat.
+ *
+ * Gebruikt door de QA-rol (zie qa-runtime.ts) als veiligheidscontrole vóórdat
+ * ze een PR-branch als bewijsmateriaal gebruikt: zonder deze controle zou QA
+ * een oordeel kunnen geven op basis van een branch die "vergeten" is bij te
+ * werken nadat er ondertussen iets anders op de standaardbranch is gemerged
+ * — hetzelfde soort onvolledige-bewijs-probleem als de oorspronkelijke
+ * diff-only bug, nu vanuit de andere richting.
+ */
+export async function compareBranches(
+  target: GithubRepoTarget,
+  base: string,
+  head: string,
+): Promise<BranchComparison> {
+  const data = await githubRequest<{
+    status: "identical" | "ahead" | "behind" | "diverged";
+    ahead_by: number;
+    behind_by: number;
+  }>(
+    `/repos/${target.owner}/${target.repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`,
+  );
+
+  return { status: data.status, behindBy: data.behind_by, aheadBy: data.ahead_by };
 }
 
 export interface PullRequestFileChange {
