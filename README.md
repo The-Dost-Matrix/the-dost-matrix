@@ -1,5 +1,6 @@
 ---
 ---
+---
 # The Dost Matrix v0.3.1
 
 De eerste echte Next.js- en Firebase-codebase.
@@ -221,9 +222,31 @@ Director moet dan zelf opnieuw de builder-rol inzetten.
   builder-codegeneratie, QA-beoordeling) automatisch de beste beschikbare
   LLM kiest, plus enkele gratis LLM's met API-koppeling.
 
+## FAQ
+
+**Wat is The Dost Matrix?**
+The Dost Matrix is een persoonlijk AI-besturingssysteem, gebouwd op Next.js
+en Firebase, waarin missies, een Second Brain-kennisbank en autonome rollen
+(zoals Director, Builder en QA) samenkomen om werk te plannen, uit te voeren
+en te controleren.
+
+**Hoe draag ik bij aan dit project?**
+Volg de installatiestappen hierboven om de app lokaal te draaien, maak je
+wijzigingen op een aparte branch en open een pull request. De eigenaar
+beoordeelt en merget pull requests zelf; er wordt nooit automatisch
+gemerged.
+
+**Welke LLM-providers ondersteunt de chat?**
+De chatfunctionaliteit ondersteunt zowel Anthropic als OpenAI. De Model
+Router kiest automatisch Anthropic als `ANTHROPIC_API_KEY` is ingesteld, en
+valt anders terug op OpenAI.
+
+**Waarom bestaan Mission Engine V1 en V2 naast elkaar?**
+Mission Engine V2 is een nieuwe, zelfstandige implementatie die zonder
+externe afhankelijkheden werkt. Ze draait bewust naast V1, zodat bestaande
+missies en workflows niet breken terwijl nieuwe functionaliteit (zoals de
+Builder- en QA-rollen) in de modernere V2-architectuur wordt gebouwd.
+
 ## QA
 
 Pre-merge QA test
-
----
----
