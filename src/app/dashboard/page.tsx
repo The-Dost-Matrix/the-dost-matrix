@@ -11,18 +11,11 @@ import { subscribeToMissions } from "@/domains/missions/mission-service";
 
 import type { Mission } from "@/shared/types/mission";
 
-const agents = [
-  ["Headquarters", "Director", "Planning"],
-  ["Forge Labs", "Builder", "Stand-by"],
-  ["QA Outpost", "QA", "Monitoring"],
-  ["Archive", "Chronicler", "Recording"],
-];
-
 export default function DashboardPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
 
-  const [missions, setMissions] = useState<Mission[]>([]);
+  const [, setMissions] = useState<Mission[]>([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -57,36 +50,6 @@ export default function DashboardPage() {
 
   return (
     <>
-      <section className="hero panel">
-        <div>
-          <p className="eyebrow">MATRIX CORE</p>
-
-          <h2>Goed dat je er bent, Elroy.</h2>
-
-          <p className="muted">
-            Director, Second Brain en realtime Matrix-activiteit zijn verbonden
-            in één centrale werkruimte.
-          </p>
-        </div>
-
-        <div className="stats">
-          <div>
-            <strong>{agents.length}</strong>
-            <span>Agents</span>
-          </div>
-
-          <div>
-            <strong>{missions.length}</strong>
-            <span>Missies</span>
-          </div>
-
-          <div>
-            <strong>0</strong>
-            <span>Approvals</span>
-          </div>
-        </div>
-      </section>
-
       {/*
         Twee kolommen naast elkaar: chat links, Second Brain rechts (zie
         .command-center-main-grid--chat-focus in globals.css voor de
