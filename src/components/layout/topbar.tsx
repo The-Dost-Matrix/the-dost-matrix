@@ -9,6 +9,9 @@ import {
   ActiveAgentsPanel,
   SystemMonitorPanel,
 } from "@/components/monitor/system-monitor";
+import { subscribeToAgents } from "@/domains/agents/agents-service";
+import { subscribeToMissions } from "@/domains/missions/missions-service";
+import { subscribeToApprovals } from "@/domains/approvals/approvals-service";
 
 /**
  * Topbar zonder de "ACTIVE MISSIONS" / "LIVE MATRIX" tickers: die scrollende
@@ -25,6 +28,14 @@ import {
  * een vaste sidebar. `command-center-layout.tsx` heeft daardoor geen
  * `monitor`-prop meer nodig, en `dashboard/layout.tsx` geeft die ook niet
  * meer door.
+ *
+ * De "MATRIX CORE" hero-sectie op het dashboard is verwijderd omdat die
+ * geen functionaliteit bood. De drie statsvakken die daar stonden (Agents,
+ * Missies, Approvals) zijn hierheen verplaatst, naast de zoekbalk, de
+ * dropdown-knoppen en de profielsectie. De live databronnen zijn
+ * ongewijzigd: agents en missies worden via realtime subscriptions
+ * bijgehouden en de approvals-teller via dezelfde approvals-subscription
+ * als voorheen.
  */
 type TopbarDropdownId = "activity" | "system" | "agents";
 
@@ -45,6 +56,10 @@ export function Topbar() {
   const [openDropdown, setOpenDropdown] = useState<TopbarDropdownId | null>(
     null,
   );
+
+  const [agentsCount, setAgentsCount] = useState(0);
+  const [missionsCount, setMissionsCount] = useState(0);
+  const [approvalsCount, setApprovalsCount] = useState(0);
 
   const toolsRef = useRef<HTMLDivElement | null>(null);
 
@@ -77,6 +92,35 @@ export function Topbar() {
     };
   }, [openDropdown]);
 
+  // Live teller voor Agents: zelfde databron als voorheen in de "MATRIX
+  // CORE" hero-sectie op het dashboard, nu opgehaald in de topbar.
+  useEffect(() => {
+    const unsubscribe = subscribeToAgents((agents) => {
+      setAgentsCount(agents.length);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Live teller voor Missies via dezelfde `subscribeToMissions`-bron die
+  // eerder de hero-statsvakken voedde.
+  useEffect(() => {
+    const unsubscribe = subscribeToMissions((missions) => {
+      setMissionsCount(missions.length);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Live teller voor Approvals, ongewijzigd overgenomen van de hero-sectie.
+  useEffect(() => {
+    const unsubscribe = subscribeToApprovals((approvals) => {
+      setApprovalsCount(approvals.length);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   function toggleDropdown(id: TopbarDropdownId) {
     setOpenDropdown((current) => (current === id ? null : id));
   }
@@ -99,6 +143,32 @@ export function Topbar() {
           />
 
           <kbd>Ctrl K</kbd>
+        </div>
+
+        <div
+          aria-label="Matrix statistieken"
+          className="matrix-topbar-stats"
+        >
+          <div className="matrix-topbar-stat">
+            <span className="matrix-topbar-stat-label">Agents</span>
+            <strong className="matrix-topbar-stat-value">
+              {agentsCount}
+            </strong>
+          </div>
+
+          <div className="matrix-topbar-stat">
+            <span className="matrix-topbar-stat-label">Missies</span>
+            <strong className="matrix-topbar-stat-value">
+              {missionsCount}
+            </strong>
+          </div>
+
+          <div className="matrix-topbar-stat">
+            <span className="matrix-topbar-stat-label">Approvals</span>
+            <strong className="matrix-topbar-stat-value">
+              {approvalsCount}
+            </strong>
+          </div>
         </div>
 
         <div className="matrix-topbar-actions">
