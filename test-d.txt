@@ -1,0 +1,1 @@
+Dit bestand is aangemaakt ter validatie van het approve-merge testproces (Approve-merge test D) binnen The Dost Matrix. Het betreft een los, onschuldig testbestand zonder impact op bestaande functionaliteit, code of configuratie.
