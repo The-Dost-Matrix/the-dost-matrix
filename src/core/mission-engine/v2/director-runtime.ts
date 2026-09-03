@@ -394,6 +394,94 @@ async function ensureMissionPullRequestMerged(mission: MissionV2): Promise<void>
   }
 }
 
+export interface ApproveAndMergeResult {
+  pullRequestNumber: number;
+  pullRequestUrl: string;
+}
+
+/**
+ * Roadmap-stap 4: de in-app "Goedkeuring & Mergen"-knop (zie
+ * mission-engine-v2-panel.tsx), zodat de eigenaar een needs-signoff pull
+ * request niet meer op GitHub.com zelf hoeft te mergen — dezelfde actie,
+ * alleen uitgevoerd vanuit de app.
+ *
+ * Dit is BEWUST een aparte functie van `ensureMissionPullRequestMerged`
+ * hierboven, en roept expliciet GEEN classifyPullRequestRiskForMission aan:
+ * een klik op deze knop IS de eigen goedkeuring die needs-signoff vraagt —
+ * er valt dus niets meer te classificeren, alleen nog uit te voeren. Dit is
+ * geen manier om de risicocontrole te omzeilen: de eigenaar bekijkt de pull
+ * request nog steeds zelf voordat hij op deze knop klikt (de knop verschijnt
+ * pas ná een needs-signoff-foutmelding, met de PR-link erbij), alleen niet
+ * meer op GitHub.com — hij mergt hem vanuit de app.
+ *
+ * Twee vangnetten blijven wél gelden, exact zoals bij een automatische
+ * auto-approve-merge hierboven:
+ * - hasPassedAllCriteria(mission) is verplicht: deze knop mag nooit een pull
+ *   request mergen waarvan QA de succescriteria nog niet (opnieuw) heeft
+ *   goedgekeurd (bijvoorbeeld na een eerdere FAILED-beoordeling die nog niet
+ *   is opgelost) — ook een expliciete klik van de eigenaar is geen vervanging
+ *   voor een inhoudelijk QA-oordeel.
+ * - de CI-status-controle: ook een expliciete goedkeuring van de eigenaar
+ *   mag nooit een pull request mergen waarvan de CI-checks mislukken of nog
+ *   lopen (zie de toelichting bij ensureMissionPullRequestMerged hierboven).
+ *
+ * Is de pull request inmiddels al gemergd (bijvoorbeeld doordat de eigenaar
+ * ondertussen toch zelf op GitHub heeft gemerged), dan doet dit niets en
+ * geeft gewoon het bestaande resultaat terug — geen dubbele merge-poging.
+ */
+export async function approveAndMergeMissionPullRequest(
+  mission: MissionV2,
+): Promise<ApproveAndMergeResult> {
+  if (!hasPassedAllCriteria(mission)) {
+    throw new Error(
+      "Nog niet alle succescriteria van deze missie staan op GEHAALD — de qa-rol moet eerst (opnieuw) akkoord geven voordat er iets gemergd kan worden.",
+    );
+  }
+
+  const target = getGithubRepoTarget();
+  const prs = await listPullRequests(target, "all");
+  const pr = findMissionPullRequest(prs, mission.missionId);
+
+  if (!pr) {
+    throw new Error(
+      "Geen pull request gevonden die bij deze missie hoort — er valt dus niets te mergen.",
+    );
+  }
+
+  if (pr.merged) {
+    return { pullRequestNumber: pr.number, pullRequestUrl: pr.url };
+  }
+
+  const ciStatus = await getCombinedCheckStatus(target, pr.headSha);
+
+  if (ciStatus.state === "failure") {
+    throw new Error(
+      `De CI-check(s) op pull request #${pr.number} ("${pr.title}") zijn mislukt (${ciStatus.failingCheckNames.join(", ")}) — ook via deze knop wordt daarom niet gemerged. Los de CI-fout eerst op via een nieuwe builder-toewijzing en laat QA opnieuw oordelen: ${pr.url}`,
+    );
+  }
+
+  if (ciStatus.state === "pending") {
+    throw new Error(
+      `De CI-check(s) op pull request #${pr.number} ("${pr.title}") zijn nog niet klaar (${ciStatus.pendingCheckNames.join(", ")}) — probeer het over een paar minuten opnieuw: ${pr.url}`,
+    );
+  }
+
+  try {
+    await mergePullRequest(target, pr.number, {
+      mergeMethod: "merge",
+      commitTitle: `Director: ${mission.title} (#${pr.number})`.slice(0, 200),
+      commitMessage: `Handmatig goedgekeurd en gemerged door de eigenaar vanuit de app ("Goedkeuring & Mergen") nadat de qa-rol alle succescriteria van missie "${mission.title}" had goedgekeurd, maar de risicoclassificatie eerst eigen goedkeuring vereiste.`,
+    });
+  } catch (error) {
+    const detail = error instanceof GithubApiError ? error.message : String(error);
+    throw new Error(
+      `Het mergen van pull request #${pr.number} ("${pr.title}") is mislukt: ${detail}. Bekijk en merge de pull request zelf op GitHub: ${pr.url}`,
+    );
+  }
+
+  return { pullRequestNumber: pr.number, pullRequestUrl: pr.url };
+}
+
 /**
  * Laat de Director één beslissing nemen over een ACTIVE mission en past die
  * direct toe. Beoordeelt zelf geen succescriteria meer — dat gebeurt

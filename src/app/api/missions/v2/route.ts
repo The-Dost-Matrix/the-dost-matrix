@@ -6,7 +6,7 @@ import { verifyIdToken } from "@/core/firebase/admin";
 import type {
   CreateMissionPayload,
 } from "@/core/mission-engine/v2/commands";
-import { runDirectorStep } from "@/core/mission-engine/v2/director-runtime";
+import { approveAndMergeMissionPullRequest, runDirectorStep } from "@/core/mission-engine/v2/director-runtime";
 import { createMissionEngineV2 } from "@/core/mission-engine/v2/engine-factory";
 import { listMissionsForOwner } from "@/core/mission-engine/v2/firestore-store";
 import type { MissionRiskLevel, MissionV2 } from "@/core/mission-engine/v2/mission";
@@ -46,6 +46,15 @@ export const dynamic = "force-dynamic";
  *                                       gebruikt engine.cancel(), die al
  *                                       bestond maar tot nu toe nergens
  *                                       vandaan aangeroepen kon worden.
+ * - POST { action: "approve-and-merge",
+ *          missionId }                → roadmap-stap 4: mergt de meest
+ *                                       recente pull request van een missie
+ *                                       zelf (via approveAndMergeMission-
+ *                                       PullRequest in director-runtime.ts),
+ *                                       voor het geval de Director eerder
+ *                                       een needs-signoff-melding gaf — de
+ *                                       eigenaar hoeft hiervoor niet meer
+ *                                       naar GitHub.com.
  *
  * Alle acties zijn ownerId-scoped: een mission kan alleen worden bekeken of
  * bewerkt door de ingelogde gebruiker die hem heeft aangemaakt.
@@ -156,12 +165,18 @@ type CancelBody = {
   reason?: unknown;
 };
 
+type ApproveAndMergeBody = {
+  action: "approve-and-merge";
+  missionId?: unknown;
+};
+
 type PostBody =
   | CreateBody
   | DispatchBody
   | RunRoleBody
   | AutoStepBody
   | CancelBody
+  | ApproveAndMergeBody
   | { action?: unknown };
 
 const ALLOWED_RISK_LEVELS: MissionRiskLevel[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
@@ -319,6 +334,36 @@ async function handleCancel(body: CancelBody, ownerId: string) {
   await proposeMissionKnowledge(updated, "cancelled");
 
   return NextResponse.json({ mission: updated });
+}
+
+/**
+ * Roadmap-stap 4: mergt de meest recente pull request van een missie
+ * rechtstreeks vanuit de app, voor het geval de Director eerder een
+ * needs-signoff-foutmelding gaf (zie approveAndMergeMissionPullRequest in
+ * director-runtime.ts voor de vangnetten en waarom dit bewust GEEN
+ * risicoclassificatie meer uitvoert — een klik hier IS de goedkeuring).
+ * Verandert de mission zelf niet (alleen de pull request op GitHub) — de
+ * eigenaar klikt daarna gewoon opnieuw op "volgende stap" om de missie
+ * daadwerkelijk af te ronden, exact zoals na een handmatige merge op
+ * GitHub.com vandaag al werkt.
+ */
+async function handleApproveAndMerge(body: ApproveAndMergeBody, ownerId: string) {
+  if (typeof body.missionId !== "string" || !body.missionId.trim()) {
+    return NextResponse.json({ error: "missionId ontbreekt." }, { status: 400 });
+  }
+
+  const engine = createMissionEngineV2();
+  const mission = await engine.getMission(body.missionId);
+
+  if (!mission) {
+    return NextResponse.json({ error: "Mission niet gevonden." }, { status: 404 });
+  }
+
+  assertOwnership(mission, ownerId);
+
+  const result = await approveAndMergeMissionPullRequest(mission);
+
+  return NextResponse.json({ mission, ...result });
 }
 
 async function handleDispatch(body: DispatchBody, ownerId: string) {
@@ -544,6 +589,8 @@ export async function POST(request: NextRequest) {
         return await handleAutoStep(body as AutoStepBody, ownerId);
       case "cancel":
         return await handleCancel(body as CancelBody, ownerId);
+      case "approve-and-merge":
+        return await handleApproveAndMerge(body as ApproveAndMergeBody, ownerId);
       default:
         return NextResponse.json({ error: "Onbekende actie." }, { status: 400 });
     }

@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import { useAuth } from "@/domains/auth/auth-provider";
 import {
+  approveAndMergeMissionV2,
   autoStepMissionV2,
   cancelMissionV2,
   createMissionV2,
@@ -140,6 +141,20 @@ function formatMissionCost(mission: MissionV2): string {
  */
 const RISK_LEVELS: MissionRiskLevel[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 
+/**
+ * Herkenningstekst uit de foutmelding die de Director geeft wanneer hij een
+ * gehaalde missie niet automatisch mag mergen (zie
+ * classifyPullRequestRiskForMission/ensureMissionPullRequestMerged in
+ * director-runtime.ts — deze exacte tekst staat in beide needs-signoff-
+ * foutmeldingen, ongeacht of dat door de bestandsgebaseerde classificatie of
+ * door het missie-risiconiveau komt). Er is geen structureel foutveld in de
+ * API-respons (net als bij alle andere acties hier — zie route.ts), dus dit
+ * is bewust een gerichte tekstherkenning op precies díe foutmelding, niet op
+ * fouten in het algemeen: laat de "Goedkeuring & Mergen"-knop (roadmap-stap
+ * 4) alleen verschijnen wanneer die specifieke situatie zich voordoet.
+ */
+const NEEDS_SIGNOFF_MARKER = "risicoclassificatie: needs-signoff";
+
 function riskLevelLabel(level: MissionRiskLevel): string {
   const labels: Record<MissionRiskLevel, string> = {
     LOW: "Laag — automatisch mergen blijft mogelijk bij een geïsoleerde wijziging",
@@ -169,7 +184,13 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
   const [directorReason, setDirectorReason] = useState("");
   const [usedKnowledge, setUsedKnowledge] = useState<KnowledgeEntry[]>([]);
 
-  const [busy, setBusy] = useState<"create" | "auto-step" | "cancel" | null>(null);
+  // Roadmap-stap 4 ("Goedkeuring & Mergen"): needsApproval bepaalt of die
+  // knop zichtbaar is (zie NEEDS_SIGNOFF_MARKER hierboven), approveInfo toont
+  // het resultaat ná een geslaagde klik erop.
+  const [needsApproval, setNeedsApproval] = useState(false);
+  const [approveInfo, setApproveInfo] = useState("");
+
+  const [busy, setBusy] = useState<"create" | "auto-step" | "cancel" | "approve" | null>(null);
   const [loadingRecent, setLoadingRecent] = useState(true);
   const [error, setError] = useState("");
 
@@ -209,6 +230,8 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
     setRoleOutput("");
     setDirectorReason("");
     setUsedKnowledge([]);
+    setNeedsApproval(false);
+    setApproveInfo("");
   }
 
   function selectMission(candidate: MissionV2) {
@@ -261,6 +284,8 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
 
     setBusy("auto-step");
     setError("");
+    setNeedsApproval(false);
+    setApproveInfo("");
 
     try {
       const result = await autoStepMissionV2(user, mission.missionId);
@@ -272,7 +297,37 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
       if (result.roleOutput) setRoleOutput(result.roleOutput);
       setUsedKnowledge(result.usedKnowledge ?? []);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "De Director kon geen stap zetten.");
+      const message = caught instanceof Error ? caught.message : "De Director kon geen stap zetten.";
+      setError(message);
+      // Zie NEEDS_SIGNOFF_MARKER hierboven: toon de "Goedkeuring & Mergen"-
+      // knop precies wanneer dít de reden is dat de stap niet doorging.
+      setNeedsApproval(message.includes(NEEDS_SIGNOFF_MARKER));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /**
+   * Roadmap-stap 4: mergt de pull request van de missie rechtstreeks vanuit
+   * de app, zonder naar GitHub.com te hoeven — zie approveAndMergeMissionV2
+   * en de achtergrond in director-runtime.ts. Verandert de mission zelf niet
+   * (alleen de pull request op GitHub); de eigenaar klikt daarna gewoon
+   * opnieuw op "volgende stap" om de missie daadwerkelijk af te ronden.
+   */
+  async function handleApproveAndMerge() {
+    if (!user || !mission) return;
+
+    setBusy("approve");
+    setError("");
+
+    try {
+      const result = await approveAndMergeMissionV2(user, mission.missionId);
+      setNeedsApproval(false);
+      setApproveInfo(
+        `Pull request #${result.pullRequestNumber} is gemerged. Klik nogmaals op "Laat de Director de volgende stap zetten" om de missie af te ronden: ${result.pullRequestUrl}`,
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Goedkeuren en mergen is mislukt.");
     } finally {
       setBusy(null);
     }
@@ -380,6 +435,13 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
 
       {mission.status === "COMPLETED" && <p className="muted">Deze missie is voltooid.</p>}
 
+      {approveInfo && (
+        <article className="knowledge-card">
+          <strong>Goedkeuring &amp; Mergen</strong>
+          <p>{approveInfo}</p>
+        </article>
+      )}
+
       {directorReason && (
         <article className="knowledge-card">
           <strong>Beslissing van de Director</strong>
@@ -417,6 +479,24 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
       >
         {busy === "auto-step" ? "Director is bezig..." : "Laat de Director de volgende stap zetten"}
       </button>
+
+      {/*
+        Roadmap-stap 4: verschijnt uitsluitend na een needs-signoff-
+        foutmelding (zie NEEDS_SIGNOFF_MARKER/handleAutoStep hierboven) —
+        vervangt het handmatig mergen op GitHub.com, zonder de onderliggende
+        vangnetten (alle criteria GEHAALD + CI geslaagd, zie
+        approveAndMergeMissionPullRequest in director-runtime.ts) te omzeilen.
+      */}
+      {needsApproval && (
+        <button
+          className="secondary"
+          type="button"
+          disabled={busy !== null}
+          onClick={() => void handleApproveAndMerge()}
+        >
+          {busy === "approve" ? "Bezig met mergen..." : "Goedkeuring & Mergen"}
+        </button>
+      )}
 
       {/*
         Bewust een losse, minder prominente knop (`.secondary`, al bestaande

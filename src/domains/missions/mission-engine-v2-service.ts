@@ -164,3 +164,26 @@ export async function cancelMissionV2(
 
   return data.mission;
 }
+
+export interface ApproveAndMergeMissionV2Result {
+  mission: MissionV2;
+  pullRequestNumber: number;
+  pullRequestUrl: string;
+}
+
+/**
+ * Roadmap-stap 4: mergt de meest recente pull request van een missie
+ * rechtstreeks vanuit de app — voor het geval de Director eerder een
+ * needs-signoff-foutmelding gaf (zie director-runtime.ts). Verandert de
+ * mission zelf niet; de eigenaar klikt daarna gewoon opnieuw op "volgende
+ * stap" om de missie daadwerkelijk af te ronden.
+ */
+export async function approveAndMergeMissionV2(
+  user: User,
+  missionId: string,
+): Promise<ApproveAndMergeMissionV2Result> {
+  return callMissionEngineApi<ApproveAndMergeMissionV2Result>(user, {
+    method: "POST",
+    body: JSON.stringify({ action: "approve-and-merge", missionId }),
+  });
+}
