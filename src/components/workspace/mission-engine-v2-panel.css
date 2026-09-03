@@ -117,6 +117,17 @@
   margin-top: auto;
   width: 100%;
   box-sizing: border-box;
+  /*
+   * display:flex + gap zodat de "Missie annuleren"-knop (secondary, alleen
+   * zichtbaar bij een annuleerbare status — zie mission-engine-v2-panel.tsx)
+   * netjes naast de primaire "volgende stap"-knop komt te staan in plaats
+   * van er zonder tussenruimte tegenaan te plakken. Met maar één kind-
+   * element (zoals voorheen, en nog steeds in de meeste gevallen) heeft dit
+   * geen zichtbaar effect.
+   */
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 .mev2-recent-missions {
   margin-top: 2rem;
@@ -155,4 +166,25 @@
   padding: 0.375rem 0.5rem;
   border-radius: 0.375rem;
   background: transparent;
+}
+
+/*
+ * Wrapper voor de twee <small>-regels (versie/toewijzingen + kosten) rechts
+ * in een .mission-card — houdt ze als één flex-kind samen zodat de
+ * bestaande .mission-card { justify-content: space-between }-tweedeling
+ * (titel/doel links, meta-info rechts) intact blijft. Zie de toelichting in
+ * mission-engine-v2-panel.tsx.
+ */
+.mev2-card-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  text-align: right;
+}
+
+/* Kostenregel: puur informatief (blokkeert nooit iets), daarom bewust
+   dezelfde gedempte stijl als de versie-regel erboven, niet nadrukkelijker. */
+.mev2-cost {
+  font-size: 0.72rem;
 }

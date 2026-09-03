@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { ActorRef, JsonValue, RoleResult } from "@/core/contracts/v2";
 import { getChatProvider } from "@/core/llm/model-router";
+import { estimateCost } from "@/core/llm/pricing";
 
 import { executeBuilderAssignment } from "./builder-runtime";
 import type { MissionEngine } from "./engine";
@@ -148,6 +149,10 @@ export async function executeRoleAssignment({
         provider: provider.id,
         model: completion.model,
         durationMs,
+        inputTokens: completion.usage?.inputTokens,
+        outputTokens: completion.usage?.outputTokens,
+        cost: completion.usage ? estimateCost(completion.model, completion.usage) : undefined,
+        currency: completion.usage ? "USD" : undefined,
       },
       createdAt: new Date().toISOString(),
     };

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useAuth } from "@/domains/auth/auth-provider";
 import {
   autoStepMissionV2,
+  cancelMissionV2,
   createMissionV2,
   listMissionsV2,
 } from "@/domains/missions/mission-engine-v2-service";
@@ -76,6 +77,23 @@ import "./mission-engine-v2-panel.css";
 
 const AUTO_STEP_STATUSES: MissionV2["status"][] = ["ACTIVE", "WAITING_FOR_ROLE"];
 
+/**
+ * Missies in een van deze statussen kunnen nog geannuleerd worden (zie
+ * state-machine.ts: CANCELLED is vanuit vrijwel elke niet-afgeronde status
+ * een geldige transitie). COMPLETED/FAILED/CANCELLED zijn eindstatussen
+ * waar niets meer te annuleren valt.
+ */
+const CANCELLABLE_STATUSES: MissionV2["status"][] = [
+  "DRAFT",
+  "READY",
+  "ACTIVE",
+  "WAITING_FOR_ROLE",
+  "WAITING_FOR_OWNER",
+  "WAITING_FOR_APPROVAL",
+  "REPLANNING",
+  "PAUSED",
+];
+
 function statusLabel(status: MissionV2["status"]): string {
   const labels: Record<MissionV2["status"], string> = {
     DRAFT: "Concept",
@@ -92,6 +110,25 @@ function statusLabel(status: MissionV2["status"]): string {
   };
 
   return labels[status] ?? status;
+}
+
+/**
+ * Toont de geschatte kosten van een missie tot nu toe — puur informatief.
+ * `mission.spentCost` wordt berekend in USD (zie pricing.ts/usage-tracker.ts
+ * in de mission engine), terwijl het budget van de missie standaard in EUR
+ * staat (zie mission-factory.ts) — bewust GEEN valuta-omrekening tussen die
+ * twee (zie de toelichting in pricing.ts), dus dit toont beide bedragen naast
+ * elkaar in hun eigen valuta in plaats van een schijnnauwkeurige vergelijking
+ * te suggereren. Blokkeert nooit iets (zie de eigenaar-keuze in mission.ts) —
+ * puur zichtbaarheid.
+ */
+function formatMissionCost(mission: MissionV2): string {
+  const spent = mission.spentCost.toLocaleString("nl-NL", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  });
+
+  return `~$${spent} geschat (budget: ${mission.budget.maximumCost} ${mission.budget.currency}, indicatief — blokkeert niets)`;
 }
 
 export interface MissionEngineV2PanelProps {
@@ -111,7 +148,7 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
   const [directorReason, setDirectorReason] = useState("");
   const [usedKnowledge, setUsedKnowledge] = useState<KnowledgeEntry[]>([]);
 
-  const [busy, setBusy] = useState<"create" | "auto-step" | null>(null);
+  const [busy, setBusy] = useState<"create" | "auto-step" | "cancel" | null>(null);
   const [loadingRecent, setLoadingRecent] = useState(true);
   const [error, setError] = useState("");
 
@@ -218,7 +255,39 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
     }
   }
 
+  /**
+   * Annuleert de geselecteerde mission (bijvoorbeeld eentje die muurvast zit
+   * in needs-signoff met een pull request die je liever niet via de Director
+   * laat oplossen). Vraagt eerst expliciet bevestiging — dit is niet terug
+   * te draaien (CANCELLED is een eindstatus, zie state-machine.ts).
+   */
+  async function handleCancel() {
+    if (!user || !mission) return;
+
+    const confirmed = window.confirm(
+      `Missie "${mission.title}" annuleren? Dit kan niet ongedaan worden gemaakt.`,
+    );
+    if (!confirmed) return;
+
+    setBusy("cancel");
+    setError("");
+
+    try {
+      const updated = await cancelMissionV2(user, mission.missionId);
+      setMission(updated);
+      setRecentMissions((current) =>
+        current.map((entry) => (entry.missionId === updated.missionId ? updated : entry)),
+      );
+      resetFeedback();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Mission annuleren is mislukt.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const canAutoStep = mission && AUTO_STEP_STATUSES.includes(mission.status);
+  const canCancel = mission && CANCELLABLE_STATUSES.includes(mission.status);
 
   // Gedeeld tussen beide weergaven: de missiekaart en de feedback van de
   // laatste stap (Director-beslissing, gebruikte kennis, resultaat van de
@@ -256,9 +325,18 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
           <p className="mission-objective">{mission.objective}</p>
         </div>
 
-        <small>
-          versie {mission.version} · {mission.assignments.length} toewijzing(en)
-        </small>
+        {/*
+          Beide <small>-regels samen in één wrapper: .mission-card is
+          display:flex met justify-content:space-between over precies twee
+          kinderen (dit blok en het <div> hierboven) — een derde direct kind
+          zou die twee-kolomsverdeling verstoren.
+        */}
+        <div className="mev2-card-meta">
+          <small>
+            versie {mission.version} · {mission.assignments.length} toewijzing(en)
+          </small>
+          <small className="mev2-cost">{formatMissionCost(mission)}</small>
+        </div>
       </article>
 
       {!canAutoStep && mission.status !== "COMPLETED" && (
@@ -306,6 +384,25 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
       >
         {busy === "auto-step" ? "Director is bezig..." : "Laat de Director de volgende stap zetten"}
       </button>
+
+      {/*
+        Bewust een losse, minder prominente knop (`.secondary`, al bestaande
+        stijl uit globals.css) naast de primaire "volgende stap"-knop, niet
+        ervoor of eronder als hoofdactie: annuleren is een uitzondering
+        (bijvoorbeeld een missie die muurvast zit in needs-signoff met een
+        pull request die je liever niet via de Director oplost), geen
+        onderdeel van de normale flow.
+      */}
+      {canCancel && (
+        <button
+          className="secondary"
+          type="button"
+          disabled={busy !== null}
+          onClick={() => void handleCancel()}
+        >
+          {busy === "cancel" ? "Bezig..." : "Missie annuleren"}
+        </button>
+      )}
     </div>
   ) : null;
 

@@ -59,11 +59,20 @@ export function createOpenAiProvider(apiKey: string): LlmProvider {
 
       const data = (await response.json()) as {
         choices?: { message?: { content?: string | null } }[];
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
       };
       const text = data.choices?.[0]?.message?.content?.trim() ?? "";
       if (!text) throw new Error("OpenAI gaf een leeg antwoord terug.");
 
-      return { content: text, model: `openai/${OPENAI_CHAT_MODEL}` };
+      return {
+        content: text,
+        model: `openai/${OPENAI_CHAT_MODEL}`,
+        usage:
+          typeof data.usage?.prompt_tokens === "number" &&
+          typeof data.usage?.completion_tokens === "number"
+            ? { inputTokens: data.usage.prompt_tokens, outputTokens: data.usage.completion_tokens }
+            : undefined,
+      };
     },
   };
 }

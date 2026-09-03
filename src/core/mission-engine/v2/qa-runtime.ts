@@ -2,14 +2,18 @@ import { randomUUID } from "node:crypto";
 
 import type { RoleResult } from "@/core/contracts/v2";
 import { getChatProvider } from "@/core/llm/model-router";
+import { estimateCost } from "@/core/llm/pricing";
+import type { ChatCompletionResult } from "@/core/llm/types";
 
 import {
   compareBranches,
+  getCombinedCheckStatus,
   getDefaultBranch,
   getFileContent,
   getGithubRepoTarget,
   getPullRequestFiles,
   listPullRequests,
+  type CombinedCheckStatus,
   type GithubRepoTarget,
   type PullRequestFileChange,
   type PullRequestSummary,
@@ -172,9 +176,19 @@ function buildResult(input: {
   artifactRefs: string[];
   model?: string;
   durationMs: number;
+  usage?: ChatCompletionResult["usage"];
 }): RoleResult {
-  const { assignment, mission, status, summary, successCriteriaResults, artifactRefs, model, durationMs } =
-    input;
+  const {
+    assignment,
+    mission,
+    status,
+    summary,
+    successCriteriaResults,
+    artifactRefs,
+    model,
+    durationMs,
+    usage,
+  } = input;
 
   return {
     resultId: randomUUID(),
@@ -194,6 +208,10 @@ function buildResult(input: {
       provider: model ? getChatProvider().id : undefined,
       model,
       durationMs,
+      inputTokens: usage?.inputTokens,
+      outputTokens: usage?.outputTokens,
+      cost: model && usage ? estimateCost(model, usage) : undefined,
+      currency: model && usage ? "USD" : undefined,
     },
     createdAt: new Date().toISOString(),
   };
@@ -284,7 +302,7 @@ async function evaluateCriteriaAgainstEvidence(
   mission: MissionV2,
   pr: PullRequestSummary,
   evidenceText: string,
-): Promise<{ verdict: QaLlmVerdict; model: string }> {
+): Promise<{ verdict: QaLlmVerdict; model: string; usage?: ChatCompletionResult["usage"] }> {
   const provider = getChatProvider();
 
   const criteriaLines = mission.successCriteria
@@ -370,6 +388,7 @@ async function evaluateCriteriaAgainstEvidence(
           : "",
     },
     model: completion.model,
+    usage: completion.usage,
   };
 }
 
@@ -422,6 +441,33 @@ function applyBlockingRecommendation(
 }
 
 /**
+ * Dwingt af dat GEEN enkel succescriterium als GEHAALD kan gelden zolang de
+ * CI-checks op de pull request-branch (bijvoorbeeld "CI / Typecheck &
+ * import-check") niet slagen — zie de toelichting bij `getCombinedCheckStatus`
+ * in github-client.ts voor de live misser die hiertoe leidde. Dit is bewust
+ * grof (ALLE criteria op NIET GEHAALD, niet alleen het meest verwante) omdat
+ * een falende build/typecheck in de praktijk niets van de PR nog betrouwbaar
+ * maakt: als de code niet eens compileert, is geen enkel ander criterium
+ * zinvol te verifiëren op basis van "dit werkt zodra het gemerged wordt".
+ */
+function applyFailingCiOverride(
+  criteria: QaLlmVerdict["criteria"],
+  ci: CombinedCheckStatus,
+): QaLlmVerdict["criteria"] {
+  if (ci.state !== "failure") {
+    return criteria;
+  }
+
+  const ciReason = `CI-check(s) falen op deze pull request (${ci.failingCheckNames.join(", ")}) — dit criterium kan niet als GEHAALD gelden totdat de build/CI weer slaagt, ongeacht de inhoudelijke beoordeling hieronder.`;
+
+  return criteria.map((entry) => ({
+    ...entry,
+    passed: false,
+    reason: entry.passed ? ciReason : `${entry.reason} Daarnaast: ${ciReason}`,
+  }));
+}
+
+/**
  * Voert een toewijzing van de QA-rol uit: vindt de bijbehorende pull request
  * op GitHub en laat een LLM per succescriterium een PASSED/FAILED-oordeel
  * vellen op basis van de volledige inhoud van de gewijzigde bestanden zoals
@@ -468,13 +514,31 @@ export async function executeQaAssignment({
     }
   }
 
+  // Mechanische CI-controle, vóórdat er inhoudelijk (LLM) beoordeeld wordt —
+  // zie applyFailingCiOverride hieronder voor waarom dit los staat van het
+  // LLM-oordeel. Nog lopende checks worden bewust net als een "achterlopende
+  // branch" (zie compareBranches hierboven) behandeld: een verwachte,
+  // tijdelijke situatie die de toewijzing actief laat staan zodat de
+  // eigenaar het na afloop van CI simpelweg opnieuw kan proberen, in plaats
+  // van een oordeel te vellen op een onvolledig beeld.
+  const ciStatus = await getCombinedCheckStatus(target, pr.headSha);
+
+  if (ciStatus.state === "pending") {
+    throw new Error(
+      `CI-check(s) op pull request #${pr.number} ("${pr.title}") zijn nog bezig (${ciStatus.pendingCheckNames.join(", ")}). QA wacht bewust tot deze zijn afgerond voordat ze een oordeel geeft — probeer het over een paar minuten opnieuw: ${pr.url}`,
+    );
+  }
+
   const files = await getPullRequestFiles(target, pr.number);
   const evidence = await fetchFullFileContents(target, files.slice(0, MAX_FILES_CONSIDERED), pr.headSha);
   const evidenceText = formatEvidenceForPrompt(evidence);
 
-  const { verdict, model } = await evaluateCriteriaAgainstEvidence(mission, pr, evidenceText);
-  const effectiveCriteria = applyBlockingRecommendation(verdict.criteria, verdict);
-  const wasOverridden = effectiveCriteria !== verdict.criteria;
+  const { verdict, model, usage } = await evaluateCriteriaAgainstEvidence(mission, pr, evidenceText);
+  const afterRecommendation = applyBlockingRecommendation(verdict.criteria, verdict);
+  const recommendationOverrode = afterRecommendation !== verdict.criteria;
+
+  const effectiveCriteria = applyFailingCiOverride(afterRecommendation, ciStatus);
+  const ciOverrode = ciStatus.state === "failure";
 
   const successCriteriaResults: Record<string, boolean> = {};
   for (const entry of effectiveCriteria) {
@@ -487,9 +551,14 @@ export async function executeQaAssignment({
     ...effectiveCriteria.map(
       (entry) => `- (${entry.passed ? "GEHAALD" : "NIET GEHAALD"}) ${entry.criterionId}: ${entry.reason}`,
     ),
+    ciOverrode
+      ? `\nCI-status: ❌ MISLUKT (${ciStatus.failingCheckNames.join(", ")}) — alle succescriteria hierboven zijn daarom hard op NIET GEHAALD gezet, ongeacht de inhoudelijke beoordeling hierboven. Dit wordt pas opnieuw op GEHAALD gezet nadat een nieuwe builder-toewijzing de CI-fout heeft opgelost en de check daarna zelf weer slaagt.`
+      : ciStatus.state === "success"
+        ? "\nCI-status: ✅ geslaagd."
+        : "",
     verdict.recommendation
       ? `\nAanbeveling: ${verdict.recommendation}${
-          wasOverridden
+          recommendationOverrode
             ? " — LET OP: hierdoor is een succescriterium hierboven bewust op NIET GEHAALD gezet, ook al leek de inhoud op zich in orde. De missie kan pas weer voltooid worden nadat de builder-rol dit heeft opgelost en QA opnieuw akkoord geeft."
             : ""
         }`
@@ -511,6 +580,7 @@ export async function executeQaAssignment({
     artifactRefs: [pr.url],
     model,
     durationMs: Date.now() - startedAt,
+    usage,
   });
 
   const criteriaVerdicts: CriterionVerdict[] = effectiveCriteria.map((entry) => ({

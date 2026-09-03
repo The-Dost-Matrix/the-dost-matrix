@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { RoleResult } from "@/core/contracts/v2";
 import { getChatProvider } from "@/core/llm/model-router";
+import { createUsageTracker, type UsageTracker } from "@/core/llm/usage-tracker";
 
 import {
   createBranch,
@@ -147,6 +148,7 @@ async function planFiles(
   mission: MissionV2,
   assignment: AssignmentRecord,
   treeText: string,
+  usageTracker: UsageTracker,
 ): Promise<BuilderPlan> {
   const provider = getChatProvider();
 
@@ -168,6 +170,7 @@ async function planFiles(
   const completion = await provider.chatCompletion(buildBuilderSystemPrompt(mission), [
     { role: "user", content: userPrompt },
   ]);
+  usageTracker.add(completion);
 
   const bestandenLine = extractLabeledLine(completion.content, "BESTANDEN");
   const summaryBlock = extractLabeledBlock(completion.content, "SAMENVATTING");
@@ -248,6 +251,7 @@ async function planMetadata(
   assignment: AssignmentRecord,
   plan: BuilderPlan,
   writtenFiles: BuilderFileChange[],
+  usageTracker: UsageTracker,
 ): Promise<BuilderMetadata> {
   const provider = getChatProvider();
 
@@ -272,6 +276,7 @@ async function planMetadata(
   const completion = await provider.chatCompletion(buildBuilderSystemPrompt(mission), [
     { role: "user", content: userPrompt },
   ]);
+  usageTracker.add(completion);
 
   const summary = extractLabeledLine(completion.content, "SAMENVATTING");
   const pullRequestTitle = extractLabeledLine(completion.content, "PR_TITEL");
@@ -336,6 +341,7 @@ async function writeSingleFile(
   assignment: AssignmentRecord,
   plan: BuilderPlan,
   file: PlannedFile,
+  usageTracker: UsageTracker,
 ): Promise<SingleFileWriteResult> {
   const provider = getChatProvider();
 
@@ -389,6 +395,7 @@ async function writeSingleFile(
   const completion = await provider.chatCompletion(buildBuilderSystemPrompt(mission), [
     { role: "user", content: userPrompt },
   ]);
+  usageTracker.add(completion);
 
   const content = stripSurroundingCodeFence(completion.content);
 
@@ -422,12 +429,13 @@ async function writeFiles(
   assignment: AssignmentRecord,
   plan: BuilderPlan,
   plannedFiles: PlannedFile[],
+  usageTracker: UsageTracker,
 ): Promise<BuilderWriteResult> {
   const files: BuilderFileChange[] = [];
   let model = "";
 
   for (const file of plannedFiles) {
-    const written = await writeSingleFile(mission, assignment, plan, file);
+    const written = await writeSingleFile(mission, assignment, plan, file, usageTracker);
     files.push({ path: file.path, content: written.content });
     model = written.model;
   }
@@ -438,7 +446,7 @@ async function writeFiles(
 
   // Bewust pas HIER, na het schrijven van alle bestanden — zie de
   // toelichting bij planMetadata() voor waarom deze volgorde cruciaal is.
-  const metadata = await planMetadata(mission, assignment, plan, files);
+  const metadata = await planMetadata(mission, assignment, plan, files, usageTracker);
 
   return {
     summary: metadata.summary,
@@ -476,6 +484,12 @@ export async function executeBuilderAssignment({
   const startedAt = Date.now();
   const target = getGithubRepoTarget();
 
+  // Eén tracker voor de hele toewijzing: die doet meerdere losse LLM-
+  // aanroepen (plannen, per bestand schrijven, samenvatten) en zonder dit
+  // zou alleen de kosten van de LAATSTE aanroep zichtbaar worden in plaats
+  // van de werkelijke totaalkosten (zie usage-tracker.ts).
+  const usageTracker = createUsageTracker();
+
   const defaultBranch = await getDefaultBranch(target);
   const baseSha = await getBranchHeadSha(target, defaultBranch);
   const tree = await getRepoTree(target, defaultBranch);
@@ -486,7 +500,7 @@ export async function executeBuilderAssignment({
     .sort()
     .join("\n");
 
-  const plan = await planFiles(mission, assignment, treeText);
+  const plan = await planFiles(mission, assignment, treeText, usageTracker);
 
   const plannedFiles: PlannedFile[] = [];
   for (const path of plan.paths) {
@@ -498,7 +512,7 @@ export async function executeBuilderAssignment({
     });
   }
 
-  const writeResult = await writeFiles(mission, assignment, plan, plannedFiles);
+  const writeResult = await writeFiles(mission, assignment, plan, plannedFiles, usageTracker);
 
   // Alleen bestanden schrijven die ook echt gepland waren — voorkomt dat de
   // tweede LLM-aanroep alsnog een bestand buiten de lijst van planFiles()
@@ -588,6 +602,10 @@ export async function executeBuilderAssignment({
       provider: getChatProvider().id,
       model: writeResult.model,
       durationMs,
+      inputTokens: usageTracker.totals().inputTokens,
+      outputTokens: usageTracker.totals().outputTokens,
+      cost: usageTracker.totals().cost,
+      currency: "USD",
     },
     createdAt: now,
   };

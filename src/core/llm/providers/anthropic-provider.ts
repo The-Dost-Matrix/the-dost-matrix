@@ -67,6 +67,7 @@ export function createAnthropicProvider(apiKey: string): LlmProvider {
       const data = (await response.json()) as {
         content?: { type: string; text?: string }[];
         stop_reason?: string;
+        usage?: { input_tokens?: number; output_tokens?: number };
       };
       const text = (data.content ?? [])
         .filter((block) => block.type === "text")
@@ -87,7 +88,16 @@ export function createAnthropicProvider(apiKey: string): LlmProvider {
         );
       }
 
-      return { content: text, model: `anthropic/${ANTHROPIC_MODEL}`, stopReason: data.stop_reason };
+      return {
+        content: text,
+        model: `anthropic/${ANTHROPIC_MODEL}`,
+        stopReason: data.stop_reason,
+        usage:
+          typeof data.usage?.input_tokens === "number" &&
+          typeof data.usage?.output_tokens === "number"
+            ? { inputTokens: data.usage.input_tokens, outputTokens: data.usage.output_tokens }
+            : undefined,
+      };
     },
   };
 }

@@ -137,9 +137,16 @@ export function assertMission(mission: MissionV2): asserts mission is MissionV2 
   if (mission.successCriteria.length === 0) {
     throw new Error("Een mission moet minimaal één succescriterium hebben.");
   }
-  if (mission.spentCost > mission.budget.maximumCost) {
-    throw new Error("Mission budget is overschreden.");
-  }
+  // Bewust GEEN handhaving hier (vroeger stond hier een throw zodra
+  // spentCost > budget.maximumCost): de eigenaar heeft expliciet gekozen dat
+  // budget uitsluitend zichtbaar/informatief moet zijn (zie
+  // mission-engine-v2-panel.tsx) en dat een missie NOOIT mag stoppen of
+  // falen vanwege kosten — ook niet via deze invariant, die bij elke
+  // mutatie wordt gecontroleerd (zie engine.ts's commit()). Nu er
+  // daadwerkelijke kosten worden bijgehouden (zie usage-tracker.ts en
+  // pricing.ts), zou deze check anders een cruciale missie halverwege
+  // kunnen laten crashen zodra hij toevallig boven het (vaak arbitraire)
+  // budget uitkomt — precies wat de eigenaar niet wil.
 
   const uniqueActiveIds = new Set(mission.activeAssignmentIds);
   if (uniqueActiveIds.size !== mission.activeAssignmentIds.length) {

@@ -19,6 +19,18 @@ export interface ChatCompletionResult {
    * daartussen gissen; zie builder-runtime.ts's writeSingleFile().
    */
   stopReason?: string;
+  /**
+   * Daadwerkelijk tokengebruik van deze ene aanroep, zoals de provider dat
+   * teruggeeft — gebruikt door mission-engine/v2/pricing.ts om een
+   * kostenschatting te maken (zie usage-tracker.ts). Optioneel: als een
+   * provider dit niet teruggeeft, telt deze aanroep simpelweg voor €0 mee in
+   * plaats van dat er iets crasht — kostenschatting is bewust puur
+   * informatief (zie mission.ts) en mag nooit een missie blokkeren.
+   */
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+  };
 }
 
 export interface LlmProvider {
