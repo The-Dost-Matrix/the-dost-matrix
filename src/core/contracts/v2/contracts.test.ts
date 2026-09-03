@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import { expect, test } from "vitest";
 
 import {
   assertApprovalRequest,
@@ -31,7 +30,7 @@ test("accepts a valid command envelope", () => {
     payload: { objective: "Bouw Canonical Contracts" },
   };
 
-  assert.doesNotThrow(() => assertCommandEnvelope(command));
+  expect(() => assertCommandEnvelope(command)).not.toThrow();
 });
 
 test("rejects a dispatch decision without an assigned role", () => {
@@ -50,8 +49,7 @@ test("rejects a dispatch decision without an assigned role", () => {
     createdAt: now,
   };
 
-  assert.throws(
-    () => assertDirectorDecision(decision),
+  expect(() => assertDirectorDecision(decision)).toThrow(
     /assignedRole is verplicht/,
   );
 });
@@ -79,7 +77,7 @@ test("accepts a bounded role assignment", () => {
     createdAt: now,
   };
 
-  assert.doesNotThrow(() => assertRoleAssignment(assignment));
+  expect(() => assertRoleAssignment(assignment)).not.toThrow();
 });
 
 test("accepts a completed structured role result", () => {
@@ -101,7 +99,7 @@ test("accepts a completed structured role result", () => {
     createdAt: now,
   };
 
-  assert.doesNotThrow(() => assertRoleResult(result));
+  expect(() => assertRoleResult(result)).not.toThrow();
 });
 
 test("accepts an owner approval request", () => {
@@ -116,7 +114,7 @@ test("accepts an owner approval request", () => {
     requestedAt: now,
   };
 
-  assert.doesNotThrow(() => assertApprovalRequest(approval));
+  expect(() => assertApprovalRequest(approval)).not.toThrow();
 });
 
 test("accepts a versioned domain event", () => {
@@ -135,5 +133,5 @@ test("accepts a versioned domain event", () => {
     metadata: {},
   };
 
-  assert.doesNotThrow(() => assertDomainEventEnvelope(event));
+  expect(() => assertDomainEventEnvelope(event)).not.toThrow();
 });
