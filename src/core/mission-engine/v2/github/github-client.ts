@@ -371,6 +371,108 @@ export async function mergePullRequest(
   return { merged: data.merged, sha: data.sha, message: data.message };
 }
 
+export interface CombinedCheckStatus {
+  /**
+   * "success": alle checks zijn afgerond en geslaagd (of er zijn er geen —
+   * zie "none"). "failure": minstens één check is afgerond met een
+   * niet-geslaagde uitkomst. "pending": minstens één check loopt nog.
+   * "none": er zijn helemaal geen check-runs geregistreerd voor deze commit
+   * (bijvoorbeeld een repository zonder CI-workflow) — dit telt bewust NIET
+   * als "failure", anders zou elke missie in zo'n repository nooit meer
+   * kunnen afronden of mergen.
+   */
+  state: "success" | "failure" | "pending" | "none";
+  /** Namen van checks die zijn afgerond met een niet-geslaagde uitkomst. */
+  failingCheckNames: string[];
+  /** Namen van checks die nog niet zijn afgerond. */
+  pendingCheckNames: string[];
+}
+
+/**
+ * Haalt de GitHub Actions check-runs op voor een specifieke commit (in de
+ * praktijk `pr.headSha`, zie `PullRequestSummary`) en vat ze samen tot één
+ * simpel oordeel.
+ *
+ * Gebouwd na een live misser: QA (zie qa-runtime.ts) beoordeelde een pull
+ * request met een falende CI-check (drie verzonnen, niet-bestaande imports —
+ * "CI / Typecheck & import-check" faalde) toch op alle succescriteria als
+ * GEHAALD, omdat de LLM de importfout niet zelf als blokkerend gebrek
+ * herkende. Of code daadwerkelijk compileert/importeert is objectief
+ * verifieerbaar en hoort dus niet af te hangen van of een LLM dat toevallig
+ * doorheeft — vandaar deze mechanische, niet-LLM-afhankelijke controle, die
+ * zowel qa-runtime.ts (vóór GEHAALD) als director-runtime.ts (vóór mergen)
+ * gebruiken.
+ *
+ * Gebruikt de Checks-API (`/commits/{ref}/check-runs`), niet de oudere
+ * Statuses-API: de CI van dit project draait als GitHub Actions-workflow, en
+ * die registreert zichzelf als check-run, niet als losse "status".
+ *
+ * Bekende, bewuste beperking: GitHub staat de "Checks"-permissie (nodig voor
+ * dit endpoint) momenteel NIET toe op fine-grained personal access tokens —
+ * dit is een limitatie van GitHub zelf, bevestigd door GitHub Support ("only
+ * GitHub Apps can access this API"), niet iets dat via tokeninstellingen op
+ * te lossen is met het huidige `GITHUB_BUILDER_TOKEN`. De eigenaar heeft
+ * ervoor gekozen dit voorlopig NIET op te lossen (bijvoorbeeld via een
+ * classic token of een GitHub App, beide met hun eigen nadelen — zie
+ * README.md) en dit later als apart punt op te pakken. Om die reden vangt
+ * deze functie een 403 op dit endpoint expliciet af en behandelt dat als
+ * "none" (geen bekende CI-status) in plaats van de aanroeper te laten
+ * crashen — zonder deze vangnet zou ELKE QA- of Director-stap onherroepelijk
+ * stuklopen zolang het token deze permissie mist. Zodra het token ooit wél
+ * Checks-toegang krijgt, werkt de CI-gate in qa-runtime.ts/director-
+ * runtime.ts automatisch, zonder verdere codewijziging.
+ */
+export async function getCombinedCheckStatus(
+  target: GithubRepoTarget,
+  ref: string,
+): Promise<CombinedCheckStatus> {
+  let data: { total_count: number; check_runs: { name: string; status: string; conclusion: string | null }[] };
+
+  try {
+    data = await githubRequest(
+      `/repos/${target.owner}/${target.repo}/commits/${encodeURIComponent(ref)}/check-runs?per_page=100`,
+    );
+  } catch (error) {
+    if (error instanceof GithubApiError && error.status === 403) {
+      return { state: "none", failingCheckNames: [], pendingCheckNames: [] };
+    }
+    throw error;
+  }
+
+  if (data.total_count === 0) {
+    return { state: "none", failingCheckNames: [], pendingCheckNames: [] };
+  }
+
+  const nonSuccessConclusions = new Set([
+    "failure",
+    "timed_out",
+    "cancelled",
+    "action_required",
+    "stale",
+  ]);
+
+  const failingCheckNames = data.check_runs
+    .filter(
+      (run) =>
+        run.status === "completed" && run.conclusion !== null && nonSuccessConclusions.has(run.conclusion),
+    )
+    .map((run) => run.name);
+
+  const pendingCheckNames = data.check_runs
+    .filter((run) => run.status !== "completed")
+    .map((run) => run.name);
+
+  if (failingCheckNames.length > 0) {
+    return { state: "failure", failingCheckNames, pendingCheckNames };
+  }
+
+  if (pendingCheckNames.length > 0) {
+    return { state: "pending", failingCheckNames: [], pendingCheckNames };
+  }
+
+  return { state: "success", failingCheckNames: [], pendingCheckNames: [] };
+}
+
 export interface PullRequestFileChange {
   filename: string;
   status: string;

@@ -136,3 +136,22 @@ export async function autoStepMissionV2(
     body: JSON.stringify({ action: "auto-step", missionId }),
   });
 }
+
+/**
+ * Annuleert een mission (bijvoorbeeld eentje die muurvast zit, zoals een
+ * needs-signoff pull request die je liever niet via de Director oplost).
+ * Zie de API-route voor de achtergrond: dit riep tot nu toe nergens
+ * vandaan de al langer bestaande `engine.cancel()` aan.
+ */
+export async function cancelMissionV2(
+  user: User,
+  missionId: string,
+  reason?: string,
+): Promise<MissionV2> {
+  const data = await callMissionEngineApi<{ mission: MissionV2 }>(user, {
+    method: "POST",
+    body: JSON.stringify({ action: "cancel", missionId, reason }),
+  });
+
+  return data.mission;
+}

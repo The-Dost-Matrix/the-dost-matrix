@@ -531,7 +531,49 @@ input:focus, textarea:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px r
     justify-content: flex-end;
     gap: 9px;
   }
-  
+
+  /*
+   * Compacte tellers (Agents/Missies/Approvals) die eerder in de "MATRIX
+   * CORE"-hero op het Command Center stonden — die hero-sectie is verwijderd
+   * uit dashboard/page.tsx, deze drie waardes verschijnen nu hier in de
+   * topbar, zichtbaar op elke /dashboard-pagina in plaats van alleen op het
+   * hoofdscherm. Bewust een eigen, compacte stijl (geen hergebruik van de
+   * grote, bordered `.stats`-kaarten uit de hero — die zijn te fors voor deze
+   * smalle balk) maar met dezelfde visuele taal als `.matrix-system-status`
+   * ernaast (kleine uppercase label, opvallende waarde erboven).
+   */
+  .matrix-topbar-stats {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding-right: 10px;
+    border-right: 1px solid rgba(83, 217, 255, 0.15);
+  }
+
+  .matrix-topbar-stat {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .matrix-topbar-stat strong {
+    color: var(--cyan);
+    font-size: 0.85rem;
+    line-height: 1;
+  }
+
+  .matrix-topbar-stat span {
+    margin-top: 3px;
+    color: #778a9e;
+    font-size: 0.52rem;
+    letter-spacing: 0.06em;
+  }
+
+  @media (max-width: 900px) {
+    .matrix-topbar-stats {
+      display: none;
+    }
+  }
+
   .matrix-system-status {
     display: flex;
     align-items: center;

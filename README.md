@@ -199,11 +199,27 @@ de missie voldoet, vóórdat de Director de missie als voltooid mag markeren:
 4. Pas wanneer ALLE succescriteria van een missie op PASSED staan, mag de
    Director de missie voltooien — de Director zelf beoordeelt dit niet meer
    zelfstandig (dat was de vorige, bewust eerlijke beperking van v0).
+5. Vóórdat QA een criterium op GEHAALD zet, probeert ze eerst mechanisch
+   (niet via de LLM) de GitHub-CI-status van die pull request op te vragen —
+   bij een falende check worden ALLE succescriteria hard op NIET GEHAALD
+   gezet, ongeacht wat de LLM inhoudelijk beoordeelt; bij nog lopende checks
+   wordt het oordeel uitgesteld. Dezelfde controle voert de Director
+   nogmaals uit vlak vóór het (eventueel automatisch) mergen, als tweede,
+   onafhankelijke verdedigingslaag.
 
-**Setup**: geen extra stappen — de qa-rol gebruikt dezelfde
-`GITHUB_BUILDER_TOKEN` als de builder-rol, met dezelfde permissies
-(Contents: read/write, Pull requests: read/write volstaat, QA heeft alleen
-leestoegang tot pull requests nodig).
+**Setup**: de qa-rol en de Director gebruiken dezelfde `GITHUB_BUILDER_TOKEN`
+als de builder-rol. **Bekende, bewuste beperking**: de CI-statuscontrole
+hierboven werkt op dit moment NIET — GitHub staat de daarvoor benodigde
+"Checks"-permissie niet toe op fine-grained personal access tokens (bevestigd
+door GitHub Support: "only GitHub Apps can access this API"), en de eigenaar
+heeft ervoor gekozen dit voorlopig niet op te lossen via een classic token
+(bredere toegang dan alleen deze repo) of een GitHub App (aanzienlijk meer
+opzetwerk). Zolang dat zo blijft, faalt de CI-aanvraag met een 403 en
+behandelt `getCombinedCheckStatus` (zie github-client.ts) dat bewust als
+"geen bekende CI-status" in plaats van elke missie te blokkeren — QA en de
+Director werken dus vandaag in de praktijk nog zonder CI-gate, exact zoals
+vóór deze wijziging. Zodra het token ooit wél Checks-toegang krijgt, gaat de
+gate automatisch aan, zonder verdere codewijziging.
 
 **Bekende beperking (bewust, voor v0)**: QA beoordeelt op basis van de diff
 (patches) van de pull request, niet de volledige bestandsinhoud — bij zeer

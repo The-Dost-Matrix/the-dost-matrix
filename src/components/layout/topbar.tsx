@@ -9,6 +9,9 @@ import {
   ActiveAgentsPanel,
   SystemMonitorPanel,
 } from "@/components/monitor/system-monitor";
+import { subscribeToMissions } from "@/domains/missions/mission-service";
+
+import type { Mission } from "@/shared/types/mission";
 
 /**
  * Topbar zonder de "ACTIVE MISSIONS" / "LIVE MATRIX" tickers: die scrollende
@@ -25,8 +28,31 @@ import {
  * een vaste sidebar. `command-center-layout.tsx` heeft daardoor geen
  * `monitor`-prop meer nodig, en `dashboard/layout.tsx` geeft die ook niet
  * meer door.
+ *
+ * De losse `missions`-subscription hieronder is een NIEUWE, kleine
+ * toevoeging (los van de sanering hierboven): puur om de "Missies"-teller
+ * hieronder te voeden, zonder ticker of scroll-animatie — dus geen
+ * tegenspraak met de reden waarom de tickers destijds verwijderd zijn.
  */
 type TopbarDropdownId = "activity" | "system" | "agents";
+
+/**
+ * Aantal agents in The Dost Matrix. Bewust nog statisch — er bestaat geen
+ * live agents-collectie om uit te lezen; dit is hetzelfde aantal als de vier
+ * kaarten in `ActiveAgentsPanel` hierboven (Director, Knowledge Agent,
+ * Document Agent, Builder Agent). Verhoog dit getal handmatig zodra daar een
+ * vijfde kaart bijkomt, of vervang dit door een echte subscription zodra die
+ * bestaat.
+ */
+const AGENTS_COUNT = 4;
+
+/**
+ * Aantal openstaande goedkeuringen. Bewust nog hardcoded op 0: er bestaat
+ * geen opgeslagen/query-bare lijst van pending approvals — een
+ * "needs-signoff" pull request (zie risk-classification.ts) wordt live
+ * afgeleid van GitHub, niet ergens los bijgehouden.
+ */
+const APPROVALS_COUNT = 0;
 
 const DROPDOWN_TOOLS: Array<{
   id: TopbarDropdownId;
@@ -45,8 +71,15 @@ export function Topbar() {
   const [openDropdown, setOpenDropdown] = useState<TopbarDropdownId | null>(
     null,
   );
+  const [missions, setMissions] = useState<Mission[]>([]);
 
   const toolsRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+
+    return subscribeToMissions(user.uid, setMissions, () => {});
+  }, [user]);
 
   useEffect(() => {
     if (!openDropdown) {
@@ -102,6 +135,29 @@ export function Topbar() {
         </div>
 
         <div className="matrix-topbar-actions">
+          {/*
+            Verhuisd vanuit de voormalige MATRIX CORE-hero op het Command
+            Center (die hero-sectie is daar verwijderd, zie dashboard/
+            page.tsx) — nu zichtbaar op elke /dashboard-pagina in plaats van
+            alleen daar.
+          */}
+          <div className="matrix-topbar-stats">
+            <div className="matrix-topbar-stat">
+              <strong>{AGENTS_COUNT}</strong>
+              <span>AGENTS</span>
+            </div>
+
+            <div className="matrix-topbar-stat">
+              <strong>{missions.length}</strong>
+              <span>MISSIES</span>
+            </div>
+
+            <div className="matrix-topbar-stat">
+              <strong>{APPROVALS_COUNT}</strong>
+              <span>APPROVALS</span>
+            </div>
+          </div>
+
           <div className="matrix-system-status">
             <span className="matrix-status-dot" />
 

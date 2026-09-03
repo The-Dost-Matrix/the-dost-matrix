@@ -9,20 +9,10 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/domains/auth/auth-provider";
 import { subscribeToMissions } from "@/domains/missions/mission-service";
 
-import type { Mission } from "@/shared/types/mission";
-
-const agents = [
-  ["Headquarters", "Director", "Planning"],
-  ["Forge Labs", "Builder", "Stand-by"],
-  ["QA Outpost", "QA", "Monitoring"],
-  ["Archive", "Chronicler", "Recording"],
-];
-
 export default function DashboardPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
 
-  const [missions, setMissions] = useState<Mission[]>([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -34,9 +24,14 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!user) return;
 
+    // De missies zelf worden hier niet meer bijgehouden (geen weergave meer
+    // van dat aantal op deze pagina — zie Topbar, die zijn eigen live
+    // subscription al had voor de mission-ticker en nu ook de "Missies"-
+    // teller voedt). Deze subscription blijft alleen bestaan om dezelfde
+    // Firestore-indexfout hieronder te blijven signaleren.
     return subscribeToMissions(
       user.uid,
-      setMissions,
+      () => {},
       (subscriptionError) => {
         setError(
           subscriptionError.message.includes("index")
@@ -57,35 +52,15 @@ export default function DashboardPage() {
 
   return (
     <>
-      <section className="hero panel">
-        <div>
-          <p className="eyebrow">MATRIX CORE</p>
-
-          <h2>Goed dat je er bent, Elroy.</h2>
-
-          <p className="muted">
-            Director, Second Brain en realtime Matrix-activiteit zijn verbonden
-            in één centrale werkruimte.
-          </p>
-        </div>
-
-        <div className="stats">
-          <div>
-            <strong>{agents.length}</strong>
-            <span>Agents</span>
-          </div>
-
-          <div>
-            <strong>{missions.length}</strong>
-            <span>Missies</span>
-          </div>
-
-          <div>
-            <strong>0</strong>
-            <span>Approvals</span>
-          </div>
-        </div>
-      </section>
+      {/*
+        De voormalige "MATRIX CORE"-hero (eyebrow, titel, muted intro-tekst
+        en de Agents/Missies/Approvals-tellers) stond hier. Op eigen verzoek
+        verwijderd: de drie tellers zijn verhuisd naar de topbar (zie
+        Topbar in components/layout/topbar.tsx, .matrix-topbar-stats), waar
+        ze op elke /dashboard-pagina zichtbaar zijn in plaats van alleen
+        hier. De rest van de hero (welkomsttekst) had geen functionele rol
+        en is niet elders teruggeplaatst.
+      */}
 
       {/*
         Twee kolommen naast elkaar: chat links, Second Brain rechts (zie
