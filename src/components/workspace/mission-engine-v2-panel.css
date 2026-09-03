@@ -188,3 +188,24 @@
 .mev2-cost {
   font-size: 0.72rem;
 }
+
+/* Label boven de risiconiveau-select in het aanmaakformulier — dezelfde
+   gedempte stijl als de recente-missies-titel eronder, niet zo prominent
+   als een koptekst. */
+.mev2-risk-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--muted-foreground, #94a3b8);
+  margin-bottom: 4px;
+}
+
+/* Risiconiveau-regel op de missiekaart: in tegenstelling tot de kostenregel
+   hierboven verandert dit WEL daadwerkelijk het gedrag van de Director (zie
+   classifyPullRequestRiskForMission), dus bewust iets nadrukkelijker dan
+   .mev2-cost in plaats van dezelfde gedempte stijl. */
+.mev2-risk {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--warning, #c2820a);
+}

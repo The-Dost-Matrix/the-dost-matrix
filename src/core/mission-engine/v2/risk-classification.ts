@@ -1,4 +1,5 @@
 import type { PullRequestFileChange } from "./github/github-client";
+import type { MissionRiskLevel } from "./mission";
 
 /**
  * Risicoclassificatie voor een pull request van een missie, gebruikt door de
@@ -89,5 +90,47 @@ export function classifyPullRequestRisk(
   return {
     level: "auto-approve",
     reason: `Enkel, geïsoleerd bestand "${file.filename}" buiten alle gedeelde/kritieke locaties — geen andere bestanden gewijzigd in dezelfde pull request.`,
+  };
+}
+
+/**
+ * Combineert de bestandsgebaseerde classificatie hierboven met het
+ * riskLevel dat op de MISSIE zelf staat (mission.riskLevel — LOW/MEDIUM/
+ * HIGH/CRITICAL, gekozen bij het aanmaken van de missie, zie
+ * mission-factory.ts en het aanmaakformulier). Tot deze functie werd
+ * mission.riskLevel wel opgeslagen maar nergens gelezen — puur decoratief.
+ *
+ * De regel is bewust eenvoudig en kan alleen VERSCHERPEN, nooit versoepelen
+ * ten opzichte van de bestandsgebaseerde classificatie hierboven:
+ * - LOW (de standaardwaarde voor elke bestaande en nieuwe missie die niets
+ *   anders opgeeft): geen wijziging — de bestandsgebaseerde classificatie
+ *   blijft doorslaggevend, exact het gedrag van vóór deze functie bestond.
+ * - MEDIUM, HIGH of CRITICAL: altijd "needs-signoff", ongeacht hoe klein of
+ *   geïsoleerd de wijziging zelf is. Een missie die de eigenaar zelf als
+ *   risicovoller heeft bestempeld (bv. "wijzig het authenticatiesysteem")
+ *   verdient een eigen blik, ook als de resulterende pull request toevallig
+ *   maar één bestand raakt.
+ *
+ * Bewust géén automatische merge blokkeren op DISPATCH_ROLE-niveau (dus vóór
+ * er zelfs een pull request is) — dat zou een aparte, grotere goedkeurings-
+ * stap vereisen (de al bestaande maar nog ongebruikte REQUEST_APPROVAL-flow
+ * in engine.ts) waarvoor nog geen scherm bestaat. Deze functie hergebruikt
+ * in plaats daarvan het al werkende, geteste needs-signoff-pad: de eigenaar
+ * bekijkt en mergt de pull request zelf op GitHub, precies zoals vandaag al
+ * gebeurt bij een bestandsgebaseerde needs-signoff-uitkomst.
+ */
+export function classifyPullRequestRiskForMission(
+  files: PullRequestFileChange[],
+  missionRiskLevel: MissionRiskLevel,
+): PullRequestRiskClassification {
+  const fileRisk = classifyPullRequestRisk(files);
+
+  if (missionRiskLevel === "LOW" || fileRisk.level === "needs-signoff") {
+    return fileRisk;
+  }
+
+  return {
+    level: "needs-signoff",
+    reason: `Missie-risiconiveau is ${missionRiskLevel} — dat vereist altijd jouw eigen goedkeuring vóór het mergen, ongeacht de bestandsgebaseerde classificatie (die zou hier op zichzelf "auto-approve" zijn geweest: ${fileRisk.reason})`,
   };
 }

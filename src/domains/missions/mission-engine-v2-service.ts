@@ -1,6 +1,6 @@
 import type { User } from "firebase/auth";
 import type { DirectorDecision } from "@/core/contracts/v2";
-import type { MissionV2 } from "@/core/mission-engine/v2/mission";
+import type { MissionRiskLevel, MissionV2 } from "@/core/mission-engine/v2/mission";
 import type { KnowledgeEntry } from "@/core/domain/knowledge/knowledge-entry";
 
 /**
@@ -38,6 +38,15 @@ export interface CreateMissionV2Input {
   objective: string;
   successCriteria: string[];
   constraints?: string[];
+  /**
+   * Risiconiveau van de missie zelf (LOW/MEDIUM/HIGH/CRITICAL) — bepaalt via
+   * classifyPullRequestRiskForMission (zie risk-classification.ts) of de
+   * Director een gehaalde missie nog automatisch mag mergen, los van hoe
+   * klein de resulterende pull request is. Weggelaten (of niet meegegeven)
+   * betekent LOW aan de serverkant (route.ts) — hetzelfde gedrag als vóór
+   * dit veld bestond.
+   */
+  riskLevel?: MissionRiskLevel;
 }
 
 export async function createMissionV2(

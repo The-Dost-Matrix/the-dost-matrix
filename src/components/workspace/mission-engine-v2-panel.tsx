@@ -10,7 +10,7 @@ import {
   createMissionV2,
   listMissionsV2,
 } from "@/domains/missions/mission-engine-v2-service";
-import type { MissionV2 } from "@/core/mission-engine/v2/mission";
+import type { MissionRiskLevel, MissionV2 } from "@/core/mission-engine/v2/mission";
 import type { KnowledgeEntry } from "@/core/domain/knowledge/knowledge-entry";
 
 import "./mission-engine-v2-panel.css";
@@ -131,6 +131,26 @@ function formatMissionCost(mission: MissionV2): string {
   return `~$${spent} geschat (budget: ${mission.budget.maximumCost} ${mission.budget.currency}, indicatief — blokkeert niets)`;
 }
 
+/**
+ * Keuzelijst voor het riskLevel-veld in het aanmaakformulier. LOW staat
+ * bewust eerst (en is de standaardwaarde, zie useState hieronder) — dat
+ * levert precies hetzelfde gedrag op als vóór dit veld bestond
+ * (classifyPullRequestRiskForMission in risk-classification.ts laat bij LOW
+ * de bestandsgebaseerde classificatie ongewijzigd).
+ */
+const RISK_LEVELS: MissionRiskLevel[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
+
+function riskLevelLabel(level: MissionRiskLevel): string {
+  const labels: Record<MissionRiskLevel, string> = {
+    LOW: "Laag — automatisch mergen blijft mogelijk bij een geïsoleerde wijziging",
+    MEDIUM: "Middel — altijd jouw eigen goedkeuring vóór mergen",
+    HIGH: "Hoog — altijd jouw eigen goedkeuring vóór mergen",
+    CRITICAL: "Kritiek — altijd jouw eigen goedkeuring vóór mergen",
+  };
+
+  return labels[level];
+}
+
 export interface MissionEngineV2PanelProps {
   variant?: "full" | "compact";
 }
@@ -141,6 +161,7 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
   const [title, setTitle] = useState("");
   const [objective, setObjective] = useState("");
   const [successCriteriaText, setSuccessCriteriaText] = useState("");
+  const [riskLevel, setRiskLevel] = useState<MissionRiskLevel>("LOW");
 
   const [recentMissions, setRecentMissions] = useState<MissionV2[]>([]);
   const [mission, setMission] = useState<MissionV2 | null>(null);
@@ -220,12 +241,14 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
         title: title.trim(),
         objective: objective.trim(),
         successCriteria,
+        riskLevel,
       });
       setMission(created);
       setRecentMissions((current) => [created, ...current].slice(0, 5));
       setTitle("");
       setObjective("");
       setSuccessCriteriaText("");
+      setRiskLevel("LOW");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Mission aanmaken is mislukt.");
     } finally {
@@ -335,6 +358,16 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
           <small>
             versie {mission.version} · {mission.assignments.length} toewijzing(en)
           </small>
+          {/*
+            Alleen tonen bij MEDIUM/HIGH/CRITICAL, niet bij LOW: LOW is de
+            standaardwaarde voor vrijwel elke missie en levert exact het
+            gedrag van vóór dit veld bestond op (zie
+            classifyPullRequestRiskForMission), dus een label erbij zou hier
+            alleen ruis toevoegen zonder iets bijzonders te melden.
+          */}
+          {mission.riskLevel !== "LOW" && (
+            <small className="mev2-risk">Risiconiveau: {mission.riskLevel} (altijd jouw goedkeuring vóór mergen)</small>
+          )}
           <small className="mev2-cost">{formatMissionCost(mission)}</small>
         </div>
       </article>
@@ -485,6 +518,31 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
                 value={successCriteriaText}
                 onChange={(event) => setSuccessCriteriaText(event.target.value)}
               />
+            </div>
+
+            {/*
+              Risiconiveau van de missie zelf — zie
+              classifyPullRequestRiskForMission in risk-classification.ts.
+              Bewust een simpele <select> met de mission-engine-v2-form-field-
+              klasse (net als de tekstvelden hierboven), geen nieuwe stijl
+              nodig.
+            */}
+            <div className="mission-engine-v2-form-group">
+              <label className="mev2-risk-label" htmlFor="mev2-risk-level">
+                Risiconiveau van deze missie
+              </label>
+              <select
+                id="mev2-risk-level"
+                className="mission-engine-v2-form-field"
+                value={riskLevel}
+                onChange={(event) => setRiskLevel(event.target.value as MissionRiskLevel)}
+              >
+                {RISK_LEVELS.map((level) => (
+                  <option key={level} value={level}>
+                    {level} — {riskLevelLabel(level)}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/*

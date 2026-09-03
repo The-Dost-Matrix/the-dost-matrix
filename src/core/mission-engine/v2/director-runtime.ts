@@ -17,7 +17,7 @@ import {
 import { hasPassedAllCriteria, type MissionV2 } from "./mission";
 import { proposeMissionKnowledge } from "./mission-knowledge";
 import { findMissionPullRequest } from "./qa-runtime";
-import { classifyPullRequestRisk } from "./risk-classification";
+import { classifyPullRequestRiskForMission } from "./risk-classification";
 
 /**
  * Director Runtime v0 voor Mission Engine V2.
@@ -76,6 +76,15 @@ import { classifyPullRequestRisk } from "./risk-classification";
  * Een in-app "Goedkeuring & Mergen"-knop (zodat dit ook voor needs-signoff
  * zonder naar GitHub.com te hoeven) is bewust nog niet gebouwd; dit is de
  * eerste, kleinere stap.
+ *
+ * Sinds classifyPullRequestRiskForMission (zie risk-classification.ts) telt
+ * niet meer alléén de bestandsgebaseerde classificatie mee, maar ook het
+ * riskLevel van de missie zelf (mission.riskLevel — LOW/MEDIUM/HIGH/
+ * CRITICAL, gekozen bij het aanmaken van de missie): alleen bij LOW (de
+ * standaardwaarde) blijft de bestandsgebaseerde uitkomst leidend, bij
+ * MEDIUM/HIGH/CRITICAL is het altijd needs-signoff, ongeacht hoe klein de
+ * wijziging zelf is. Hiervoor stond riskLevel al op elke missie opgeslagen,
+ * maar werd het nergens gelezen.
  *
  * Lukt een toegestane automatische merge onverwacht niet (bijvoorbeeld een
  * mergeconflict, of de pull request is inmiddels handmatig gesloten), dan
@@ -363,7 +372,7 @@ async function ensureMissionPullRequestMerged(mission: MissionV2): Promise<void>
   }
 
   const files = await getPullRequestFiles(target, pr.number);
-  const risk = classifyPullRequestRisk(files);
+  const risk = classifyPullRequestRiskForMission(files, mission.riskLevel);
 
   if (risk.level === "needs-signoff") {
     throw new Error(
