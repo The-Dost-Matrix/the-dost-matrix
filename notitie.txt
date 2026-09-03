@@ -1,0 +1,5 @@
+Even een korte, vriendelijke groet: dit bestandje is toegevoegd als onderdeel van een risicotest (Risk-level test C) binnen The Dost Matrix.
+
+Het heeft geen functionele rol in het project en kan gerust genegeerd of later verwijderd worden.
+
+Fijne dag verder!
