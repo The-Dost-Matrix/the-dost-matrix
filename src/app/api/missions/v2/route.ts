@@ -10,6 +10,7 @@ import { runDirectorStep } from "@/core/mission-engine/v2/director-runtime";
 import { createMissionEngineV2 } from "@/core/mission-engine/v2/engine-factory";
 import { listMissionsForOwner } from "@/core/mission-engine/v2/firestore-store";
 import type { MissionRiskLevel, MissionV2 } from "@/core/mission-engine/v2/mission";
+import { proposeMissionKnowledge } from "@/core/mission-engine/v2/mission-knowledge";
 import { executeRoleAssignment } from "@/core/mission-engine/v2/role-runtime";
 import type { DirectorDecision, JsonValue } from "@/core/contracts/v2";
 
@@ -38,6 +39,13 @@ export const dynamic = "force-dynamic";
  *                                       de volgende stap is, en voert die
  *                                       (bij DISPATCH_ROLE) meteen ook uit —
  *                                       dit is de "zelfstandige Director"-knop
+ * - POST { action: "cancel", ... }   → annuleert een mission (bv. eentje die
+ *                                       muurvast zit, zoals een needs-signoff
+ *                                       pull request die de eigenaar toch
+ *                                       liever handmatig/anders oplost) —
+ *                                       gebruikt engine.cancel(), die al
+ *                                       bestond maar tot nu toe nergens
+ *                                       vandaan aangeroepen kon worden.
  *
  * Alle acties zijn ownerId-scoped: een mission kan alleen worden bekeken of
  * bewerkt door de ingelogde gebruiker die hem heeft aangemaakt.
@@ -142,7 +150,19 @@ type AutoStepBody = {
   missionId?: unknown;
 };
 
-type PostBody = CreateBody | DispatchBody | RunRoleBody | AutoStepBody | { action?: unknown };
+type CancelBody = {
+  action: "cancel";
+  missionId?: unknown;
+  reason?: unknown;
+};
+
+type PostBody =
+  | CreateBody
+  | DispatchBody
+  | RunRoleBody
+  | AutoStepBody
+  | CancelBody
+  | { action?: unknown };
 
 const ALLOWED_RISK_LEVELS: MissionRiskLevel[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 
@@ -249,6 +269,56 @@ async function handleCreate(body: CreateBody, ownerId: string) {
   });
 
   return NextResponse.json({ mission }, { status: 201 });
+}
+
+/**
+ * Annuleert een mission — gebruikt de al langer bestaande `engine.cancel()`
+ * (zie mission-engine/v2/engine.ts en state-machine.ts, die CANCELLED als
+ * geldige eindstatus toestaat vanuit vrijwel elke niet-afgeronde status).
+ * Tot deze toevoeging was er nergens een aanroeper voor: geen API-actie en
+ * geen knop in het dashboard. Nodig geworden nadat een live missie
+ * (verzonnen imports die CI lieten falen) muurvast kwam te zitten in een
+ * needs-signoff-status waar de eigenaar 'm liever niet via de Director laat
+ * oplossen, maar rechtstreeks zelf (of via mij) laat repareren — daarvoor
+ * moet de vastzittende mission eerst uit de weg te ruimen zijn.
+ */
+async function handleCancel(body: CancelBody, ownerId: string) {
+  if (typeof body.missionId !== "string" || !body.missionId.trim()) {
+    return NextResponse.json({ error: "missionId ontbreekt." }, { status: 400 });
+  }
+
+  const engine = createMissionEngineV2();
+  const mission = await engine.getMission(body.missionId);
+
+  if (!mission) {
+    return NextResponse.json({ error: "Mission niet gevonden." }, { status: 404 });
+  }
+
+  assertOwnership(mission, ownerId);
+
+  const reason =
+    typeof body.reason === "string" && body.reason.trim()
+      ? body.reason.trim()
+      : "Geannuleerd door de eigenaar vanuit het dashboard.";
+
+  const updated = await engine.cancel({
+    actor: { type: "owner", id: ownerId },
+    correlationId: randomUUID(),
+    issuedAt: new Date().toISOString(),
+    commandVersion: "1.0",
+    commandId: randomUUID(),
+    commandType: "CancelMission",
+    targetId: mission.missionId,
+    expectedTargetVersion: mission.version,
+    payload: { reason },
+  });
+
+  // Sluit de Second Brain-leerlus ook voor geannuleerde missies (zie
+  // mission-knowledge.ts) — best-effort, kan de annulering zelf nooit
+  // alsnog laten mislukken.
+  await proposeMissionKnowledge(updated, "cancelled");
+
+  return NextResponse.json({ mission: updated });
 }
 
 async function handleDispatch(body: DispatchBody, ownerId: string) {
@@ -472,6 +542,8 @@ export async function POST(request: NextRequest) {
         return await handleRunRole(body as RunRoleBody, ownerId);
       case "auto-step":
         return await handleAutoStep(body as AutoStepBody, ownerId);
+      case "cancel":
+        return await handleCancel(body as CancelBody, ownerId);
       default:
         return NextResponse.json({ error: "Onbekende actie." }, { status: 400 });
     }

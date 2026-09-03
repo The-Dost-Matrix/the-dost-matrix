@@ -2,7 +2,8 @@ export type KnowledgeSource =
   | "chat"
   | "manual"
   | "youtube"
-  | "document";
+  | "document"
+  | "mission";
 
 export type KnowledgeLifecycle =
   | "foundation"

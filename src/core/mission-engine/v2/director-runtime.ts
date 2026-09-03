@@ -8,12 +8,14 @@ import type { KnowledgeEntry } from "@/core/domain/knowledge/knowledge-entry";
 import type { MissionEngine } from "./engine";
 import {
   GithubApiError,
+  getCombinedCheckStatus,
   getGithubRepoTarget,
   getPullRequestFiles,
   listPullRequests,
   mergePullRequest,
 } from "./github/github-client";
 import { hasPassedAllCriteria, type MissionV2 } from "./mission";
+import { proposeMissionKnowledge } from "./mission-knowledge";
 import { findMissionPullRequest } from "./qa-runtime";
 import { classifyPullRequestRisk } from "./risk-classification";
 
@@ -82,6 +84,23 @@ import { classifyPullRequestRisk } from "./risk-classification";
  * tijdelijke situatie"-fouten in qa-runtime.ts en builder-runtime.ts. Is de
  * pull request al (handmatig) gemerged, dan doet dit niets — geen dubbele
  * merge-poging en geen risicoclassificatie meer nodig.
+ *
+ * Sinds een live misser (QA keurde een pull request met een falende CI-check
+ * — drie verzonnen imports die niet bestonden — toch op alle succescriteria
+ * goed) controleert `ensureMissionPullRequestMerged` vóór het mergen ook
+ * zelf de CI-status van de pull request (zie `getCombinedCheckStatus` in
+ * github-client.ts) en weigert te mergen zolang die niet geslaagd is —
+ * ongeacht de risicoclassificatie. Dit is een tweede, onafhankelijke
+ * verdedigingslaag: de eerste (en normaal doorslaggevende) zit al in
+ * qa-runtime.ts, dat vóór een GEHAALD-oordeel dezelfde controle uitvoert.
+ *
+ * Sluit de Second Brain-leerlus: zodra een missie hier daadwerkelijk
+ * COMPLETED wordt, stelt `proposeMissionKnowledge` (zie mission-knowledge.ts)
+ * automatisch kennisitems voor op basis van wat de missie heeft opgeleverd
+ * (net als de bestaande chat- en document-importvoorstellen, ter beoordeling
+ * op de Kennis-pagina — nooit automatisch goedgekeurd). Dit is bewust
+ * best-effort: een fout daarin kan de voltooiing van de missie zelf nooit
+ * laten mislukken.
  */
 
 const ALLOWED_AUTONOMOUS_DECISIONS: DirectorDecisionType[] = [
@@ -319,6 +338,30 @@ async function ensureMissionPullRequestMerged(mission: MissionV2): Promise<void>
 
   if (!pr || pr.merged) return;
 
+  // Tweede, onafhankelijke verdedigingslaag naast de CI-controle die
+  // qa-runtime.ts al vóór het GEHAALD-oordeel uitvoert: die controle
+  // voorkomt normaal al dat een PR met falende CI hier ooit met
+  // "alle succescriteria PASSED" aankomt. Maar mocht dat toch gebeuren
+  // (bijvoorbeeld: QA keurde de PR goed vóórdat een latere push de CI liet
+  // falen, of een oudere QA-toewijzing werd hergebruikt), dan weigert de
+  // Director hier zelf óók te mergen — ongeacht de risicoclassificatie
+  // hieronder. Zonder deze controle zou een "auto-approve" PR (één bestand,
+  // geen kritiek pad) met stuk-gaande CI alsnog automatisch gemerged kunnen
+  // worden, puur omdat mergePullRequest zelf nooit CI-status raadpleegt.
+  const ciStatus = await getCombinedCheckStatus(target, pr.headSha);
+
+  if (ciStatus.state === "failure") {
+    throw new Error(
+      `Alle succescriteria van deze missie zijn al gehaald, maar de CI-check(s) op pull request #${pr.number} ("${pr.title}") zijn mislukt (${ciStatus.failingCheckNames.join(", ")}) — de Director mergt daarom NIET, ongeacht de risicoclassificatie. Los de CI-fout eerst op via een nieuwe builder-toewijzing en laat QA opnieuw oordelen voordat je het opnieuw probeert: ${pr.url}`,
+    );
+  }
+
+  if (ciStatus.state === "pending") {
+    throw new Error(
+      `Alle succescriteria van deze missie zijn al gehaald, maar de CI-check(s) op pull request #${pr.number} ("${pr.title}") zijn nog niet klaar (${ciStatus.pendingCheckNames.join(", ")}) — de Director wacht met mergen totdat ze zijn afgerond. Probeer het over een paar minuten opnieuw: ${pr.url}`,
+    );
+  }
+
   const files = await getPullRequestFiles(target, pr.number);
   const risk = classifyPullRequestRisk(files);
 
@@ -419,6 +462,10 @@ export async function runDirectorStep({
     expectedTargetVersion: mission.version,
     payload: { decision: decision as unknown as JsonValue },
   });
+
+  if (updated.status === "COMPLETED") {
+    await proposeMissionKnowledge(updated, "completed");
+  }
 
   return { mission: updated, decision, usedKnowledge };
 }
