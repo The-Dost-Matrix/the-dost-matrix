@@ -1,84 +1,79 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from "vitest";
 import {
   classifyPullRequestRisk,
   classifyPullRequestRiskForMission,
-} from './risk-classification';
+} from "./risk-classification";
+import type { PullRequestFileChange } from "./github/github-client";
+import type { MissionRiskLevel } from "./mission";
 
-type TestFileChange = {
-  path: string;
-  status: 'added' | 'modified' | 'removed' | 'renamed';
-};
+/**
+ * Test tegen de daadwerkelijke API: PullRequestFileChange gebruikt het veld
+ * "filename" (niet "path"), classifyPullRequestRisk() geeft
+ * { level: "auto-approve" | "needs-signoff", reason } terug (geen los
+ * "riskLevel"-veld met LOW/MEDIUM/HIGH/CRITICAL — die schaal hoort bij de
+ * MISSIE zelf, zie mission.ts, niet bij deze bestandsgebaseerde
+ * classificatie), en classifyPullRequestRiskForMission() neemt het
+ * missie-risiconiveau als kale string aan (geen { riskLevel: ... }-object).
+ */
+const added = (filename: string): PullRequestFileChange => ({ filename, status: "added" });
+const removed = (filename: string): PullRequestFileChange => ({ filename, status: "removed" });
 
-const added = (path: string): TestFileChange => ({ path, status: 'added' });
-const removed = (path: string): TestFileChange => ({ path, status: 'removed' });
+const isolatedAutoApproveFile: PullRequestFileChange[] = [added("src/utils/isolated-helper.ts")];
 
-const isolatedAutoApproveFile: TestFileChange[] = [added('src/utils/isolated-helper.ts')];
+describe("classifyPullRequestRisk", () => {
+  it("behandelt een lege bestandslijst als needs-signoff (risico is dan niet betrouwbaar in te schatten)", () => {
+    const result = classifyPullRequestRisk([]);
 
-describe('classifyPullRequestRisk', () => {
-  it('treats an empty file list as the lowest risk and auto-approves', () => {
-    const result = classifyPullRequestRisk([] as any);
-
-    expect(result.riskLevel).toBe('LOW');
-    expect(result.recommendation).toBe('auto-approve');
+    expect(result.level).toBe("needs-signoff");
   });
 
-  it('increases the risk level when more than one file is changed', () => {
-    const singleFileResult = classifyPullRequestRisk([added('src/utils/format.ts')] as any);
-    const multipleFilesResult = classifyPullRequestRisk(
-      [added('src/utils/format.ts'), added('src/utils/parse.ts')] as any
-    );
+  it("vereist needs-signoff zodra meer dan één bestand tegelijk wijzigt", () => {
+    const singleFileResult = classifyPullRequestRisk([added("src/utils/format.ts")]);
+    const multipleFilesResult = classifyPullRequestRisk([
+      added("src/utils/format.ts"),
+      added("src/utils/parse.ts"),
+    ]);
 
-    expect(singleFileResult.riskLevel).toBe('LOW');
-    expect(multipleFilesResult.riskLevel).not.toBe('LOW');
-    expect(['MEDIUM', 'HIGH', 'CRITICAL']).toContain(multipleFilesResult.riskLevel);
+    expect(singleFileResult.level).toBe("auto-approve");
+    expect(multipleFilesResult.level).toBe("needs-signoff");
   });
 
-  it('flags a removed file as an elevated risk that needs sign-off', () => {
-    const result = classifyPullRequestRisk([removed('src/utils/legacy.ts')] as any);
+  it("markeert een verwijderd bestand als needs-signoff", () => {
+    const result = classifyPullRequestRisk([removed("src/utils/legacy.ts")]);
 
-    expect(result.riskLevel).not.toBe('LOW');
-    expect(result.recommendation).toBe('needs-signoff');
+    expect(result.level).toBe("needs-signoff");
   });
 
-  it('flags a file on a critical path as needing sign-off', () => {
-    const result = classifyPullRequestRisk([added('.github/workflows/deploy.yml')] as any);
+  it("markeert een bestand op een kritiek pad als needs-signoff", () => {
+    const result = classifyPullRequestRisk([added(".github/workflows/deploy.yml")]);
 
-    expect(result.riskLevel).not.toBe('LOW');
-    expect(result.recommendation).toBe('needs-signoff');
+    expect(result.level).toBe("needs-signoff");
   });
 
-  it('treats a single isolated, non-critical file as the lowest risk and auto-approves', () => {
-    const result = classifyPullRequestRisk(isolatedAutoApproveFile as any);
+  it("behandelt één geïsoleerd, niet-kritiek bestand als auto-approve", () => {
+    const result = classifyPullRequestRisk(isolatedAutoApproveFile);
 
-    expect(result.riskLevel).toBe('LOW');
-    expect(result.recommendation).toBe('auto-approve');
+    expect(result.level).toBe("auto-approve");
   });
 });
 
-describe('classifyPullRequestRiskForMission', () => {
-  it('leaves the file-based outcome unchanged when the mission risk level is LOW', () => {
-    const baseline = classifyPullRequestRisk(isolatedAutoApproveFile as any);
-    const withMission = classifyPullRequestRiskForMission(
-      isolatedAutoApproveFile as any,
-      { riskLevel: 'LOW' } as any
-    );
+describe("classifyPullRequestRiskForMission", () => {
+  it("laat de bestandsgebaseerde uitkomst ongewijzigd wanneer het missie-risiconiveau LOW is", () => {
+    const baseline = classifyPullRequestRisk(isolatedAutoApproveFile);
+    const withMission = classifyPullRequestRiskForMission(isolatedAutoApproveFile, "LOW");
 
-    expect(withMission.riskLevel).toBe(baseline.riskLevel);
-    expect(withMission.recommendation).toBe(baseline.recommendation);
+    expect(withMission.level).toBe(baseline.level);
   });
 
-  it.each(['MEDIUM', 'HIGH', 'CRITICAL'] as const)(
-    'always requires sign-off when the mission risk level is %s, even for an otherwise auto-approve file',
+  it.each(["MEDIUM", "HIGH", "CRITICAL"] as MissionRiskLevel[])(
+    "vereist altijd needs-signoff wanneer het missie-risiconiveau %s is, ook voor een op zichzelf auto-approve bestand",
     (missionRiskLevel) => {
-      const baseline = classifyPullRequestRisk(isolatedAutoApproveFile as any);
-      expect(baseline.recommendation).toBe('auto-approve');
+      const baseline = classifyPullRequestRisk(isolatedAutoApproveFile);
+      expect(baseline.level).toBe("auto-approve");
 
-      const withMission = classifyPullRequestRiskForMission(
-        isolatedAutoApproveFile as any,
-        { riskLevel: missionRiskLevel } as any
-      );
+      const withMission = classifyPullRequestRiskForMission(isolatedAutoApproveFile, missionRiskLevel);
 
-      expect(withMission.recommendation).toBe('needs-signoff');
-    }
+      expect(withMission.level).toBe("needs-signoff");
+    },
   );
 });

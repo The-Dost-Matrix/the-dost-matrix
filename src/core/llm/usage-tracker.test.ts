@@ -1,98 +1,69 @@
 import { describe, expect, it } from "vitest";
-import { UsageTracker } from "./usage-tracker";
+import { createUsageTracker } from "./usage-tracker";
+import type { ChatCompletionResult } from "./types";
 
-describe("UsageTracker", () => {
+/**
+ * Test tegen de daadwerkelijke API: createUsageTracker() (een fabrieksfunctie
+ * die een UsageTracker-object teruggeeft — UsageTracker zelf is een
+ * interface/type, geen klasse, dus niet aan te roepen met "new"), add() die
+ * een volledig ChatCompletionResult verwacht (niet los promptTokens/
+ * completionTokens), en totals() (niet getTotals()) met de velden
+ * inputTokens/outputTokens/cost.
+ */
+function completion(
+  model: string,
+  usage?: ChatCompletionResult["usage"],
+): ChatCompletionResult {
+  return { content: "", model, usage };
+}
+
+describe("createUsageTracker", () => {
   it("start met lege totalen wanneer er nog geen add() is aangeroepen", () => {
-    const tracker = new UsageTracker();
+    const tracker = createUsageTracker();
 
-    const totals = tracker.getTotals();
+    const totals = tracker.totals();
 
-    expect(totals.promptTokens).toBe(0);
-    expect(totals.completionTokens).toBe(0);
-    expect(totals.totalTokens).toBe(0);
+    expect(totals.inputTokens).toBe(0);
+    expect(totals.outputTokens).toBe(0);
+    expect(totals.cost).toBe(0);
   });
 
   it("telt meerdere add()-aanroepen correct op", () => {
-    const tracker = new UsageTracker();
+    const tracker = createUsageTracker();
 
-    tracker.add({
-      promptTokens: 10,
-      completionTokens: 5,
-      totalTokens: 15,
-    });
-    tracker.add({
-      promptTokens: 20,
-      completionTokens: 8,
-      totalTokens: 28,
-    });
-    tracker.add({
-      promptTokens: 1,
-      completionTokens: 1,
-      totalTokens: 2,
-    });
+    tracker.add(completion("anthropic/claude-sonnet-5", { inputTokens: 10, outputTokens: 5 }));
+    tracker.add(completion("anthropic/claude-sonnet-5", { inputTokens: 20, outputTokens: 8 }));
+    tracker.add(completion("anthropic/claude-sonnet-5", { inputTokens: 1, outputTokens: 1 }));
 
-    const totals = tracker.getTotals();
+    const totals = tracker.totals();
 
-    expect(totals.promptTokens).toBe(31);
-    expect(totals.completionTokens).toBe(14);
-    expect(totals.totalTokens).toBe(45);
+    expect(totals.inputTokens).toBe(31);
+    expect(totals.outputTokens).toBe(14);
+    expect(totals.cost).toBeGreaterThan(0);
   });
 
-  it("laat de totalen ongewijzigd bij een add()-aanroep zonder argument", () => {
-    const tracker = new UsageTracker();
+  it("laat de totalen ongewijzigd bij een aanroep zonder tokengebruik (bv. een provider die dat niet teruggeeft)", () => {
+    const tracker = createUsageTracker();
 
-    tracker.add({
-      promptTokens: 12,
-      completionTokens: 3,
-      totalTokens: 15,
-    });
+    tracker.add(completion("anthropic/claude-sonnet-5", { inputTokens: 12, outputTokens: 3 }));
+    expect(() => tracker.add(completion("anthropic/claude-sonnet-5"))).not.toThrow();
 
-    expect(() => tracker.add()).not.toThrow();
+    const totals = tracker.totals();
 
-    const totals = tracker.getTotals();
-
-    expect(totals.promptTokens).toBe(12);
-    expect(totals.completionTokens).toBe(3);
-    expect(totals.totalTokens).toBe(15);
+    expect(totals.inputTokens).toBe(12);
+    expect(totals.outputTokens).toBe(3);
   });
 
-  it("laat de totalen ongewijzigd bij een add()-aanroep met undefined als usage", () => {
-    const tracker = new UsageTracker();
+  it("blijft correct optellen na een tussentijdse aanroep zonder tokengebruik", () => {
+    const tracker = createUsageTracker();
 
-    tracker.add({
-      promptTokens: 7,
-      completionTokens: 2,
-      totalTokens: 9,
-    });
+    tracker.add(completion("anthropic/claude-sonnet-5", { inputTokens: 5, outputTokens: 5 }));
+    tracker.add(completion("anthropic/claude-sonnet-5"));
+    tracker.add(completion("anthropic/claude-sonnet-5", { inputTokens: 3, outputTokens: 4 }));
 
-    expect(() => tracker.add(undefined)).not.toThrow();
+    const totals = tracker.totals();
 
-    const totals = tracker.getTotals();
-
-    expect(totals.promptTokens).toBe(7);
-    expect(totals.completionTokens).toBe(2);
-    expect(totals.totalTokens).toBe(9);
-  });
-
-  it("blijft correct optellen na een tussentijdse aanroep zonder usage-gegevens", () => {
-    const tracker = new UsageTracker();
-
-    tracker.add({
-      promptTokens: 5,
-      completionTokens: 5,
-      totalTokens: 10,
-    });
-    tracker.add();
-    tracker.add({
-      promptTokens: 3,
-      completionTokens: 4,
-      totalTokens: 7,
-    });
-
-    const totals = tracker.getTotals();
-
-    expect(totals.promptTokens).toBe(8);
-    expect(totals.completionTokens).toBe(9);
-    expect(totals.totalTokens).toBe(17);
+    expect(totals.inputTokens).toBe(8);
+    expect(totals.outputTokens).toBe(9);
   });
 });
