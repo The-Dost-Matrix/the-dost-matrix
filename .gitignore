@@ -67,3 +67,8 @@ desktop.ini
 # ==========================================
 *.tmp
 *.temp
+
+# ==========================================
+# Lokale automatisering (per-pc hulpscripts, horen niet in de repo)
+# ==========================================
+git-auto-pull.bat
