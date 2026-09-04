@@ -74,6 +74,15 @@ const MAX_FILE_CONTENT_LENGTH = 300_000;
 
 type AssignmentRecord = MissionV2["assignments"][number];
 
+/**
+ * Herkent testbestanden aan hun bestandsnaam (`.test.ts`, `.spec.tsx`, etc.),
+ * ongeacht taal/extensie-variant. Gebruikt om deze bestanden speciale
+ * behandeling te geven in writeSingleFile() — zie de toelichting daar.
+ */
+export function isTestFilePath(path: string): boolean {
+  return /\.(test|spec)\.(ts|tsx|js|jsx)$/i.test(path);
+}
+
 function buildBuilderSystemPrompt(mission: MissionV2): string {
   return [
     "Je bent de Builder-rol binnen The Dost Matrix, een persoonlijk AI-besturingssysteem.",
@@ -299,6 +308,73 @@ interface SingleFileWriteResult {
 }
 
 /**
+ * Bouwt het extra promptgedeelte voor testbestanden.
+ *
+ * GEVONDEN ROOT CAUSE (live, via vier opeenvolgende missies — PR #24, #25,
+ * #26 en #27): elk bestand werd via writeSingleFile() in een volledig
+ * geïsoleerde LLM-aanroep geschreven, die bij een NIEUW bestand alleen
+ * "Dit bestand bestaat nog niet — maak het volledig nieuw aan" te zien
+ * kreeg. Bij een nieuw testbestand betekende dit dat de LLM de broncode van
+ * de module die hij moest testen NOOIT te zien kreeg — hij kende alleen het
+ * bestandspad en de missietekst. Het gevolg: verzonnen functienamen
+ * (`createOrUpdateFile` in plaats van de echte `upsertFile`), verzonnen
+ * argumentvolgordes, en — omdat er ook geen bestaand testbestand als
+ * stijlvoorbeeld werd meegegeven — een terugval op Jest-syntax terwijl dit
+ * project vitest gebruikt. Dit gebeurde bij VIER van de vier missies met
+ * tests, ondanks dat de mission brief telkens expliciet "gebruik vitest"
+ * vermeldde: geen hoeveelheid tekstuele instructie lost dit op zolang de
+ * daadwerkelijke broncode nooit wordt getoond.
+ *
+ * De fix: bij een testbestand krijgt de LLM (1) de volledige, daadwerkelijke
+ * inhoud van de andere bestanden uit dezelfde toewijzing (dus de module die
+ * hij hoogstwaarschijnlijk test, met de ECHTE functienamen en signaturen),
+ * (2) een bestaand testbestand uit dit project als stijl-/frameworkvoorbeeld
+ * indien er een gevonden kan worden, en (3) een expliciete instructie om
+ * nooit een functienaam, parameter of importpad te verzinnen. Zie
+ * executeBuilderAssignment() voor hoe siblingFiles/exampleTestFile worden
+ * bepaald en waarom niet-testbestanden altijd vóór testbestanden worden
+ * geschreven binnen dezelfde toewijzing (zodat siblingFiles altijd de
+ * daadwerkelijk NIEUWE inhoud bevat, niet de oude).
+ */
+export function buildTestContextBlock(
+  siblingFiles: BuilderFileChange[],
+  exampleTestFile: { path: string; content: string } | null,
+  usesVitest: boolean,
+): string {
+  const sections: string[] = [
+    "BELANGRIJK — dit is een testbestand. Verzin NOOIT een functienaam, parameter, importpad of returnwaarde: gebruik uitsluitend wat je hieronder daadwerkelijk in de broncode ziet staan. Komt een functie niet voor in de broncode hieronder, dan bestaat hij niet en mag je hem niet gebruiken.",
+  ];
+
+  if (usesVitest) {
+    sections.push(
+      "Dit project gebruikt vitest, niet Jest: importeer describe/it/expect/vi (en indien nodig beforeEach/afterEach/beforeAll/afterAll) altijd expliciet uit 'vitest'. Gebruik nooit jest.*, en gebruik describe/it nooit als impliciete globals zonder import.",
+    );
+  }
+
+  if (siblingFiles.length > 0) {
+    sections.push(
+      "",
+      "Volledige, daadwerkelijke inhoud van de andere bestanden uit deze toewijzing (dit is vermoedelijk (een deel van) de code die je moet testen — neem functienamen, parameters en returnwaarden hier letterlijk uit over, verzin niets):",
+    );
+    for (const sibling of siblingFiles) {
+      sections.push(`--- ${sibling.path} ---`, sibling.content, `--- einde ${sibling.path} ---`);
+    }
+  }
+
+  if (exampleTestFile) {
+    sections.push(
+      "",
+      `Ter referentie, een bestaand testbestand uit dit project (${exampleTestFile.path}) — volg hetzelfde testframework en dezelfde stijl (mocking-aanpak, importstructuur):`,
+      `--- ${exampleTestFile.path} ---`,
+      exampleTestFile.content,
+      `--- einde ${exampleTestFile.path} ---`,
+    );
+  }
+
+  return sections.join("\n");
+}
+
+/**
  * Verwijdert een eventueel markdown-codeblok (```taal ... ```) rondom de
  * volledige inhoud van het antwoord — voor het geval het model, ondanks de
  * instructie om dat niet te doen, de bestandsinhoud toch in een codeblok
@@ -342,6 +418,9 @@ async function writeSingleFile(
   plan: BuilderPlan,
   file: PlannedFile,
   usageTracker: UsageTracker,
+  siblingFiles: BuilderFileChange[],
+  exampleTestFile: { path: string; content: string } | null,
+  usesVitest: boolean,
 ): Promise<SingleFileWriteResult> {
   const provider = getChatProvider();
 
@@ -373,6 +452,9 @@ async function writeSingleFile(
       : `Huidige inhoud van dit bestand:\n---\n${file.currentContent}\n---`;
 
   const otherPaths = plan.paths.filter((path) => path !== file.path);
+  const testContextBlock = isTestFilePath(file.path)
+    ? buildTestContextBlock(siblingFiles, exampleTestFile, usesVitest)
+    : "";
 
   const userPrompt = [
     buildAssignmentDescription(mission, assignment),
@@ -384,6 +466,7 @@ async function writeSingleFile(
     "",
     `Je schrijft nu UITSLUITEND het bestand "${file.path}" (${status}).`,
     currentContentBlock,
+    testContextBlock,
     "",
     "Geef de VOLLEDIGE nieuwe inhoud van dit ene bestand terug (niet alleen het verschil). Schrijf productiekwaliteit code die aansluit bij de bestaande stijl.",
     "",
@@ -430,12 +513,28 @@ async function writeFiles(
   plan: BuilderPlan,
   plannedFiles: PlannedFile[],
   usageTracker: UsageTracker,
+  exampleTestFile: { path: string; content: string } | null,
+  usesVitest: boolean,
 ): Promise<BuilderWriteResult> {
   const files: BuilderFileChange[] = [];
   let model = "";
 
+  // plannedFiles staat altijd met niet-testbestanden eerst (zie
+  // executeBuilderAssignment) — daardoor bevat `files` op het moment dat een
+  // testbestand aan de beurt is altijd al de daadwerkelijk NIEUW geschreven
+  // inhoud van zijn siblings in deze toewijzing, niet de oude repo-inhoud.
   for (const file of plannedFiles) {
-    const written = await writeSingleFile(mission, assignment, plan, file, usageTracker);
+    const siblingFiles = files.filter((written) => written.path !== file.path);
+    const written = await writeSingleFile(
+      mission,
+      assignment,
+      plan,
+      file,
+      usageTracker,
+      siblingFiles,
+      exampleTestFile,
+      usesVitest,
+    );
     files.push({ path: file.path, content: written.content });
     model = written.model;
   }
@@ -502,6 +601,46 @@ export async function executeBuilderAssignment({
 
   const plan = await planFiles(mission, assignment, treeText, usageTracker);
 
+  // Niet-testbestanden altijd EERST schrijven binnen een toewijzing, ongeacht
+  // in welke volgorde de LLM ze in zijn plan noemde — zie de toelichting bij
+  // buildTestContextBlock() hierboven voor waarom: hierdoor bevat de context
+  // die een testbestand te zien krijgt altijd de al daadwerkelijk geschreven
+  // (nieuwe) inhoud van de bestanden die het waarschijnlijk test.
+  plan.paths = [
+    ...plan.paths.filter((path) => !isTestFilePath(path)),
+    ...plan.paths.filter((path) => isTestFilePath(path)),
+  ];
+
+  // Aanwezigheid van een vitest-configbestand in de repository-boom bepaalt
+  // of de expliciete "gebruik vitest, geen Jest"-instructie wordt toegevoegd
+  // aan testbestanden — dit blijft correct werken als het project ooit van
+  // testrunner zou wisselen, zonder dat deze code hoeft te weten welke
+  // runner dat precies is.
+  const usesVitest = tree.some(
+    (entry) => entry.type === "blob" && /^vitest\.config\.(ts|mts|js|mjs)$/.test(entry.path),
+  );
+
+  // Eén bestaand testbestand uit de repository ophalen als stijl-/
+  // frameworkvoorbeeld — maar alleen wanneer deze toewijzing daadwerkelijk
+  // een testbestand bevat, om onnodige GitHub-aanroepen te vermijden.
+  let exampleTestFile: { path: string; content: string } | null = null;
+  if (plan.paths.some((path) => isTestFilePath(path))) {
+    const exampleTestPath = tree
+      .filter(
+        (entry) =>
+          entry.type === "blob" && isTestFilePath(entry.path) && !plan.paths.includes(entry.path),
+      )
+      .map((entry) => entry.path)
+      .sort()[0];
+
+    if (exampleTestPath) {
+      const example = await getFileContent(target, exampleTestPath, defaultBranch);
+      if (example) {
+        exampleTestFile = { path: exampleTestPath, content: example.content };
+      }
+    }
+  }
+
   const plannedFiles: PlannedFile[] = [];
   for (const path of plan.paths) {
     const existing = await getFileContent(target, path, defaultBranch);
@@ -512,7 +651,15 @@ export async function executeBuilderAssignment({
     });
   }
 
-  const writeResult = await writeFiles(mission, assignment, plan, plannedFiles, usageTracker);
+  const writeResult = await writeFiles(
+    mission,
+    assignment,
+    plan,
+    plannedFiles,
+    usageTracker,
+    exampleTestFile,
+    usesVitest,
+  );
 
   // Alleen bestanden schrijven die ook echt gepland waren — voorkomt dat de
   // tweede LLM-aanroep alsnog een bestand buiten de lijst van planFiles()
