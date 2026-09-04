@@ -36,22 +36,28 @@ gemerged (via de GitHub API), zonder dat Elroy naar GitHub.com hoeft. Beide
 bestaande veiligheidsnetten (alle succescriteria PASSED, CI groen) blijven
 gelden; het klikken op de knop telt zelf als de vereiste goedkeuring.
 
+### Stap 5 — Gestructureerde foutcodes i.p.v. string-matching
+De "Goedkeuring & Mergen"-knop verscheen voorheen doordat de UI zocht naar de
+tekst "risicoclassificatie: needs-signoff" in een foutmelding. Dat is nu
+vervangen door een echt, machineleesbaar foutcode-veld dat van begin tot
+eind meeloopt: `DirectorRuntimeError` (director-runtime.ts) geeft een code
+als `NEEDS_SIGNOFF` mee, de API-route (route.ts) zet die door in de JSON-
+foutrespons, de client (mission-engine-v2-service.ts) geeft hem door aan de
+UI, en het dashboardpaneel (mission-engine-v2-panel.tsx) controleert nu op
+die code in plaats van op de bewoording van de foutmelding. Afgerond en
+gemerged via PR #25 (`director/mission-3bff728b-1788507406678`); PR #24 en
+#26 waren eerdere, onvolledige pogingen en zijn als duplicate/superseded
+gesloten.
+
 ## Voorgestelde volgende stappen
 
-Stap 5 t/m 14 zijn door Claude bedacht als logisch vervolg op de 4 voltooide
+Stap 6 t/m 14 zijn door Claude bedacht als logisch vervolg op de voltooide
 stappen, gebaseerd op wat Elroy al eerder heeft aangegeven te willen
 (multi-LLM, Claude ingebed in de app zelf, een écht autonome Director) en op
-concrete technische kanttekeningen die tijdens het bouwen van stap 1 t/m 4
+concrete technische kanttekeningen die tijdens het bouwen van stap 1 t/m 5
 al zijn gesignaleerd maar nog niet zijn opgelost. Dit is een voorstel, geen
 vaststaand plan — pas aan, herschik of schrap wat niet (meer) relevant is.
 Stap 15 is door Elroy zelf toegevoegd; de invulling ervan volgt later.
-
-### Stap 5 — Gestructureerde foutcodes i.p.v. string-matching
-De "Goedkeuring & Mergen"-knop verschijnt nu doordat de UI zoekt naar de
-tekst "risicoclassificatie: needs-signoff" in een foutmelding, omdat de API
-geen gestructureerde foutcodes teruggeeft. Fragiel: een tekstuele wijziging
-elders breekt de knop zonder duidelijke oorzaak. Vervang dit door een echt
-foutcode-veld (bijv. `NEEDS_SIGNOFF`) in de API-respons.
 
 ### Stap 6 — GitHub App i.p.v. fine-grained token
 `GITHUB_BUILDER_TOKEN` is bewust repo-gescoped, maar mist daardoor toegang
