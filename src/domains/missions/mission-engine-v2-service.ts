@@ -9,6 +9,20 @@ import type { KnowledgeEntry } from "@/core/domain/knowledge/knowledge-entry";
  * gepraat vanuit de browser — alles loopt via de server-only API-route.
  */
 
+/**
+ * Foutobject zoals dat door callMissionEngineApi naar de UI wordt gegooid.
+ * Naast de mensleesbare `message` (standaard Error-gedrag) draagt dit
+ * object optioneel een machineleesbaar `code`-veld, afkomstig van het
+ * gelijknamige veld in de JSON-foutrespons van de API-route (zie
+ * src/app/api/missions/v2/route.ts). Componenten mogen op dit veld
+ * controleren in plaats van op de bewoording van `message` te matchen —
+ * zie bijvoorbeeld mission-engine-v2-panel.tsx en de "NEEDS_SIGNOFF"-code
+ * uit director-runtime.ts.
+ */
+export interface MissionEngineApiError extends Error {
+  code?: string;
+}
+
 async function callMissionEngineApi<TResponse>(
   user: User,
   init: RequestInit,
@@ -27,7 +41,13 @@ async function callMissionEngineApi<TResponse>(
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(data.error ?? "Aanvraag aan de Mission Engine is mislukt.");
+    const error: MissionEngineApiError = new Error(
+      data.error ?? "Aanvraag aan de Mission Engine is mislukt.",
+    );
+    if (typeof data.code === "string") {
+      error.code = data.code;
+    }
+    throw error;
   }
 
   return data as TResponse;
