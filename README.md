@@ -1,6 +1,3 @@
----
----
----
 # The Dost Matrix v0.3.1
 
 De eerste echte Next.js- en Firebase-codebase.
@@ -166,14 +163,35 @@ de omgeving te schrijven waar de app op dat moment draait:
    pull request zelf op GitHub.
 
 **Setup**
-1. Maak een fine-grained personal access token aan op GitHub, gescoped tot
-   alleen de doelrepository, met permissies **Contents: Read and write** en
-   **Pull requests: Read and write**.
-2. Zet die sleutel in `.env.local` als `GITHUB_BUILDER_TOKEN` (nooit in Git
-   committen — zie `.env.local.example`).
+
+De GitHub-authenticatie voor de builder-, qa- en Director-rollen verloopt via
+een GitHub App-installatie in plaats van een personal access token. Dat geeft
+toegang tot de Checks-API (nodig voor CI-statuscontrole), een permissie die
+fine-grained personal access tokens nooit konden krijgen.
+
+1. Maak een GitHub App aan (of gebruik een bestaande), geïnstalleerd op
+   alleen de doelrepository, met minstens de permissies **Contents: Read and
+   write**, **Pull requests: Read and write** en **Checks: Read-only**.
+2. Zet de volgende drie omgevingsvariabelen in `.env.local` (nooit in Git
+   committen — zie `.env.local.example`):
+   - `GITHUB_APP_ID` — het numerieke App ID van de GitHub App.
+   - `GITHUB_APP_INSTALLATION_ID` — het installation ID van de App op de
+     doelrepository.
+   - `GITHUB_APP_PRIVATE_KEY` — de volledige inhoud van het gedownloade
+     `.pem`-privésleutelbestand van de App. Letterlijke `\n`-tekens in de
+     omgevingswaarde worden automatisch omgezet naar echte regeleindes, dus
+     zowel een meerregelige waarde als een one-liner met `\n` werkt.
 3. Optioneel: `GITHUB_BUILDER_REPO_OWNER` / `GITHUB_BUILDER_REPO_NAME` om een
    andere repository te targeten dan `The-Dost-Matrix/the-dost-matrix`
-   (bijvoorbeeld een projectrepository).
+   (bijvoorbeeld een projectrepository). De GitHub App moet dan wél op die
+   repository geïnstalleerd zijn.
+
+Intern wisselt `github-client.ts` deze gegevens zelf in voor een kortlevende
+installation access token (geldig 1 uur): er wordt met Node's ingebouwde
+`crypto`-module een RS256 JWT ondertekend en die JWT wordt bij GitHub
+ingewisseld voor het installation-token. Dat token wordt in-memory gecachet
+en pas kort vóór het verlopen automatisch ververst — er wordt dus niet bij
+elke aanroep opnieuw geauthenticeerd.
 
 **Bekende beperking (bewust, voor v0)**: de Director ziet bij zijn
 eerstvolgende beslissing nog niet de inhoud van wat de Builder opleverde —
@@ -207,19 +225,18 @@ de missie voldoet, vóórdat de Director de missie als voltooid mag markeren:
    nogmaals uit vlak vóór het (eventueel automatisch) mergen, als tweede,
    onafhankelijke verdedigingslaag.
 
-**Setup**: de qa-rol en de Director gebruiken dezelfde `GITHUB_BUILDER_TOKEN`
-als de builder-rol. **Bekende, bewuste beperking**: de CI-statuscontrole
-hierboven werkt op dit moment NIET — GitHub staat de daarvoor benodigde
-"Checks"-permissie niet toe op fine-grained personal access tokens (bevestigd
-door GitHub Support: "only GitHub Apps can access this API"), en de eigenaar
-heeft ervoor gekozen dit voorlopig niet op te lossen via een classic token
-(bredere toegang dan alleen deze repo) of een GitHub App (aanzienlijk meer
-opzetwerk). Zolang dat zo blijft, faalt de CI-aanvraag met een 403 en
-behandelt `getCombinedCheckStatus` (zie github-client.ts) dat bewust als
-"geen bekende CI-status" in plaats van elke missie te blokkeren — QA en de
-Director werken dus vandaag in de praktijk nog zonder CI-gate, exact zoals
-vóór deze wijziging. Zodra het token ooit wél Checks-toegang krijgt, gaat de
-gate automatisch aan, zonder verdere codewijziging.
+**Setup**: de qa-rol en de Director gebruiken dezelfde GitHub App-installatie
+(zie "Builder-rol via GitHub" hierboven voor de setup van `GITHUB_APP_ID`,
+`GITHUB_APP_INSTALLATION_ID` en `GITHUB_APP_PRIVATE_KEY`).
+
+De eerder bekende beperking rond de CI-statuscontrole is met deze
+App-authenticatie opgelost: GitHub stond de daarvoor benodigde
+"Checks"-permissie niet toe op fine-grained personal access tokens
+(bevestigd door GitHub Support: "only GitHub Apps can access this API"), maar
+een GitHub App-installatie kan die permissie wél krijgen. `getCombinedCheckStatus`
+(zie github-client.ts) haalt de CI-status nu daadwerkelijk op via de
+Checks-API, en QA en de Director gebruiken die status als harde gate zoals
+hierboven beschreven.
 
 **Bekende beperking (bewust, voor v0)**: QA beoordeelt op basis van de diff
 (patches) van de pull request, niet de volledige bestandsinhoud — bij zeer
