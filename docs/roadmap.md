@@ -26,6 +26,13 @@ de chat- en document-import-bronnen. (Dit werd later, vóórdat het werd
 opgemerkt, nogmaals als "Stap 8" voorgesteld — bij verificatie bleek dat
 al onder deze stap te vallen; zie "Voorgestelde volgende stappen".)
 
+Testdekking was hier aanvankelijk volledig afwezig; toegevoegd via PR #30
+(`director/mission-810c4e48-1788542274372`) als `mission-knowledge.test.ts`,
+met zes tests die o.a. de bewuste "fail-open"-garantie vastleggen: een
+falende LLM-aanroep, ongeldige JSON of een mislukte Firestore-write mogen
+nooit een fout naar boven gooien en dus nooit de afronding of annulering
+van de missie zelf laten mislukken.
+
 ### Stap 2 — Echte, nooit-blokkerende kostentracking
 Werkelijk tokengebruik en USD-kostenschatting per LLM-aanroep, zichtbaar per
 missie in de UI. Expliciete keuze: budget/kosten mogen een missie nooit
@@ -126,8 +133,20 @@ Stap 15 is door Elroy zelf toegevoegd; de invulling ervan volgt later.
 gebouwd te zijn — zie "Voltooid" hierboven. Stap 8 — een schrijfhaak vanuit
 de missie-loop naar Second Brain — bleek om dezelfde reden een letterlijke
 duplicaat van Stap 1 en is geschrapt in plaats van verplaatst; de wél
-gevonden ontbrekende testdekking voor `mission-knowledge.ts` wordt
-opgevolgd als losse, laag-risico missie.)
+gevonden ontbrekende testdekking voor `mission-knowledge.ts` is afgehandeld
+als losse missie — zie Stap 1 hierboven.)
+
+Werkafspraak sinds deze reeks: testbestanden worden niet meer door de
+Builder-rol geschreven maar rechtstreeks aangeleverd. Aanleiding is een
+harde score over deze hele reeks — de Builder kreeg geen enkele van de vijf
+testopdrachten (PR #24/#26, twee bestanden in #27, #29, #30) in één keer
+goed, terwijl elke rechtstreeks geschreven versie de CI wél meteen haalde.
+De fouten werden onderweg wel steeds kleiner (van volledig verzonnen
+functies, via een verzonnen invoerobject, naar uiteindelijk alleen nog een
+ontbrekend argument en een verkeerde aanname over sync/async), en de
+vangnetten (CI + verificatie vóór merge) hebben elke keer gewerkt: er is
+nooit iets kapots op `main` beland. Dit is een pragmatische keuze specifiek
+voor testbestanden, geen permanente wijziging aan de Mission Engine.
 
 ### Stap 9 — Multi-LLM-selector
 Verbind de Anthropic Claude API naast de bestaande OpenAI/ChatGPT-koppeling,
