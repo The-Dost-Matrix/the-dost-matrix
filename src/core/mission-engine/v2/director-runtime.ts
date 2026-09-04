@@ -120,6 +120,32 @@ const ALLOWED_AUTONOMOUS_DECISIONS: DirectorDecisionType[] = [
 const MAX_RELEVANT_KNOWLEDGE = 6;
 const MAX_KNOWLEDGE_CONTEXT_LENGTH = 6_000;
 
+/**
+ * Gestructureerde fout voor het needs-signoff-scenario in
+ * `ensureMissionPullRequestMerged` hieronder: de Director wil niet zelf
+ * mergen omdat de risicoclassificatie eerst de eigen goedkeuring van de
+ * eigenaar vereist.
+ *
+ * Voorheen bepaalde de UI (zie mission-engine-v2-panel.tsx) of de
+ * "Goedkeuring & Mergen"-knop moest verschijnen door in de tekst van de
+ * foutmelding te zoeken naar de letterlijke string
+ * "risicoclassificatie: needs-signoff" — dat brak elke keer dat de
+ * bewoording van deze foutmelding hier veranderde, zonder dat er functioneel
+ * iets mis was. Het `code`-veld hieronder is bewust machineleesbaar en
+ * onafhankelijk van de mensleesbare `message`, en reist van hier via de
+ * API-route (route.ts) en `callMissionEngineApi`
+ * (mission-engine-v2-service.ts) tot aan de UI-component — de `message`
+ * mag vrijelijk aangepast worden zonder dat dit ooit de knop breekt.
+ */
+export class MissionSignoffRequiredError extends Error {
+  readonly code = "NEEDS_SIGNOFF" as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "MissionSignoffRequiredError";
+  }
+}
+
 export interface RunDirectorStepInput {
   engine: MissionEngine;
   missionId: string;
@@ -333,12 +359,13 @@ async function decideNextStep(
  * risk-classification.ts) op basis van de gewijzigde bestanden. Bij
  * "auto-approve" wordt de pull request nu zelf gemerged via de GitHub API
  * (zie mergePullRequest in github-client.ts). Bij "needs-signoff" wordt NIET
- * gemerged: dit gooit een duidelijke fout met de reden en de PR-link, zodat
- * de eigenaar de wijziging eerst zelf bekijkt en handmatig mergt. Gooit ook
- * een duidelijke, aan de eigenaar te tonen fout wanneer een toegestane
- * automatische merge onverwacht mislukt (bijvoorbeeld een mergeconflict),
- * zodat `runDirectorStep` COMPLETE_MISSION nooit kiest voor een missie
- * waarvan de wijziging niet daadwerkelijk is doorgevoerd.
+ * gemerged: dit gooit een `MissionSignoffRequiredError` (zie hierboven) met
+ * de reden en de PR-link, zodat de eigenaar de wijziging eerst zelf bekijkt
+ * en handmatig mergt. Gooit ook een duidelijke, aan de eigenaar te tonen
+ * fout wanneer een toegestane automatische merge onverwacht mislukt
+ * (bijvoorbeeld een mergeconflict), zodat `runDirectorStep` COMPLETE_MISSION
+ * nooit kiest voor een missie waarvan de wijziging niet daadwerkelijk is
+ * doorgevoerd.
  */
 async function ensureMissionPullRequestMerged(mission: MissionV2): Promise<void> {
   const target = getGithubRepoTarget();
@@ -375,7 +402,7 @@ async function ensureMissionPullRequestMerged(mission: MissionV2): Promise<void>
   const risk = classifyPullRequestRiskForMission(files, mission.riskLevel);
 
   if (risk.level === "needs-signoff") {
-    throw new Error(
+    throw new MissionSignoffRequiredError(
       `Alle succescriteria van deze missie zijn al gehaald, maar pull request #${pr.number} ("${pr.title}") vereist eerst jouw eigen goedkeuring voordat de Director hem mag mergen (risicoclassificatie: needs-signoff). Reden: ${risk.reason} Bekijk de wijziging zelf op GitHub en merge hem daar wanneer je tevreden bent — laat de Director daarna opnieuw een stap zetten om de missie af te ronden: ${pr.url}`,
     );
   }
