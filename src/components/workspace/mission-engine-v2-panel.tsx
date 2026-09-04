@@ -10,6 +10,7 @@ import {
   cancelMissionV2,
   createMissionV2,
   listMissionsV2,
+  type MissionEngineApiError,
 } from "@/domains/missions/mission-engine-v2-service";
 import type { MissionRiskLevel, MissionV2 } from "@/core/mission-engine/v2/mission";
 import type { KnowledgeEntry } from "@/core/domain/knowledge/knowledge-entry";
@@ -142,18 +143,19 @@ function formatMissionCost(mission: MissionV2): string {
 const RISK_LEVELS: MissionRiskLevel[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 
 /**
- * Herkenningstekst uit de foutmelding die de Director geeft wanneer hij een
- * gehaalde missie niet automatisch mag mergen (zie
- * classifyPullRequestRiskForMission/ensureMissionPullRequestMerged in
- * director-runtime.ts — deze exacte tekst staat in beide needs-signoff-
- * foutmeldingen, ongeacht of dat door de bestandsgebaseerde classificatie of
- * door het missie-risiconiveau komt). Er is geen structureel foutveld in de
- * API-respons (net als bij alle andere acties hier — zie route.ts), dus dit
- * is bewust een gerichte tekstherkenning op precies díe foutmelding, niet op
- * fouten in het algemeen: laat de "Goedkeuring & Mergen"-knop (roadmap-stap
- * 4) alleen verschijnen wanneer die specifieke situatie zich voordoet.
+ * Machineleesbare foutcode die de Director meegeeft wanneer hij een gehaalde
+ * missie niet automatisch mag mergen (zie DirectorRuntimeError in
+ * director-runtime.ts — Stap 5: gestructureerde foutcodes i.p.v.
+ * string-matching). Deze code loopt via de API-route en
+ * callMissionEngineApi mee als `code`-property op het gegooide Error-object
+ * (zie MissionEngineApiError in mission-engine-v2-service.ts). Dit vervangt
+ * de vroegere tekstherkenning op de mensleesbare foutmelding: die kon breken
+ * zodra de bewoording van de melding in director-runtime.ts veranderde,
+ * terwijl deze code stabiel blijft. Laat de "Goedkeuring & Mergen"-knop
+ * (roadmap-stap 4) alleen verschijnen wanneer die specifieke situatie zich
+ * voordoet.
  */
-const NEEDS_SIGNOFF_MARKER = "risicoclassificatie: needs-signoff";
+const NEEDS_SIGNOFF_CODE = "NEEDS_SIGNOFF";
 
 function riskLevelLabel(level: MissionRiskLevel): string {
   const labels: Record<MissionRiskLevel, string> = {
@@ -185,7 +187,7 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
   const [usedKnowledge, setUsedKnowledge] = useState<KnowledgeEntry[]>([]);
 
   // Roadmap-stap 4 ("Goedkeuring & Mergen"): needsApproval bepaalt of die
-  // knop zichtbaar is (zie NEEDS_SIGNOFF_MARKER hierboven), approveInfo toont
+  // knop zichtbaar is (zie NEEDS_SIGNOFF_CODE hierboven), approveInfo toont
   // het resultaat ná een geslaagde klik erop.
   const [needsApproval, setNeedsApproval] = useState(false);
   const [approveInfo, setApproveInfo] = useState("");
@@ -299,9 +301,13 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "De Director kon geen stap zetten.";
       setError(message);
-      // Zie NEEDS_SIGNOFF_MARKER hierboven: toon de "Goedkeuring & Mergen"-
-      // knop precies wanneer dít de reden is dat de stap niet doorging.
-      setNeedsApproval(message.includes(NEEDS_SIGNOFF_MARKER));
+      // Zie NEEDS_SIGNOFF_CODE hierboven: toon de "Goedkeuring & Mergen"-
+      // knop precies wanneer dít de reden is dat de stap niet doorging. Dit
+      // is een gestructureerde code-check (geen tekstherkenning meer op de
+      // mensleesbare boodschap), zodat een woordwijziging in
+      // director-runtime.ts deze knop niet meer kan laten breken.
+      const code = caught instanceof Error ? (caught as MissionEngineApiError).code : undefined;
+      setNeedsApproval(code === NEEDS_SIGNOFF_CODE);
     } finally {
       setBusy(null);
     }
@@ -482,7 +488,7 @@ export function MissionEngineV2Panel({ variant = "full" }: MissionEngineV2PanelP
 
       {/*
         Roadmap-stap 4: verschijnt uitsluitend na een needs-signoff-
-        foutmelding (zie NEEDS_SIGNOFF_MARKER/handleAutoStep hierboven) —
+        foutmelding (zie NEEDS_SIGNOFF_CODE/handleAutoStep hierboven) —
         vervangt het handmatig mergen op GitHub.com, zonder de onderliggende
         vangnetten (alle criteria GEHAALD + CI geslaagd, zie
         approveAndMergeMissionPullRequest in director-runtime.ts) te omzeilen.

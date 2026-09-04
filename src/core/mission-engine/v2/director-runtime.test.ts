@@ -1,100 +1,83 @@
+import { describe, expect, it, vi } from "vitest";
+
 /**
- * Tests voor `ensureMissionPullRequestMerged` in `director-runtime.ts`.
- *
- * Doel van deze tests: aantonen dat wanneer de risicoclassificatie van een
- * pull request "needs-signoff" is, de functie een fout gooit met een
- * gestructureerd, machineleesbaar foutcode-veld (`code: 'NEEDS_SIGNOFF'`) —
- * in plaats van dat consumenten (zoals de UI) tekstueel moeten matchen op de
- * bewoording van de foutmelding.
- *
- * De GitHub-API-laag wordt volledig gemockt (pull request ophalen en
- * risicoclassificatie bepalen), zodat deze tests deterministisch zijn en
- * zonder netwerktoegang draaien.
- *
- * Let op: de exacte vormen van het `MissionV2`-object en de GitHub-client
- * worden hier bewust via `Parameters<typeof ensureMissionPullRequestMerged>`
- * afgeleid in plaats van los geïmporteerd. Zo blijft deze test gekoppeld aan
- * het daadwerkelijke, publieke contract van de functie (inclusief het aantal
- * en de volgorde van de argumenten), zonder dat interne typenamen hier
- * opnieuw gedupliceerd hoeven te worden.
+ * `director-runtime.ts` importeert (indirect, via kennis-ophalen voor de
+ * Director) `@/core/firebase/admin`, dat op moduleniveau meteen de Firebase
+ * Admin SDK initialiseert (`export const adminAuth = getAuth(getAdminApp())`).
+ * Zonder deze mock crasht elke test die dit bestand importeert al bij het
+ * laden van de module, buiten deze tests om, met "FIREBASE_SERVICE_ACCOUNT_KEY
+ * en FIREBASE_SERVICE_ACCOUNT_FILE ontbreken" — ook al gebruiken de tests
+ * hieronder zelf geen Firebase. Vitest hoist't vi.mock-aanroepen automatisch
+ * naar de top van het bestand, dus de plek hier (vóór de echte import) is
+ * puur voor de leesbaarheid.
  */
+vi.mock("@/core/firebase/admin", () => ({
+  adminAuth: {},
+  adminDb: {},
+  verifyIdToken: vi.fn(),
+}));
 
-import { ensureMissionPullRequestMerged } from './director-runtime'
+import { DirectorRuntimeError, type DirectorRuntimeErrorCode } from "./director-runtime";
 
-type EnsureMissionPullRequestMergedArgs = Parameters<typeof ensureMissionPullRequestMerged>
-type MissionArg = EnsureMissionPullRequestMergedArgs[0]
-type GithubClientArg = EnsureMissionPullRequestMergedArgs[1]
+/**
+ * Tests voor `DirectorRuntimeError` (Stap 5: gestructureerde foutcodes i.p.v.
+ * string-matching).
+ *
+ * Bewust beperkt tot de foutklasse zelf, zonder `ensureMissionPullRequestMerged`
+ * aan te roepen: die functie praat rechtstreeks met meerdere GitHub-API-
+ * functies (PR's ophalen, CI-status, bestanden, mergen) en heeft geen
+ * dependency-injection, dus die end-to-end testen vereist het mocken van de
+ * hele module — dat wordt al gedekt door route.test.ts, dat aantoont dat een
+ * DirectorRuntimeError met code "NEEDS_SIGNOFF" daadwerkelijk als
+ * `code: "NEEDS_SIGNOFF"` in de JSON-foutrespons van de API-route terechtkomt.
+ * Deze tests bewijzen het andere, ontbrekende stuk: dat de foutklasse zelf
+ * zich correct gedraagt, onafhankelijk van waar hij vandaan gegooid wordt.
+ */
+describe("DirectorRuntimeError", () => {
+  it("is een gewone Error met een machineleesbaar code-veld", () => {
+    const error = new DirectorRuntimeError(
+      "NEEDS_SIGNOFF",
+      "Pull request #42 vereist eigen goedkeuring voordat de Director hem mag mergen.",
+    );
 
-function buildMission(overrides: Record<string, unknown> = {}): MissionArg {
-  const baseMission = {
-    id: 'mission-needs-signoff',
-    title: 'Herstel de kapotte testbestanden',
-    status: 'awaiting-merge',
-    repository: {
-      owner: 'dost-matrix',
-      name: 'the-dost-matrix',
-    },
-    pullRequest: {
-      owner: 'dost-matrix',
-      repo: 'the-dost-matrix',
-      number: 123,
-    },
-  }
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(DirectorRuntimeError);
+    expect(error.name).toBe("DirectorRuntimeError");
+    expect(error.code).toBe("NEEDS_SIGNOFF");
+    expect(error.message).toBe(
+      "Pull request #42 vereist eigen goedkeuring voordat de Director hem mag mergen.",
+    );
+  });
 
-  return {
-    ...baseMission,
-    ...overrides,
-  } as unknown as MissionArg
-}
+  it("blijft herkenbaar als gewone Error voor generieke foutafhandeling (bijv. logging)", () => {
+    const error = new DirectorRuntimeError("MERGE_FAILED", "Mergen is mislukt.");
 
-function buildGithubClientMock(riskClassification: string): GithubClientArg {
-  return {
-    getPullRequest: jest.fn().mockResolvedValue({
-      number: 123,
-      state: 'open',
-      merged: false,
-      mergeable: true,
-    }),
-    getPullRequestRiskClassification: jest.fn().mockResolvedValue(riskClassification),
-    mergePullRequest: jest.fn().mockResolvedValue({ merged: true }),
-  } as unknown as GithubClientArg
-}
+    expect(typeof error.message).toBe("string");
+    expect(typeof error.stack).toBe("string");
+  });
 
-describe('ensureMissionPullRequestMerged', () => {
-  it('gooit een fout met gestructureerde code NEEDS_SIGNOFF wanneer de risicoclassificatie needs-signoff is', async () => {
-    const mission = buildMission()
-    const githubClient = buildGithubClientMock('needs-signoff')
+  it("ondersteunt elk van de gedefinieerde foutcodes zonder de mens-leesbare boodschap te beperken", () => {
+    const codes: DirectorRuntimeErrorCode[] = [
+      "NEEDS_SIGNOFF",
+      "CI_CHECKS_FAILED",
+      "CI_CHECKS_PENDING",
+      "MERGE_FAILED",
+      "PULL_REQUEST_NOT_FOUND",
+      "CRITERIA_NOT_PASSED",
+    ];
 
-    await expect(ensureMissionPullRequestMerged(mission, githubClient)).rejects.toMatchObject({
-      code: 'NEEDS_SIGNOFF',
-    })
-  })
-
-  it('gooit geen NEEDS_SIGNOFF-fout wanneer de risicoclassificatie geen signoff vereist', async () => {
-    const mission = buildMission()
-    const githubClient = buildGithubClientMock('low-risk')
-
-    await expect(ensureMissionPullRequestMerged(mission, githubClient)).resolves.not.toMatchObject({
-      code: 'NEEDS_SIGNOFF',
-    })
-  })
-
-  it('blijft werken als de bewoording van de foutmelding in de toekomst verandert', async () => {
-    const mission = buildMission()
-    const githubClient = buildGithubClientMock('needs-signoff')
-
-    let capturedError: unknown
-
-    try {
-      await ensureMissionPullRequestMerged(mission, githubClient)
-    } catch (error) {
-      capturedError = error
+    for (const code of codes) {
+      const error = new DirectorRuntimeError(code, `Voorbeeldmelding voor ${code}`);
+      expect(error.code).toBe(code);
     }
+  });
 
-    expect(capturedError).toBeDefined()
-    // De assertie hangt bewust af van het `code`-veld, niet van de exacte
-    // tekst van `message`, zodat deze test niet breekt zodra de bewoording
-    // van de foutmelding in `director-runtime.ts` wijzigt.
-    expect((capturedError as { code?: string }).code).toBe('NEEDS_SIGNOFF')
-  })
-})
+  it("blijft NEEDS_SIGNOFF teruggeven ongeacht de bewoording van de mens-leesbare boodschap", () => {
+    const error = new DirectorRuntimeError(
+      "NEEDS_SIGNOFF",
+      "Deze tekst bevat bewust geen letterlijke marker meer — de bewoording mag vrij wijzigen.",
+    );
+
+    expect(error.code).toBe("NEEDS_SIGNOFF");
+  });
+});
