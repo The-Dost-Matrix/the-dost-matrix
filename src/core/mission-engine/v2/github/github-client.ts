@@ -12,7 +12,17 @@
  * op de pc van de eigenaar aan te raken — zie [[the-dost-matrix]] in het
  * Second Brain. Er wordt hier dan ook nooit rechtstreeks naar de
  * standaardbranch (bv. "main") geschreven.
+ *
+ * Authenticatie gebeurt als GitHub App-installatie (niet meer als
+ * statisch personal access token): deze module ondertekent zelf een
+ * kortlevende App-JWT (RS256, via Node's ingebouwde `crypto`-module) en
+ * wisselt die in voor een installation access token. Dat token is precies
+ * de reden dat de Checks-API (zie `getCombinedCheckStatus`) hier wél
+ * toegankelijk is — een permissie die fine-grained personal access tokens
+ * nooit konden krijgen.
  */
+
+import { sign as cryptoSign } from "node:crypto";
 
 export interface GithubRepoTarget {
   owner: string;
@@ -31,16 +41,133 @@ export class GithubApiError extends Error {
   }
 }
 
-function getToken(): string {
-  const token = process.env.GITHUB_BUILDER_TOKEN;
+function getRequiredEnv(name: string): string {
+  const value = process.env[name];
 
-  if (!token) {
+  if (!value) {
     throw new Error(
-      "GITHUB_BUILDER_TOKEN ontbreekt. Zonder deze sleutel kan de Builder-rol geen branch of pull request aanmaken op GitHub.",
+      `${name} ontbreekt. Zonder deze omgevingsvariabele kan de Builder-rol niet authenticeren als GitHub App-installatie.`,
     );
   }
 
-  return token;
+  return value;
+}
+
+/**
+ * GitHub App-private keys komen via omgevingsvariabelen vaak binnen met
+ * letterlijke `\n`-tekens in plaats van echte regeleindes (afhankelijk van
+ * hoe de omgeving multiline-waarden opslaat). Deze functie normaliseert
+ * beide varianten naar een geldige PEM-string, zodat de sleutel hoe dan ook
+ * gebruikt kan worden om te ondertekenen.
+ */
+function normalizePrivateKey(rawPrivateKey: string): string {
+  return rawPrivateKey.includes("\\n") ? rawPrivateKey.replace(/\\n/g, "\n") : rawPrivateKey;
+}
+
+function base64UrlEncode(input: string | Buffer): string {
+  const buffer = typeof input === "string" ? Buffer.from(input, "utf-8") : input;
+  return buffer.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+/**
+ * Ondertekent een kortlevende GitHub App-JWT (RS256) met Node's ingebouwde
+ * `crypto`-module — geen nieuwe afhankelijkheid nodig. `iat` wordt 60
+ * seconden in het verleden gezet (GitHub's aanbevolen marge tegen
+ * kloksynchronisatie-afwijkingen tussen deze machine en GitHub's servers)
+ * en `exp` blijft ruim binnen de door GitHub toegestane 10 minuten.
+ */
+export function createAppJwt(appId: string, privateKeyPem: string): string {
+  const nowInSeconds = Math.floor(Date.now() / 1000);
+
+  const header = { alg: "RS256", typ: "JWT" };
+  const payload = {
+    iat: nowInSeconds - 60,
+    exp: nowInSeconds + 8 * 60,
+    iss: appId,
+  };
+
+  const signingInput = `${base64UrlEncode(JSON.stringify(header))}.${base64UrlEncode(JSON.stringify(payload))}`;
+  const signature = cryptoSign("RSA-SHA256", Buffer.from(signingInput, "utf-8"), privateKeyPem);
+
+  return `${signingInput}.${base64UrlEncode(signature)}`;
+}
+
+interface CachedInstallationToken {
+  token: string;
+  /** Epoch-milliseconden waarop het token verloopt (uit GitHub's `expires_at`). */
+  expiresAtMs: number;
+}
+
+/** Hoe ruim vóór het daadwerkelijke verlopen het token alvast ververst wordt. */
+const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;
+
+let cachedInstallationToken: CachedInstallationToken | null = null;
+
+/** Uitsluitend voor tests: dwingt een nieuwe tokenuitwisseling af bij de volgende aanroep. */
+export function resetInstallationTokenCacheForTests(): void {
+  cachedInstallationToken = null;
+}
+
+async function exchangeJwtForInstallationToken(): Promise<CachedInstallationToken> {
+  const appId = getRequiredEnv("GITHUB_APP_ID");
+  const installationId = getRequiredEnv("GITHUB_APP_INSTALLATION_ID");
+  const privateKey = normalizePrivateKey(getRequiredEnv("GITHUB_APP_PRIVATE_KEY"));
+
+  const jwt = createAppJwt(appId, privateKey);
+
+  const response = await fetch(
+    `${GITHUB_API_ROOT}/app/installations/${encodeURIComponent(installationId)}/access_tokens`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${jwt}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    },
+  );
+
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    let message = bodyText;
+
+    try {
+      const parsed = JSON.parse(bodyText) as { message?: string };
+      if (parsed.message) message = parsed.message;
+    } catch {
+      // Geen JSON-body — de ruwe tekst blijft staan als foutmelding.
+    }
+
+    throw new GithubApiError(
+      response.status,
+      `Kon geen GitHub App installation token verkrijgen (${response.status}): ${message || response.statusText}`,
+    );
+  }
+
+  const data = (await response.json()) as { token: string; expires_at: string };
+
+  return { token: data.token, expiresAtMs: new Date(data.expires_at).getTime() };
+}
+
+/**
+ * Geeft een geldig installation access token terug voor de Builder-rol,
+ * geauthenticeerd als GitHub App-installatie (via `GITHUB_APP_ID`,
+ * `GITHUB_APP_INSTALLATION_ID` en `GITHUB_APP_PRIVATE_KEY`).
+ *
+ * Het opgehaalde token (1 uur geldig) wordt in-memory gecachet en pas kort
+ * vóór het verlopen automatisch ververst — niet bij elke aanroep opnieuw
+ * opgehaald, om onnodige aanvragen naar GitHub's token-endpoint te
+ * vermijden.
+ */
+export async function getToken(): Promise<string> {
+  const now = Date.now();
+
+  if (cachedInstallationToken && cachedInstallationToken.expiresAtMs - TOKEN_REFRESH_MARGIN_MS > now) {
+    return cachedInstallationToken.token;
+  }
+
+  cachedInstallationToken = await exchangeJwtForInstallationToken();
+  return cachedInstallationToken.token;
 }
 
 /**
@@ -65,7 +192,7 @@ function encodeRepoPath(filePath: string): string {
 }
 
 async function githubRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = getToken();
+  const token = await getToken();
 
   const response = await fetch(`${GITHUB_API_ROOT}${path}`, {
     ...init,
@@ -407,20 +534,17 @@ export interface CombinedCheckStatus {
  * Statuses-API: de CI van dit project draait als GitHub Actions-workflow, en
  * die registreert zichzelf als check-run, niet als losse "status".
  *
- * Bekende, bewuste beperking: GitHub staat de "Checks"-permissie (nodig voor
- * dit endpoint) momenteel NIET toe op fine-grained personal access tokens —
- * dit is een limitatie van GitHub zelf, bevestigd door GitHub Support ("only
- * GitHub Apps can access this API"), niet iets dat via tokeninstellingen op
- * te lossen is met het huidige `GITHUB_BUILDER_TOKEN`. De eigenaar heeft
- * ervoor gekozen dit voorlopig NIET op te lossen (bijvoorbeeld via een
- * classic token of een GitHub App, beide met hun eigen nadelen — zie
- * README.md) en dit later als apart punt op te pakken. Om die reden vangt
- * deze functie een 403 op dit endpoint expliciet af en behandelt dat als
- * "none" (geen bekende CI-status) in plaats van de aanroeper te laten
- * crashen — zonder deze vangnet zou ELKE QA- of Director-stap onherroepelijk
- * stuklopen zolang het token deze permissie mist. Zodra het token ooit wél
- * Checks-toegang krijgt, werkt de CI-gate in qa-runtime.ts/director-
- * runtime.ts automatisch, zonder verdere codewijziging.
+ * Voorheen kon dit endpoint niet werken: GitHub staat de "Checks"-permissie
+ * (nodig voor dit endpoint) niet toe op fine-grained personal access
+ * tokens — een limitatie van GitHub zelf, bevestigd door GitHub Support
+ * ("only GitHub Apps can access this API"). Die beperking is met deze
+ * wijziging opgelost: deze client authenticeert nu als GitHub
+ * App-installatie (zie `getToken`), en die installatie kan wél met de
+ * Checks-permissie geautoriseerd worden. De 403-afvangst hieronder blijft
+ * bestaan als defensief vangnet (bijvoorbeeld wanneer de installatie zelf
+ * per ongeluk zonder Checks-permissie is aangemaakt) en behandelt zo'n geval
+ * als "none" (geen bekende CI-status) in plaats van de aanroeper te laten
+ * crashen.
  */
 export async function getCombinedCheckStatus(
   target: GithubRepoTarget,
