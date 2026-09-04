@@ -17,7 +17,14 @@ wordt afgerond of de roadmap verandert.
 Voltooide/geannuleerde missies stellen automatisch een kennisitem voor
 ("Mogelijk kennisitem"), zodat lessen uit een missie standaard bij Second
 Brain terechtkomen voor Elroy's beoordeling, in plaats van alleen bij
-handmatig chat-gebruik.
+handmatig chat-gebruik. Dit geldt voor de Director/Builder/QA-loop van
+Mission Engine V2 zelf, niet alleen voor chat: `proposeMissionKnowledge`
+(mission-knowledge.ts) wordt aangeroepen zodra een missie COMPLETED wordt
+(director-runtime.ts) én vanuit de "cancel"-actie voor CANCELLED missies
+(route.ts), en legt de gedestilleerde kennis als "pending" voor — net als
+de chat- en document-import-bronnen. (Dit werd later, vóórdat het werd
+opgemerkt, nogmaals als "Stap 8" voorgesteld — bij verificatie bleek dat
+al onder deze stap te vallen; zie "Voorgestelde volgende stappen".)
 
 ### Stap 2 — Echte, nooit-blokkerende kostentracking
 Werkelijk tokengebruik en USD-kostenschatting per LLM-aanroep, zichtbaar per
@@ -88,16 +95,27 @@ foutcode zolang die niet geslaagd is — ongeacht risicoclassificatie. De
 roadmap was hier simpelweg niet op bijgewerkt.
 
 Bij dezelfde verificatie kwam wel een echt gat naar boven: geen enkele
-automatische test oefent deze CI-statuscontrole daadwerkelijk uit.
-`director-runtime.test.ts` bevat een commentaar dat beweert dat
-`route.test.ts` dit al dekt, maar dat bestand test alleen de
-`NEEDS_SIGNOFF`-code, niet `CI_CHECKS_FAILED`/`CI_CHECKS_PENDING`. Dit wordt
-opgevolgd als losse, laag-risico missie (tests toevoegen, geen
-gedragswijziging).
+automatische test oefende deze CI-statuscontrole daadwerkelijk uit.
+`director-runtime.test.ts` bevatte een commentaar dat beweerde dat
+`route.test.ts` dit al dekte, maar dat bestand test alleen de
+`NEEDS_SIGNOFF`-code, niet `CI_CHECKS_FAILED`/`CI_CHECKS_PENDING`. Opgelost
+via een losse, laag-risico missie: `director-runtime.ensureMissionPullRequestMerged.test.ts`
+(zes tests: geen PR gevonden, PR al gemerged, CI mislukt, CI nog bezig, CI
+geslaagd + auto-approve → mergt, CI geslaagd + needs-signoff → mergt niet).
+De Builder verzon bij de eerste poging opnieuw een niet-bestaand
+invoerformaat voor `ensureMissionPullRequestMerged` — exact dezelfde fout
+als bij PR #24/#26/#27, ook al staat er letterlijk een JSDoc-commentaar bij
+de functie die deze specifieke valkuil beschrijft. Dit bevestigt dat de
+context-fix uit builder-runtime.ts (hierboven) de isolatie bij NIEUWE
+bestanden oplost, maar niet garandeert dat de Builder een bestaande,
+zichtbare functiesignatuur ook daadwerkelijk leest in plaats van aanneemt.
+Het testbestand is daarom rechtstreeks herschreven i.p.v. teruggestuurd
+naar een nieuwe Builder-toewijzing. Afgerond en gemerged via PR #29
+(`director/mission-f6b76b2f-1788539538423`).
 
 ## Voorgestelde volgende stappen
 
-Stap 8 t/m 14 zijn door Claude bedacht als logisch vervolg op de voltooide
+Stap 9 t/m 14 zijn door Claude bedacht als logisch vervolg op de voltooide
 stappen, gebaseerd op wat Elroy al eerder heeft aangegeven te willen
 (multi-LLM, Claude ingebed in de app zelf, een écht autonome Director) en op
 concrete technische kanttekeningen die tijdens het bouwen van stap 1 t/m 6
@@ -105,15 +123,11 @@ al zijn gesignaleerd maar nog niet zijn opgelost. Dit is een voorstel, geen
 vaststaand plan — pas aan, herschik of schrap wat niet (meer) relevant is.
 Stap 15 is door Elroy zelf toegevoegd; de invulling ervan volgt later.
 (Stap 7 stond hier oorspronkelijk ook bij, maar bleek bij verificatie al
-gebouwd te zijn — zie "Voltooid" hierboven.)
-
-### Stap 8 — Second Brain-schrijfhaak vanuit de missie-loop zelf
-Op dit moment is de chat ("Mogelijk kennisitem") de enige automatische weg
-naar Second Brain — de Director/Builder/QA-loop van Mission Engine V2 zelf
-heeft nog geen schrijfhaak. Voeg een vergelijkbaar voorstel-mechanisme toe
-direct vanuit een afgeronde missie (bijv. een technische les die de Builder
-tegenkwam), zodat kennis niet afhankelijk is van of Elroy toevallig iets in
-de chat typt.
+gebouwd te zijn — zie "Voltooid" hierboven. Stap 8 — een schrijfhaak vanuit
+de missie-loop naar Second Brain — bleek om dezelfde reden een letterlijke
+duplicaat van Stap 1 en is geschrapt in plaats van verplaatst; de wél
+gevonden ontbrekende testdekking voor `mission-knowledge.ts` wordt
+opgevolgd als losse, laag-risico missie.)
 
 ### Stap 9 — Multi-LLM-selector
 Verbind de Anthropic Claude API naast de bestaande OpenAI/ChatGPT-koppeling,
