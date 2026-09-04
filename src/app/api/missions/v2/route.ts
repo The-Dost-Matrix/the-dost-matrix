@@ -67,6 +67,25 @@ function publicError(error: unknown): string {
   return "Er is iets misgegaan.";
 }
 
+/**
+ * Leest een machineleesbaar foutcode-veld van een fout, indien aanwezig
+ * (zie DirectorRuntimeError in director-runtime.ts — Stap 5: gestructureerde
+ * foutcodes i.p.v. string-matching). De check via een optioneel `code`-veld
+ * houdt deze functie ook bruikbaar voor toekomstige, vergelijkbare
+ * foutklassen zonder dat de aanroepers hier iets voor moeten aanpassen.
+ */
+function publicErrorCode(error: unknown): string | undefined {
+  if (
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+  ) {
+    return (error as { code: string }).code;
+  }
+  return undefined;
+}
+
 async function requireOwnerId(request: NextRequest): Promise<string> {
   const decoded = await verifyIdToken(request.headers.get("authorization"));
   return decoded.uid;
@@ -600,6 +619,10 @@ export async function POST(request: NextRequest) {
       action: body.action,
       error: error instanceof Error ? error.message : error,
     });
-    return NextResponse.json({ error: publicError(error) }, { status: 500 });
+    const code = publicErrorCode(error);
+    return NextResponse.json(
+      { error: publicError(error), ...(code ? { code } : {}) },
+      { status: 500 },
+    );
   }
 }

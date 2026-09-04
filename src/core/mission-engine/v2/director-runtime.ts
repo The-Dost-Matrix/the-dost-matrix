@@ -73,9 +73,18 @@ import { classifyPullRequestRiskForMission } from "./risk-classification";
  * zelf: hij gooit een duidelijke foutmelding met de reden en de PR-link, en
  * de missie blijft ACTIEF totdat de eigenaar de wijziging zelf heeft bekeken
  * en op GitHub gemerged — pas daarna kan de Director de missie afronden.
- * Een in-app "Goedkeuring & Mergen"-knop (zodat dit ook voor needs-signoff
- * zonder naar GitHub.com te hoeven) is bewust nog niet gebouwd; dit is de
- * eerste, kleinere stap.
+ *
+ * Sinds Stap 5 (gestructureerde foutcodes i.p.v. string-matching) is deze
+ * needs-signoff-situatie niet meer alleen aan de bewoording van de
+ * foutmelding te herkennen: de fout die hieronder gegooid wordt is een
+ * `DirectorRuntimeError` met een machineleesbaar `code`-veld
+ * (`"NEEDS_SIGNOFF"`, zie hieronder). Dit `code`-veld loopt van hier via de
+ * API-route tot in de client mee, zodat de "Goedkeuring & Mergen"-knop in
+ * mission-engine-v2-panel.tsx op dat code-veld kan beslissen of hij moet
+ * verschijnen, in plaats van te zoeken naar de letterlijke tekst
+ * "risicoclassificatie: needs-signoff" in de foutmelding — die tekst blijft
+ * in de mens-leesbare `message` staan (ter toelichting), maar mag voortaan
+ * vrij wijzigen zonder de knop te breken.
  *
  * Sinds classifyPullRequestRiskForMission (zie risk-classification.ts) telt
  * niet meer alléén de bestandsgebaseerde classificatie mee, maar ook het
@@ -119,6 +128,53 @@ const ALLOWED_AUTONOMOUS_DECISIONS: DirectorDecisionType[] = [
 
 const MAX_RELEVANT_KNOWLEDGE = 6;
 const MAX_KNOWLEDGE_CONTEXT_LENGTH = 6_000;
+
+/**
+ * Machineleesbare foutcodes die de Director-runtime kan gooien wanneer een
+ * verder correct verlopen stap (alle succescriteria PASSED) toch niet mag
+ * leiden tot een automatische merge/voltooiing van de missie. Dit is de
+ * kern van Stap 5 ("gestructureerde foutcodes i.p.v. string-matching"): de
+ * mens-leesbare `message` van `DirectorRuntimeError` mag vrijelijk van
+ * bewoording veranderen, maar `code` is een stabiel contract tussen server
+ * en client.
+ *
+ * - "NEEDS_SIGNOFF": de pull request vereist eigen goedkeuring van de
+ *   eigenaar (risicoclassificatie needs-signoff) voordat er gemerged mag
+ *   worden. Dit is de code waar de "Goedkeuring & Mergen"-knop in
+ *   mission-engine-v2-panel.tsx op reageert.
+ * - "CI_CHECKS_FAILED" / "CI_CHECKS_PENDING": de CI-status van de pull
+ *   request laat (nog) geen merge toe, ongeacht risicoclassificatie.
+ * - "MERGE_FAILED": een toegestane automatische of handmatig goedgekeurde
+ *   merge is bij GitHub zelf mislukt (bv. mergeconflict).
+ * - "PULL_REQUEST_NOT_FOUND": er is geen (nog niet gemergde) pull request
+ *   voor deze missie gevonden om te mergen.
+ * - "CRITERIA_NOT_PASSED": er is een merge-actie aangevraagd terwijl nog
+ *   niet alle succescriteria van de missie op GEHAALD staan.
+ */
+export type DirectorRuntimeErrorCode =
+  | "NEEDS_SIGNOFF"
+  | "CI_CHECKS_FAILED"
+  | "CI_CHECKS_PENDING"
+  | "MERGE_FAILED"
+  | "PULL_REQUEST_NOT_FOUND"
+  | "CRITERIA_NOT_PASSED";
+
+/**
+ * Gestructureerde fout voor situaties binnen de Director-runtime die de
+ * aanroepende laag (de API-route, en uiteindelijk de client) op basis van
+ * een stabiel `code`-veld moet kunnen herkennen — in plaats van op de
+ * bewoording van `message` te moeten matchen. Zie de toelichting bij
+ * `DirectorRuntimeErrorCode` hierboven.
+ */
+export class DirectorRuntimeError extends Error {
+  readonly code: DirectorRuntimeErrorCode;
+
+  constructor(code: DirectorRuntimeErrorCode, message: string) {
+    super(message);
+    this.name = "DirectorRuntimeError";
+    this.code = code;
+  }
+}
 
 export interface RunDirectorStepInput {
   engine: MissionEngine;
@@ -333,14 +389,23 @@ async function decideNextStep(
  * risk-classification.ts) op basis van de gewijzigde bestanden. Bij
  * "auto-approve" wordt de pull request nu zelf gemerged via de GitHub API
  * (zie mergePullRequest in github-client.ts). Bij "needs-signoff" wordt NIET
- * gemerged: dit gooit een duidelijke fout met de reden en de PR-link, zodat
- * de eigenaar de wijziging eerst zelf bekijkt en handmatig mergt. Gooit ook
- * een duidelijke, aan de eigenaar te tonen fout wanneer een toegestane
+ * gemerged: dit gooit een `DirectorRuntimeError` met `code: "NEEDS_SIGNOFF"`
+ * (plus een mens-leesbare reden en de PR-link in `message`), zodat de
+ * eigenaar de wijziging eerst zelf bekijkt en handmatig mergt — of de
+ * "Goedkeuring & Mergen"-knop gebruikt, die op ditzelfde `code`-veld
+ * reageert in plaats van op de tekst van `message`. Gooit ook een
+ * duidelijke, aan de eigenaar te tonen fout wanneer een toegestane
  * automatische merge onverwacht mislukt (bijvoorbeeld een mergeconflict),
  * zodat `runDirectorStep` COMPLETE_MISSION nooit kiest voor een missie
  * waarvan de wijziging niet daadwerkelijk is doorgevoerd.
+ *
+ * Geëxporteerd (i.p.v. module-privé) zodat dit needs-signoff-pad in
+ * director-runtime.test.ts rechtstreeks en met een correcte MissionV2-
+ * invoer getest kan worden, in plaats van via een verzonnen los
+ * `{pullRequest, riskClassification}`-object dat nooit bij de echte
+ * functiesignatuur paste.
  */
-async function ensureMissionPullRequestMerged(mission: MissionV2): Promise<void> {
+export async function ensureMissionPullRequestMerged(mission: MissionV2): Promise<void> {
   const target = getGithubRepoTarget();
   const prs = await listPullRequests(target, "all");
   const pr = findMissionPullRequest(prs, mission.missionId);
@@ -360,13 +425,15 @@ async function ensureMissionPullRequestMerged(mission: MissionV2): Promise<void>
   const ciStatus = await getCombinedCheckStatus(target, pr.headSha);
 
   if (ciStatus.state === "failure") {
-    throw new Error(
+    throw new DirectorRuntimeError(
+      "CI_CHECKS_FAILED",
       `Alle succescriteria van deze missie zijn al gehaald, maar de CI-check(s) op pull request #${pr.number} ("${pr.title}") zijn mislukt (${ciStatus.failingCheckNames.join(", ")}) — de Director mergt daarom NIET, ongeacht de risicoclassificatie. Los de CI-fout eerst op via een nieuwe builder-toewijzing en laat QA opnieuw oordelen voordat je het opnieuw probeert: ${pr.url}`,
     );
   }
 
   if (ciStatus.state === "pending") {
-    throw new Error(
+    throw new DirectorRuntimeError(
+      "CI_CHECKS_PENDING",
       `Alle succescriteria van deze missie zijn al gehaald, maar de CI-check(s) op pull request #${pr.number} ("${pr.title}") zijn nog niet klaar (${ciStatus.pendingCheckNames.join(", ")}) — de Director wacht met mergen totdat ze zijn afgerond. Probeer het over een paar minuten opnieuw: ${pr.url}`,
     );
   }
@@ -375,7 +442,8 @@ async function ensureMissionPullRequestMerged(mission: MissionV2): Promise<void>
   const risk = classifyPullRequestRiskForMission(files, mission.riskLevel);
 
   if (risk.level === "needs-signoff") {
-    throw new Error(
+    throw new DirectorRuntimeError(
+      "NEEDS_SIGNOFF",
       `Alle succescriteria van deze missie zijn al gehaald, maar pull request #${pr.number} ("${pr.title}") vereist eerst jouw eigen goedkeuring voordat de Director hem mag mergen (risicoclassificatie: needs-signoff). Reden: ${risk.reason} Bekijk de wijziging zelf op GitHub en merge hem daar wanneer je tevreden bent — laat de Director daarna opnieuw een stap zetten om de missie af te ronden: ${pr.url}`,
     );
   }
@@ -388,7 +456,8 @@ async function ensureMissionPullRequestMerged(mission: MissionV2): Promise<void>
     });
   } catch (error) {
     const detail = error instanceof GithubApiError ? error.message : String(error);
-    throw new Error(
+    throw new DirectorRuntimeError(
+      "MERGE_FAILED",
       `Alle succescriteria van deze missie zijn al gehaald, en de risicoclassificatie liet automatisch mergen toe (auto-approve — ${risk.reason}), maar het mergen van pull request #${pr.number} ("${pr.title}") is mislukt: ${detail}. Bekijk en merge de pull request zelf op GitHub, en laat de Director daarna opnieuw een stap zetten om de missie af te ronden: ${pr.url}`,
     );
   }
@@ -411,8 +480,10 @@ export interface ApproveAndMergeResult {
  * er valt dus niets meer te classificeren, alleen nog uit te voeren. Dit is
  * geen manier om de risicocontrole te omzeilen: de eigenaar bekijkt de pull
  * request nog steeds zelf voordat hij op deze knop klikt (de knop verschijnt
- * pas ná een needs-signoff-foutmelding, met de PR-link erbij), alleen niet
- * meer op GitHub.com — hij mergt hem vanuit de app.
+ * pas ná een needs-signoff-foutmelding, met de PR-link erbij — sinds Stap 5
+ * herkend via `DirectorRuntimeError.code === "NEEDS_SIGNOFF"`, niet meer via
+ * tekstmatching), alleen niet meer op GitHub.com — hij mergt hem vanuit de
+ * app.
  *
  * Twee vangnetten blijven wél gelden, exact zoals bij een automatische
  * auto-approve-merge hierboven:
@@ -433,7 +504,8 @@ export async function approveAndMergeMissionPullRequest(
   mission: MissionV2,
 ): Promise<ApproveAndMergeResult> {
   if (!hasPassedAllCriteria(mission)) {
-    throw new Error(
+    throw new DirectorRuntimeError(
+      "CRITERIA_NOT_PASSED",
       "Nog niet alle succescriteria van deze missie staan op GEHAALD — de qa-rol moet eerst (opnieuw) akkoord geven voordat er iets gemergd kan worden.",
     );
   }
@@ -443,7 +515,8 @@ export async function approveAndMergeMissionPullRequest(
   const pr = findMissionPullRequest(prs, mission.missionId);
 
   if (!pr) {
-    throw new Error(
+    throw new DirectorRuntimeError(
+      "PULL_REQUEST_NOT_FOUND",
       "Geen pull request gevonden die bij deze missie hoort — er valt dus niets te mergen.",
     );
   }
@@ -455,13 +528,15 @@ export async function approveAndMergeMissionPullRequest(
   const ciStatus = await getCombinedCheckStatus(target, pr.headSha);
 
   if (ciStatus.state === "failure") {
-    throw new Error(
+    throw new DirectorRuntimeError(
+      "CI_CHECKS_FAILED",
       `De CI-check(s) op pull request #${pr.number} ("${pr.title}") zijn mislukt (${ciStatus.failingCheckNames.join(", ")}) — ook via deze knop wordt daarom niet gemerged. Los de CI-fout eerst op via een nieuwe builder-toewijzing en laat QA opnieuw oordelen: ${pr.url}`,
     );
   }
 
   if (ciStatus.state === "pending") {
-    throw new Error(
+    throw new DirectorRuntimeError(
+      "CI_CHECKS_PENDING",
       `De CI-check(s) op pull request #${pr.number} ("${pr.title}") zijn nog niet klaar (${ciStatus.pendingCheckNames.join(", ")}) — probeer het over een paar minuten opnieuw: ${pr.url}`,
     );
   }
@@ -474,7 +549,8 @@ export async function approveAndMergeMissionPullRequest(
     });
   } catch (error) {
     const detail = error instanceof GithubApiError ? error.message : String(error);
-    throw new Error(
+    throw new DirectorRuntimeError(
+      "MERGE_FAILED",
       `Het mergen van pull request #${pr.number} ("${pr.title}") is mislukt: ${detail}. Bekijk en merge de pull request zelf op GitHub: ${pr.url}`,
     );
   }
