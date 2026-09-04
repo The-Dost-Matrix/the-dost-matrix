@@ -6,7 +6,11 @@ import { verifyIdToken } from "@/core/firebase/admin";
 import type {
   CreateMissionPayload,
 } from "@/core/mission-engine/v2/commands";
-import { approveAndMergeMissionPullRequest, runDirectorStep } from "@/core/mission-engine/v2/director-runtime";
+import {
+  approveAndMergeMissionPullRequest,
+  MissionSignoffRequiredError,
+  runDirectorStep,
+} from "@/core/mission-engine/v2/director-runtime";
 import { createMissionEngineV2 } from "@/core/mission-engine/v2/engine-factory";
 import { listMissionsForOwner } from "@/core/mission-engine/v2/firestore-store";
 import type { MissionRiskLevel, MissionV2 } from "@/core/mission-engine/v2/mission";
@@ -65,6 +69,29 @@ function publicError(error: unknown): string {
     return error.message;
   }
   return "Er is iets misgegaan.";
+}
+
+/**
+ * Leest een machineleesbaar foutcode-veld van een fout, indien aanwezig.
+ * Op dit moment is de enige bekende gestructureerde foutcode
+ * "NEEDS_SIGNOFF" (zie MissionSignoffRequiredError in director-runtime.ts),
+ * maar de check via een optioneel `code`-veld houdt deze functie ook
+ * bruikbaar voor toekomstige, vergelijkbare foutklassen zonder dat de
+ * aanroepers hier iets voor moeten aanpassen.
+ */
+function publicErrorCode(error: unknown): string | undefined {
+  if (error instanceof MissionSignoffRequiredError) {
+    return error.code;
+  }
+  if (
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+  ) {
+    return (error as { code: string }).code;
+  }
+  return undefined;
 }
 
 async function requireOwnerId(request: NextRequest): Promise<string> {
@@ -600,6 +627,10 @@ export async function POST(request: NextRequest) {
       action: body.action,
       error: error instanceof Error ? error.message : error,
     });
-    return NextResponse.json({ error: publicError(error) }, { status: 500 });
+    const code = publicErrorCode(error);
+    return NextResponse.json(
+      { error: publicError(error), ...(code ? { code } : {}) },
+      { status: 500 },
+    );
   }
 }
