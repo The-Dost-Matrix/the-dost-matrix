@@ -49,6 +49,18 @@ gemerged via PR #25 (`director/mission-3bff728b-1788507406678`); PR #24 en
 #26 waren eerdere, onvolledige pogingen en zijn als duplicate/superseded
 gesloten.
 
+### Stap 6 — GitHub App i.p.v. fine-grained token
+`GITHUB_BUILDER_TOKEN` (een fine-grained personal access token) miste
+toegang tot de Checks-API — een bevestigde GitHub-limitatie voor dit
+tokentype. De builder-, qa- en Director-rollen authenticeren nu in plaats
+daarvan als GitHub App-installatie: `github-client.ts` ondertekent zelf een
+kortlevende App-JWT (RS256, via Node's ingebouwde `crypto`-module, dus geen
+nieuwe dependency) en wisselt die in voor een installation access token
+(gecachet, automatisch ververst vóór het verloopt). Drie nieuwe
+omgevingsvariabelen: `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`,
+`GITHUB_APP_PRIVATE_KEY`. Afgerond en gemerged via PR #27
+(`director/mission-290afd58-1788529670596`).
+
 ## Voorgestelde volgende stappen
 
 Stap 6 t/m 14 zijn door Claude bedacht als logisch vervolg op de voltooide
@@ -58,12 +70,6 @@ concrete technische kanttekeningen die tijdens het bouwen van stap 1 t/m 5
 al zijn gesignaleerd maar nog niet zijn opgelost. Dit is een voorstel, geen
 vaststaand plan — pas aan, herschik of schrap wat niet (meer) relevant is.
 Stap 15 is door Elroy zelf toegevoegd; de invulling ervan volgt later.
-
-### Stap 6 — GitHub App i.p.v. fine-grained token
-`GITHUB_BUILDER_TOKEN` is bewust repo-gescoped, maar mist daardoor toegang
-tot de Checks-API (bevestigde GitHub-limitatie voor dit tokentype). Een
-GitHub App (repo-gescoped, mét Checks-toegang) lost dit definitief op —
-eenmalig meer opzetwerk, geen nieuwe architectuurdiscussie.
 
 ### Stap 7 — Echte CI-statuscontrole vóór automerge
 Nu bouwt op stap 6: de Director controleert vóór auto-merge de daadwerkelijke
