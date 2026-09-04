@@ -61,21 +61,51 @@ omgevingsvariabelen: `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`,
 `GITHUB_APP_PRIVATE_KEY`. Afgerond en gemerged via PR #27
 (`director/mission-290afd58-1788529670596`).
 
+### Tussentijdse fix — Builder testte code die hij nooit had gezien
+Geen genummerde roadmapstap, maar wel een structurele betrouwbaarheids-fix
+aan de Builder-rol zelf, vóór stap 7 uitgevoerd omdat vier opeenvolgende
+missies (PR #24, #25, #26, #27) hierdoor kapotte testbestanden opleverden.
+Root cause: `writeSingleFile()` in `builder-runtime.ts` schreef elk bestand
+via een volledig geïsoleerde LLM-aanroep, waardoor de Builder bij een nieuw
+(test)bestand geen zicht had op de daadwerkelijke inhoud van de bestanden
+die hij moest testen — met verzonnen functienamen en Jest-syntax in een
+vitest-project tot gevolg. Fix: de Builder krijgt nu bij het schrijven van
+een testbestand automatisch de volledige inhoud van de bijbehorende
+bronbestanden uit dezelfde toewijzing mee, plus één bestaand testbestand
+als stijl-/frameworkvoorbeeld, plus een expliciete vitest-instructie;
+niet-testbestanden worden bovendien altijd vóór testbestanden geschreven.
+Afgerond en gemerged via PR #28 (`builder-runtime-context-fix`).
+
+### Stap 7 — Echte CI-statuscontrole vóór automerge
+Bij verificatie bleek deze stap al functioneel gebouwd te zijn, niet als
+aparte missie maar eerder als reactieve fix op een live incident (QA keurde
+ooit een pull request met drie verzonnen imports goed ondanks falende CI).
+`ensureMissionPullRequestMerged` (director-runtime.ts) controleert vóór
+zowel de automatische merge als de "Goedkeuring & Mergen"-knop al de
+daadwerkelijke CI-status via `getCombinedCheckStatus` (github-client.ts) en
+weigert te mergen met een structurele `CI_CHECKS_FAILED`/`CI_CHECKS_PENDING`-
+foutcode zolang die niet geslaagd is — ongeacht risicoclassificatie. De
+roadmap was hier simpelweg niet op bijgewerkt.
+
+Bij dezelfde verificatie kwam wel een echt gat naar boven: geen enkele
+automatische test oefent deze CI-statuscontrole daadwerkelijk uit.
+`director-runtime.test.ts` bevat een commentaar dat beweert dat
+`route.test.ts` dit al dekt, maar dat bestand test alleen de
+`NEEDS_SIGNOFF`-code, niet `CI_CHECKS_FAILED`/`CI_CHECKS_PENDING`. Dit wordt
+opgevolgd als losse, laag-risico missie (tests toevoegen, geen
+gedragswijziging).
+
 ## Voorgestelde volgende stappen
 
-Stap 6 t/m 14 zijn door Claude bedacht als logisch vervolg op de voltooide
+Stap 8 t/m 14 zijn door Claude bedacht als logisch vervolg op de voltooide
 stappen, gebaseerd op wat Elroy al eerder heeft aangegeven te willen
 (multi-LLM, Claude ingebed in de app zelf, een écht autonome Director) en op
-concrete technische kanttekeningen die tijdens het bouwen van stap 1 t/m 5
+concrete technische kanttekeningen die tijdens het bouwen van stap 1 t/m 6
 al zijn gesignaleerd maar nog niet zijn opgelost. Dit is een voorstel, geen
 vaststaand plan — pas aan, herschik of schrap wat niet (meer) relevant is.
 Stap 15 is door Elroy zelf toegevoegd; de invulling ervan volgt later.
-
-### Stap 7 — Echte CI-statuscontrole vóór automerge
-Nu bouwt op stap 6: de Director controleert vóór auto-merge de daadwerkelijke
-CI-status via de Checks-API, in plaats van "geen bekende reden om te
-blokkeren" aan te nemen. Voorkomt dat een missie ooit een PR met falende CI
-automatisch merget.
+(Stap 7 stond hier oorspronkelijk ook bij, maar bleek bij verificatie al
+gebouwd te zijn — zie "Voltooid" hierboven.)
 
 ### Stap 8 — Second Brain-schrijfhaak vanuit de missie-loop zelf
 Op dit moment is de chat ("Mogelijk kennisitem") de enige automatische weg
