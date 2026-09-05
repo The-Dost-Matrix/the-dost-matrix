@@ -5,6 +5,7 @@ import { getChatProvider } from "@/core/llm/model-router";
 import { createUsageTracker, type UsageTracker } from "@/core/llm/usage-tracker";
 
 import {
+  GithubApiError,
   createBranch,
   createPullRequest,
   getBranchHeadSha,
@@ -12,8 +13,12 @@ import {
   getFileContent,
   getGithubRepoTarget,
   getRepoTree,
+  listPullRequests,
   upsertFile,
+  type GithubRepoTarget,
+  type PullRequestSummary,
 } from "./github/github-client";
+import { MISSION_BRANCH_NAME } from "./mission-branch";
 import type { MissionV2 } from "./mission";
 
 /**
@@ -25,9 +30,15 @@ import type { MissionV2 } from "./mission";
  * rechtstreeks bestanden op de pc van de eigenaar aanraken: de Builder werkt
  * uitsluitend via de GitHub-repository. Hij leest de actuele bestandsboom en
  * de betrokken bestanden op via de GitHub API, laat een LLM de nieuwe inhoud
- * bepalen, en zet die klaar als een nieuwe branch met een pull request. Er
- * wordt nooit rechtstreeks naar de standaardbranch geschreven — de eigenaar
- * beoordeelt en merget de pull request zelf, er gebeurt niets automatisch.
+ * bepalen, en zet die klaar op de vaste werkbranch van de missie met een
+ * pull request. Er wordt nooit rechtstreeks naar de standaardbranch
+ * geschreven — de eigenaar beoordeelt en merget de pull request zelf, er
+ * gebeurt niets automatisch.
+ *
+ * Elke missie heeft één stabiele werkbranch (zie mission-branch.ts en
+ * ensureMissionBranch hieronder): een tweede toewijzing van dezelfde missie
+ * bouwt daarop voort en voegt haar commits toe aan de al openstaande pull
+ * request, in plaats van vanaf de standaardbranch opnieuw te beginnen.
  *
  * Bewust beperkt (v0), zelfde geest als de rest van Mission Engine V2:
  * - maximaal 8 bestanden per toewijzing;
@@ -556,6 +567,66 @@ async function writeFiles(
   };
 }
 
+/**
+ * Zorgt dat de vaste werkbranch van deze missie bestaat, en geeft terug of
+ * die zojuist is aangemaakt.
+ *
+ * GEVONDEN ROOT CAUSE (broncodereview, 4 september 2026): hiervóór maakte
+ * ELKE builder-toewijzing een nieuwe branch met een tijdstempel, vertrekkend
+ * vanaf de standaardbranch — en las ook de "huidige inhoud" van bestanden
+ * daarvandaan. Een tweede toewijzing binnen dezelfde missie zag het werk van
+ * de eerste dus niet staan, en schreef bij hetzelfde bestand de main-versie
+ * terug: stil verlies van werk zodra beide pull requests werden gemerged.
+ *
+ * Bestaat de branch al, dan wordt hij hergebruikt (nieuwe commits erbovenop).
+ * Bestaat hij niet — een nieuwe missie, of een missie waarvan de branch na
+ * het mergen is opgeruimd — dan wordt hij aangemaakt vanaf de kop van de
+ * standaardbranch, die het eerder gemergede werk dan al bevat.
+ *
+ * Alleen een 404 telt als "bestaat nog niet"; elke andere GitHub-fout wordt
+ * bewust doorgegooid in plaats van geïnterpreteerd als een ontbrekende
+ * branch — anders zou een tijdelijke storing stilzwijgend tot een verkeerde
+ * basis leiden.
+ */
+export async function ensureMissionBranch(
+  target: GithubRepoTarget,
+  missionBranch: string,
+  defaultBranch: string,
+): Promise<{ created: boolean }> {
+  try {
+    await getBranchHeadSha(target, missionBranch);
+    return { created: false };
+  } catch (error) {
+    if (!(error instanceof GithubApiError) || error.status !== 404) {
+      throw error;
+    }
+  }
+
+  const baseSha = await getBranchHeadSha(target, defaultBranch);
+  await createBranch(target, missionBranch, baseSha);
+
+  return { created: true };
+}
+
+/**
+ * Zoekt de nog openstaande pull request van deze missiebranch, zodat een
+ * tweede toewijzing haar commits aan de bestaande pull request toevoegt in
+ * plaats van een tweede pull request voor dezelfde branch te openen (wat
+ * GitHub sowieso zou weigeren).
+ *
+ * Bewust op exacte branchnaam en niet op de missie-prefix: oudere missies
+ * hebben nog tijdstempel-branches die met dezelfde prefix beginnen, en die
+ * horen niet bij de huidige werkbranch.
+ */
+export function findOpenMissionPullRequest(
+  prs: PullRequestSummary[],
+  missionBranch: string,
+): PullRequestSummary | null {
+  return (
+    prs.find((pr) => pr.headRef === missionBranch && !pr.merged && pr.state === "open") ?? null
+  );
+}
+
 export interface ExecuteBuilderAssignmentInput {
   mission: MissionV2;
   assignment: AssignmentRecord;
@@ -589,9 +660,16 @@ export async function executeBuilderAssignment({
   // van de werkelijke totaalkosten (zie usage-tracker.ts).
   const usageTracker = createUsageTracker();
 
+  // Eén vaste werkbranch per missie, en ALLE leesacties hieronder gebeuren
+  // vanaf die branch — niet vanaf de standaardbranch. Zo ziet een tweede
+  // toewijzing van dezelfde missie het werk van de eerste staan, inclusief de
+  // bestands-sha's die `upsertFile` nodig heeft om erop voort te bouwen in
+  // plaats van eroverheen te schrijven. Zie ensureMissionBranch hierboven.
   const defaultBranch = await getDefaultBranch(target);
-  const baseSha = await getBranchHeadSha(target, defaultBranch);
-  const tree = await getRepoTree(target, defaultBranch);
+  const missionBranch = MISSION_BRANCH_NAME(mission.missionId);
+  await ensureMissionBranch(target, missionBranch, defaultBranch);
+
+  const tree = await getRepoTree(target, missionBranch);
 
   const treeText = tree
     .filter((entry) => entry.type === "blob")
@@ -634,7 +712,7 @@ export async function executeBuilderAssignment({
       .sort()[0];
 
     if (exampleTestPath) {
-      const example = await getFileContent(target, exampleTestPath, defaultBranch);
+      const example = await getFileContent(target, exampleTestPath, missionBranch);
       if (example) {
         exampleTestFile = { path: exampleTestPath, content: example.content };
       }
@@ -643,7 +721,7 @@ export async function executeBuilderAssignment({
 
   const plannedFiles: PlannedFile[] = [];
   for (const path of plan.paths) {
-    const existing = await getFileContent(target, path, defaultBranch);
+    const existing = await getFileContent(target, path, missionBranch);
     plannedFiles.push({
       path,
       currentContent: existing?.content ?? null,
@@ -676,9 +754,9 @@ export async function executeBuilderAssignment({
     );
   }
 
-  const branchName = `director/mission-${mission.missionId.slice(0, 8)}-${Date.now()}`;
-  await createBranch(target, branchName, baseSha);
-
+  // De branch bestaat hier al (zie ensureMissionBranch hierboven) en de
+  // sha's komen van diezelfde branch, dus een tweede toewijzing bouwt voort
+  // op het werk van de eerste in plaats van het te overschrijven.
   const shaByPath = new Map(plannedFiles.map((file) => [file.path, file.currentSha]));
 
   for (const file of filesToWrite) {
@@ -686,7 +764,7 @@ export async function executeBuilderAssignment({
       path: file.path,
       content: file.content,
       message: `Director: ${assignment.objective}`.slice(0, 200),
-      branch: branchName,
+      branch: missionBranch,
       sha: shaByPath.get(file.path),
     });
   }
@@ -704,21 +782,32 @@ export async function executeBuilderAssignment({
     .map((file) => file.path)
     .join(", ")}`;
 
-  const pullRequest = await createPullRequest(target, {
-    title: writeResult.pullRequestTitle,
-    head: branchName,
-    base: defaultBranch,
-    body: [
-      writeResult.pullRequestBody,
-      "",
-      filesLine,
-      "",
-      `Missie: ${mission.title}`,
-      `Toewijzing: ${assignment.objective}`,
-      "",
-      "Deze pull request is automatisch aangemaakt door de Builder-rol van Mission Engine V2. Beoordeel de wijzigingen en merge alleen wanneer je tevreden bent — er gebeurt niets automatisch.",
-    ].join("\n"),
-  });
+  // Staat er al een open pull request voor deze missiebranch, dan zijn de
+  // commits hierboven daar automatisch aan toegevoegd en mag er geen tweede
+  // worden geopend (GitHub weigert dat sowieso voor dezelfde head-branch).
+  // De beschrijving van die bestaande pull request blijft dan staan zoals hij
+  // was; wat deze toewijzing precies heeft geschreven, staat in de roleOutput
+  // hieronder en is zichtbaar in de diff van de pull request zelf.
+  const openPullRequests = await listPullRequests(target, "open");
+  const existingPullRequest = findOpenMissionPullRequest(openPullRequests, missionBranch);
+
+  const pullRequest = existingPullRequest
+    ? { url: existingPullRequest.url, number: existingPullRequest.number }
+    : await createPullRequest(target, {
+        title: writeResult.pullRequestTitle,
+        head: missionBranch,
+        base: defaultBranch,
+        body: [
+          writeResult.pullRequestBody,
+          "",
+          filesLine,
+          "",
+          `Missie: ${mission.title}`,
+          `Toewijzing: ${assignment.objective}`,
+          "",
+          "Deze pull request is automatisch aangemaakt door de Builder-rol van Mission Engine V2. Beoordeel de wijzigingen en merge alleen wanneer je tevreden bent — er gebeurt niets automatisch.",
+        ].join("\n"),
+      });
 
   const durationMs = Date.now() - startedAt;
   const now = new Date().toISOString();
@@ -727,7 +816,9 @@ export async function executeBuilderAssignment({
     writeResult.summary,
     "",
     `Bestanden aangepast: ${filesToWrite.map((file) => file.path).join(", ")}`,
-    `Pull request geopend: ${pullRequest.url}`,
+    existingPullRequest
+      ? `Toegevoegd aan de bestaande pull request van deze missie: ${pullRequest.url}`
+      : `Pull request geopend: ${pullRequest.url}`,
     "Deze wijziging is nog niet gemerged — beoordeel de pull request op GitHub en merge hem zelf wanneer je tevreden bent.",
   ].join("\n");
 
