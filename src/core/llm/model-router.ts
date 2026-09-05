@@ -1,5 +1,9 @@
-import { createAnthropicProvider } from "@/core/llm/providers/anthropic-provider";
 import {
+  ANTHROPIC_DEFAULT_CHAT_MODEL,
+  createAnthropicProvider,
+} from "@/core/llm/providers/anthropic-provider";
+import {
+  OPENAI_DEFAULT_CHAT_MODEL,
   createOpenAiEmbeddingProvider,
   createOpenAiProvider,
 } from "@/core/llm/providers/openai-provider";
@@ -23,6 +27,35 @@ export function getChatProvider(): LlmProvider {
   throw new Error(
     "Geen LLM-provider geconfigureerd. Zet ANTHROPIC_API_KEY of OPENAI_API_KEY in .env.local.",
   );
+}
+
+/**
+ * Welke provider en welk model `getChatProvider()` op dit moment zou kiezen,
+ * of null wanneer er geen enkele sleutel is gezet. Volgt exact dezelfde
+ * volgorde als hierboven (Anthropic vóór OpenAI) en gebruikt dezelfde
+ * standaardmodellen, zodat het Command Center niet iets anders kan tonen dan
+ * er werkelijk draait.
+ *
+ * Let op: de providers lezen hun modelnaam bij het laden van de module, dus
+ * na een wijziging in .env.local is een herstart van de dev-server nodig
+ * voordat zowel de uitvoering als deze weergave de nieuwe waarde gebruikt.
+ */
+export function describeActiveChatModel(): { provider: string; model: string } | null {
+  if (process.env.ANTHROPIC_API_KEY) {
+    return {
+      provider: "anthropic",
+      model: process.env.ANTHROPIC_CHAT_MODEL?.trim() || ANTHROPIC_DEFAULT_CHAT_MODEL,
+    };
+  }
+
+  if (process.env.OPENAI_API_KEY) {
+    return {
+      provider: "openai",
+      model: process.env.OPENAI_CHAT_MODEL?.trim() || OPENAI_DEFAULT_CHAT_MODEL,
+    };
+  }
+
+  return null;
 }
 
 /**

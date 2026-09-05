@@ -6,9 +6,15 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/domains/auth/auth-provider";
 import { MatrixEventStream } from "@/components/workspace/matrix-event-stream";
 import {
-  ActiveAgentsPanel,
   SystemMonitorPanel,
 } from "@/components/monitor/system-monitor";
+import {
+  statusIcon,
+  statusLabel,
+  statusModifier,
+  summarizeReportLevel,
+  useSystemStatus,
+} from "@/domains/system/system-status-service";
 import { subscribeToMissions } from "@/domains/missions/mission-service";
 
 import type { Mission } from "@/shared/types/mission";
@@ -21,9 +27,11 @@ import type { Mission } from "@/shared/types/mission";
  * kennis) die uitsluitend voor die tickers bestonden.
  *
  * De rechter sidebar van het Command Center (Recent Activity, System
- * Monitor, Active Agents) is vervangen door drie uitklapbare knoppen hier in
- * de topbar. De onderliggende Firestore-gedreven componenten
- * (`MatrixEventStream`, `SystemMonitorPanel`, `ActiveAgentsPanel`) zijn
+ * Monitor) is vervangen door uitklapbare knoppen hier in de topbar. Het
+ * paneel "Active Agents" is verwijderd: het toonde vier vaste kaarten met
+ * verzonnen statussen (waaronder een Builder die als "niet verbonden" stond
+ * terwijl hij al maanden werkt). De onderliggende Firestore-gedreven componenten
+ * (`MatrixEventStream`, `SystemMonitorPanel`) zijn
  * hergebruikt en worden nu getoond in een uitklapbaar paneel in plaats van
  * een vaste sidebar. `command-center-layout.tsx` heeft daardoor geen
  * `monitor`-prop meer nodig, en `dashboard/layout.tsx` geeft die ook niet
@@ -34,34 +42,21 @@ import type { Mission } from "@/shared/types/mission";
  * hieronder te voeden, zonder ticker of scroll-animatie — dus geen
  * tegenspraak met de reden waarom de tickers destijds verwijderd zijn.
  */
-type TopbarDropdownId = "activity" | "system" | "agents";
+type TopbarDropdownId = "activity" | "system";
 
 /**
- * Aantal agents in The Dost Matrix. Bewust nog statisch — er bestaat geen
- * live agents-collectie om uit te lezen; dit is hetzelfde aantal als de vier
- * kaarten in `ActiveAgentsPanel` hierboven (Director, Knowledge Agent,
- * Document Agent, Builder Agent). Verhoog dit getal handmatig zodra daar een
- * vijfde kaart bijkomt, of vervang dit door een echte subscription zodra die
- * bestaat.
+ * De tellers "AGENTS" en "APPROVALS" stonden hier eerder als vaste getallen
+ * (4 en 0) omdat er geen live bron voor bestond. Ze zijn verwijderd in plaats
+ * van blijven staan: een scherm hoort niets te tellen wat het niet echt kan
+ * tellen. Het aantal missies hieronder komt wél uit een echte subscription.
  */
-const AGENTS_COUNT = 4;
-
-/**
- * Aantal openstaande goedkeuringen. Bewust nog hardcoded op 0: er bestaat
- * geen opgeslagen/query-bare lijst van pending approvals — een
- * "needs-signoff" pull request (zie risk-classification.ts) wordt live
- * afgeleid van GitHub, niet ergens los bijgehouden.
- */
-const APPROVALS_COUNT = 0;
-
 const DROPDOWN_TOOLS: Array<{
   id: TopbarDropdownId;
   label: string;
   icon: string;
 }> = [
   { id: "activity", label: "Recent Activity", icon: "◷" },
-  { id: "system", label: "System Monitor", icon: "▤" },
-  { id: "agents", label: "Active Agents", icon: "◈" },
+  { id: "system", label: "Systeemstatus", icon: "▤" },
 ];
 
 export function Topbar() {
@@ -72,6 +67,8 @@ export function Topbar() {
     null,
   );
   const [missions, setMissions] = useState<Mission[]>([]);
+  const systemStatus = useSystemStatus();
+  const summaryLevel = summarizeReportLevel(systemStatus);
 
   const toolsRef = useRef<HTMLDivElement | null>(null);
 
@@ -143,27 +140,25 @@ export function Topbar() {
           */}
           <div className="matrix-topbar-stats">
             <div className="matrix-topbar-stat">
-              <strong>{AGENTS_COUNT}</strong>
-              <span>AGENTS</span>
-            </div>
-
-            <div className="matrix-topbar-stat">
               <strong>{missions.length}</strong>
               <span>MISSIES</span>
             </div>
-
-            <div className="matrix-topbar-stat">
-              <strong>{APPROVALS_COUNT}</strong>
-              <span>APPROVALS</span>
-            </div>
           </div>
 
-          <div className="matrix-system-status">
-            <span className="matrix-status-dot" />
+          {/*
+            Stond hier eerder als vaste tekst "SYSTEM STATUS / OPERATIONAL",
+            ongeacht of er ook maar iets werkte. Komt nu uit
+            /api/system/status — zie system-status.ts voor wat er precies
+            gecontroleerd wordt en hoe.
+          */}
+          <div className={`matrix-system-status ${statusModifier(summaryLevel)}`}>
+            <span aria-hidden="true" className="matrix-status-glyph">
+              {statusIcon(summaryLevel)}
+            </span>
 
             <div>
-              <small>SYSTEM STATUS</small>
-              <strong>OPERATIONAL</strong>
+              <small>SYSTEEMSTATUS</small>
+              <strong>{systemStatus.loading ? "CONTROLEREN" : statusLabel(summaryLevel)}</strong>
             </div>
           </div>
 
@@ -203,7 +198,6 @@ export function Topbar() {
                         <MatrixEventStream variant="dropdown" />
                       )}
                       {tool.id === "system" && <SystemMonitorPanel />}
-                      {tool.id === "agents" && <ActiveAgentsPanel />}
                     </div>
                   </div>
                 ) : null}

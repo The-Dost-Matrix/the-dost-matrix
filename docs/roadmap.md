@@ -120,6 +120,53 @@ Het testbestand is daarom rechtstreeks herschreven i.p.v. teruggestuurd
 naar een nieuwe Builder-toewijzing. Afgerond en gemerged via PR #29
 (`director/mission-f6b76b2f-1788539538423`).
 
+### Stap 9 — Eén stabiele missiebranch
+Bevestigde bug: `executeBuilderAssignment()` vertrok bij ELKE toewijzing
+opnieuw vanaf de standaardbranch, maakte een nieuwe branch met tijdstempel,
+en las ook de "huidige inhoud" van bestanden van de standaardbranch. Werk van
+een eerdere toewijzing binnen dezelfde missie was daardoor onzichtbaar, en kon
+bij het mergen van een latere pull request stilzwijgend worden overschreven.
+
+Opgelost: elke missie heeft nu één vaste werkbranch, `director/mission-<id>-work`
+(zonder tijdstempel). Bestaat die al, dan wordt hij hergebruikt; bestaat hij
+niet, dan wordt hij aangemaakt vanaf de kop van de standaardbranch. Alle
+leesacties — bestandsboom, huidige bestandsinhoud, het voorbeeldtestbestand —
+komen van die branch, waardoor ook de bestands-sha's die `upsertFile` gebruikt
+van de missiebranch komen in plaats van van `main`. Staat er al een open pull
+request voor die branch, dan komen nieuwe commits daar automatisch bij en wordt
+er geen tweede geopend.
+
+De naamgeving staat nu in een eigen, dependency-vrije module
+(`mission-branch.ts`), zodat de Builder en de QA-rol dezelfde afspraak
+gebruiken. De naam begint bewust nog steeds met `QA_BRANCH_PREFIX`, zodat
+`findMissionPullRequest` ongewijzigd blijft werken — ook voor de oudere
+tijdstempel-branches van missies die vóór deze wijziging zijn gestart. Die
+oude branches worden bewust niet geadopteerd.
+
+Scope-keuze: `currentCommitSha` in de missiestatus stond hier oorspronkelijk
+ook bij, maar vraagt wijzigingen in het missiemodel, de Firestore-opslag en de
+engine, terwijl niets het nu leest. Dat is verplaatst naar stap 11, waar de
+verificatie-state-machine het daadwerkelijk nodig heeft.
+
+Afgerond via branch `stap-9-stabiele-missiebranch`, met tien nieuwe tests in
+`builder-runtime.mission-branch.test.ts` (branch hergebruiken, aanmaken bij een
+404, doorgooien bij elke andere fout, en het herkennen van de open pull request
+inclusief het negeren van oude tijdstempel-branches).
+
+Regressie E is daarna live gedraaid als echte missie ("Regressietest E — twee
+toewijzingen op één missiebranch"): twee opeenvolgende builder-toewijzingen,
+één branch (`director/mission-11f7af06-work`), één pull request (#33) met twee
+commits, en een bestand waarin het werk van de eerste toewijzing ongewijzigd
+bleef staan toen de tweede eraan toevoegde. Vóór deze fix was dat onmogelijk
+geweest.
+
+Bijvangst voor stap 12: QA merkte in zijn beoordeling op dat "beide delen in
+één keer zijn toegevoegd" en dat het tweestaps-scenario dus niet zuiver getest
+zou zijn. Dat is feitelijk onjuist en illustreert precies de blinde vlek die
+stap 12 aanpakt — QA ziet alleen de cumulatieve diff tegenover `main`, niet de
+commitgeschiedenis, en kan het verschil tussen één en twee toewijzingen dus
+niet zien.
+
 ## Voorgestelde volgende stappen
 
 Stap 9 t/m 14 zijn door Claude bedacht als logisch vervolg op de voltooide
@@ -175,19 +222,6 @@ snelst uit de handmatige correctielus haalt, gaat vóór architectonische
 volledigheid. Reden: er is geen team dat dit bouwt, en de rol die het zou
 moeten bouwen (de Builder) is precies de kapotte rol — elke stap wordt met
 de hand geschreven en door Elroy gecommit.
-
-### Stap 9 — Eén stabiele missiebranch
-Bevestigde bug: `executeBuilderAssignment()` vertrekt bij ELKE toewijzing
-opnieuw vanaf de standaardbranch, maakt een nieuwe branch met tijdstempel,
-en leest ook de "huidige inhoud" van bestanden van de standaardbranch. Werk
-van een eerdere toewijzing binnen dezelfde missie is daardoor onzichtbaar,
-en kan bij het mergen van een latere pull request stilzwijgend worden
-overschreven. Ook QA raakt dit: `findMissionPullRequest` pakt altijd alleen
-de nieuwste pull request van een missie.
-
-Wat er komt: één stabiele missiebranch per missie, alle lees- en
-schrijfacties vanaf die branch, en `currentCommitSha` in de missiestatus.
-Dit is bovendien een harde voorwaarde voor stap 11.
 
 ### Stap 10 — Bewijslaag voor de Builder (Context Resolver V1)
 Splits binnen een toewijzing expliciet twee soorten bestanden: schrijfbare
@@ -344,7 +378,8 @@ gaat.
 - **D** — Opzettelijk een compileerfout in poging 1. De CI-fout moet
   automatisch worden hersteld binnen het pogingplafond. (stap 11)
 - **E** — Een missie met twee opeenvolgende Builder-toewijzingen. De tweede
-  moet het werk van de eerste zien. (stap 9)
+  moet het werk van de eerste zien. (stap 9) — GESLAAGD, live gedraaid op
+  5 september 2026, zie stap 9 hierboven.
 - **F** — QA een test-only diff voorleggen met een bewust verkeerde
   mock-signatuur. QA moet die afkeuren op inhoud, niet pas via de CI.
   (stap 12)
