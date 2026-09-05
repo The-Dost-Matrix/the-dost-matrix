@@ -3,14 +3,25 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
+import { MissionCreatePanel } from "@/components/workspace/mission-engine/mission-create-panel";
+import { MissionExecutionPanel } from "@/components/workspace/mission-engine/mission-execution-panel";
+import { RecentMissionsPanel } from "@/components/workspace/mission-engine/recent-missions-panel";
+import { MissionProgressPanel } from "@/components/workspace/mission-progress-panel";
 import { useAuth } from "@/domains/auth/auth-provider";
-import { MissionEngineV2Panel } from "@/components/workspace/mission-engine-v2-panel";
+import { MissionEngineProvider } from "@/domains/missions/mission-engine-store";
+
+import "@/components/workspace/mission-engine/mission-panels.css";
 
 /**
- * Standalone pagina voor Mission Engine V2. Sinds Mission Engine V2 ook een
- * vaste plek heeft op het hoofdscherm (Command Center), is dit nu alleen nog
- * een dunne auth-wrapper rond dezelfde MissionEngineV2Panel-component — geen
- * losse logica meer om uit elkaar te laten lopen.
+ * Detailweergave van de Mission Engine. Het Command Center toont de Mission
+ * Engine samen met de chat in drie smalle kolommen; deze pagina toont
+ * dezelfde panelen breder, met de missielijst erbij om een oudere missie
+ * terug te halen.
+ *
+ * Dit is precies waar de opzet zonder props voor bedoeld is: exact dezelfde
+ * componenten als op het Command Center, alleen anders ingedeeld. Er is geen
+ * tweede versie van het formulier of van de uitvoeringslogica die uit elkaar
+ * kan gaan lopen.
  */
 export default function MissionsV2Page() {
   const router = useRouter();
@@ -27,8 +38,17 @@ export default function MissionsV2Page() {
   }
 
   return (
-    <main className="dashboard-shell">
-      <MissionEngineV2Panel />
-    </main>
+    <MissionEngineProvider>
+      <section className="dm-detail-grid">
+        <MissionCreatePanel />
+
+        <div className="dm-command-column">
+          <MissionExecutionPanel />
+          <MissionProgressPanel />
+        </div>
+      </section>
+
+      <RecentMissionsPanel />
+    </MissionEngineProvider>
   );
 }

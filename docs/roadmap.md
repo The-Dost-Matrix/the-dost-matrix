@@ -167,6 +167,59 @@ stap 12 aanpakt — QA ziet alleen de cumulatieve diff tegenover `main`, niet de
 commitgeschiedenis, en kan het verschil tussen één en twee toewijzingen dus
 niet zien.
 
+### Tussentijds — Eerlijke UI-basis en modulair Command Center
+Niet als roadmapstap gepland, maar tussen stap 9 en stap 10 uitgevoerd op
+verzoek van de eigenaar, op basis van zijn eigen UI-ontwerp en het
+functioneel ontwerp van ChatGPT.
+
+**Deel 1 — geen verzonnen status meer.** De topbar toonde "SYSTEM STATUS /
+OPERATIONAL" en vaste tellers voor agents en approvals die nergens vandaan
+kwamen. Vervangen door `system-status.ts` met per component een expliciet
+`checkedVia`-veld: alleen de GitHub-verbinding wordt daadwerkelijk live
+gecontroleerd, LLM en Firestore worden afgeleid uit configuratie. Dat
+onderscheid staat nu in de UI zelf, zodat een groen bolletje nooit meer
+belooft dan er gecontroleerd is. De statusroute (`/api/system/status`) is
+auth-gated en geeft geen sleutels of secrets terug.
+
+**Deel 2 — missievoortgang.** `mission-progress.ts` leidt uit een missie
+precies vijf fases af (planning, builder, qa, criteria, merge), elk met een
+feitelijke toelichting uit de missiedata zelf. De fases "Verificatie" en
+"Review" uit het functioneel ontwerp ontbreken hier bewust: die bestaan pas
+na stap 11 en stap 12, en een lege fase tonen zou dezelfde soort belofte
+zijn als de verzonnen status hierboven. Onder de fases staan de
+succescriteria mét `lastEvaluationNote` — de QA-toelichting die tot dan toe
+alleen de Director zag, terwijl daar staat waaróm iets is afgekeurd.
+
+**Deel 3 — modulaire indeling op één scherm.** Het Command Center bestond
+uit één component van bijna 30 KB (`mission-engine-v2-panel.tsx`) waarin het
+aanmaakformulier, de uitvoering, de voortgang en de missielijst samen zaten,
+met de indeling erin verweven. Een paneel verplaatsen was daardoor niet
+mogelijk zonder de component te herschrijven, en de pagina had twee varianten
+(`compact`/`full`) die uit elkaar konden lopen — dat gebeurde ook: het
+voortgangspaneel stond een tijd lang alleen in de ene variant.
+
+Nu houdt `MissionEngineProvider` (`mission-engine-store.tsx`) alle
+missietoestand vast en zijn de panelen weergaven **zonder props**:
+`MissionCreatePanel`, `MissionExecutionPanel`, `MissionProgressPanel`,
+`RecentMissionsPanel`. Een pagina is niet meer dan een indeling, en een
+paneel naar een andere kolom of een andere pagina verplaatsen kost één regel
+JSX. De detailpagina `/dashboard/missions-v2` gebruikt exact dezelfde
+componenten in een bredere indeling — er is geen tweede versie van het
+formulier of de uitvoeringslogica meer die kan afwijken.
+
+Het Command Center toont drie kolommen met een vaste breedte, van links naar
+rechts: chat met de Director, de Mission Engine, en de statuskolom met
+"Director & uitvoering" boven en "Missievoortgang" eronder. Die vaste
+breedtes staan als CSS-variabelen op één plek (`mission-panels.css`);
+tekstvelden schalen alleen naar beneden, nooit in de breedte. Elke kolom
+scrollt van binnen, zodat de drie kolommen samen in beeld blijven.
+
+Bewust weggelaten: het Second Brain-paneel met de 3D-illustratie (verwijderd
+op verzoek; de component blijft ongebruikt bestaan tot stap 18) en het
+Dost Council-paneel uit het functioneel ontwerp (de Council bestaat nog niet
+— stap 13; zodra die er is wordt het ontwerp van deze pagina opnieuw
+bekeken).
+
 ## Voorgestelde volgende stappen
 
 Stap 9 t/m 14 zijn door Claude bedacht als logisch vervolg op de voltooide

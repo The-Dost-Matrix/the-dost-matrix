@@ -1,14 +1,37 @@
 "use client";
 
-import { SecondBrainPanel } from "@/components/workspace/second-brain-panel";
-import { DirectorChat } from "@/components/workspace/director-chat";
-import { MissionEngineV2Panel } from "@/components/workspace/mission-engine-v2-panel";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { DirectorChat } from "@/components/workspace/director-chat";
+import { MissionCreatePanel } from "@/components/workspace/mission-engine/mission-create-panel";
+import { MissionExecutionPanel } from "@/components/workspace/mission-engine/mission-execution-panel";
+import { MissionProgressPanel } from "@/components/workspace/mission-progress-panel";
 import { useAuth } from "@/domains/auth/auth-provider";
+import { MissionEngineProvider } from "@/domains/missions/mission-engine-store";
 import { subscribeToMissions } from "@/domains/missions/mission-service";
 
+import "@/components/workspace/mission-engine/mission-panels.css";
+
+/**
+ * Command Center — drie kolommen naast elkaar, van links naar rechts:
+ * chat met de Director, de Mission Engine, en de statuskolom met daarin
+ * "Director & uitvoering" boven en "Missievoortgang" eronder.
+ *
+ * De pagina is nu niet meer dan een indeling: elk paneel haalt zijn eigen
+ * gegevens uit MissionEngineProvider. Een paneel naar een andere kolom
+ * verplaatsen is daardoor één regel JSX verzetten — zie mission-panels.css
+ * voor de kolombreedtes.
+ *
+ * Het Second Brain-paneel met de 3D-bol stond hier eerder rechts; op verzoek
+ * van de eigenaar verwijderd. De component second-brain-panel.tsx blijft
+ * bestaan maar wordt nergens meer gebruikt: Second Brain krijgt een eigen
+ * plek zodra de doorzoekbare weergave uit stap 18 er is.
+ *
+ * Het Dost Council-paneel uit het functioneel ontwerp staat hier bewust nog
+ * niet: de Council bestaat nog niet (stap 13). Zodra die er is, wordt het
+ * hele ontwerp van deze pagina opnieuw bekeken.
+ */
 export default function DashboardPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
@@ -24,11 +47,10 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!user) return;
 
-    // De missies zelf worden hier niet meer bijgehouden (geen weergave meer
-    // van dat aantal op deze pagina — zie Topbar, die zijn eigen live
-    // subscription al had voor de mission-ticker en nu ook de "Missies"-
-    // teller voedt). Deze subscription blijft alleen bestaan om dezelfde
-    // Firestore-indexfout hieronder te blijven signaleren.
+    // De missies zelf worden hier niet bijgehouden (de panelen hebben hun
+    // eigen bron via MissionEngineProvider). Deze subscription blijft alleen
+    // bestaan om een ontbrekende Firestore-index te blijven signaleren —
+    // zonder dit is die fout nergens in de UI zichtbaar.
     return subscribeToMissions(
       user.uid,
       () => {},
@@ -43,47 +65,23 @@ export default function DashboardPage() {
   }, [user]);
 
   if (loading || !user) {
-    return (
-      <main className="center-screen">
-        Matrix Core wordt geladen...
-      </main>
-    );
+    return <main className="center-screen">Matrix Core wordt geladen...</main>;
   }
 
   return (
-    <>
-      {/*
-        De voormalige "MATRIX CORE"-hero (eyebrow, titel, muted intro-tekst
-        en de Agents/Missies/Approvals-tellers) stond hier. Op eigen verzoek
-        verwijderd: de drie tellers zijn verhuisd naar de topbar (zie
-        Topbar in components/layout/topbar.tsx, .matrix-topbar-stats), waar
-        ze op elke /dashboard-pagina zichtbaar zijn in plaats van alleen
-        hier. De rest van de hero (welkomsttekst) had geen functionele rol
-        en is niet elders teruggeplaatst.
-      */}
+    <MissionEngineProvider>
+      <section className="dm-command-grid">
+        <DirectorChat />
 
-      {/*
-        Twee kolommen naast elkaar: chat links, Second Brain rechts (zie
-        .command-center-main-grid--chat-focus in globals.css voor de
-        daadwerkelijke grid-CSS). Eerder stonden SecondBrainPanel en
-        DirectorChat hier gewoon onder elkaar in DOM-volgorde, met
-        klassenamen ("command-center-main-grid--chat-focus",
-        "command-center-left-column") die een kolomindeling al suggereerden
-        maar waarvoor nooit CSS was geschreven.
-      */}
-      <section className="command-center-main-grid command-center-main-grid--chat-focus command-center-main-grid--without-missions">
-        <div className="command-center-left-column">
-          <DirectorChat />
-        </div>
+        <MissionCreatePanel />
 
-        <div className="command-center-right-column">
-          <SecondBrainPanel />
+        <div className="dm-command-column">
+          <MissionExecutionPanel />
+          <MissionProgressPanel />
         </div>
       </section>
 
-      <MissionEngineV2Panel variant="compact" />
-
       {error && <p className="error">{error}</p>}
-    </>
+    </MissionEngineProvider>
   );
 }
