@@ -14,6 +14,59 @@
 }
 
 /* --------------------------------------------------------------------------
+   Berichten passen altijd binnen de kolom.
+
+   Twee oorzaken van de horizontale schuifbalk die hier allebei worden
+   weggenomen:
+
+   1. `.chat-log` is in globals.css een grid zonder opgegeven kolom. Een
+      grid-kolom is standaard `auto` breed, en `auto` betekent "minstens zo
+      breed als de breedste inhoud" — één lang bericht rekte daardoor het
+      hele gesprek op. `minmax(0, 1fr)` zegt: nooit breder dan de ruimte die
+      er is. Dezelfde valkuil als eerder bij de kolommen van de Mission
+      Engine.
+
+   2. Tekst breekt normaal alleen af op een spatie. Een Firestore-id, een
+      pad of een URL heeft geen spaties en bleef dus als één onbreekbaar
+      woord doorlopen. `overflow-wrap: anywhere` staat toe dat zoiets
+      middenin afbreekt.
+
+   De `overflow-x: hidden` erbij is de laatste zekerheid: mocht er ooit iets
+   binnenkomen dat op geen van beide manieren te breken is (een heel brede
+   afbeelding bijvoorbeeld), dan wordt het afgekapt in plaats van dat de
+   schuifbalk terugkomt.
+   -------------------------------------------------------------------------- */
+
+.chat-panel .chat-log {
+  grid-template-columns: minmax(0, 1fr);
+  overflow-x: hidden;
+}
+
+.chat-panel .chat-bubble {
+  min-width: 0;
+}
+
+.chat-panel .chat-bubble :where(p, small, pre, code, a, strong, li) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
+}
+
+/*
+  In een smalle kolom is 80% breedte (de standaard uit globals.css) krap voor
+  een lang antwoord. Het antwoord van de Director mag de volle regelbreedte
+  gebruiken — de avatar ernaast zorgt al voor het onderscheid — terwijl een
+  eigen bericht smaller blijft, zodat je in één oogopslag ziet wie wat zei.
+*/
+.chat-panel .dm-chat-row--assistant .chat-bubble {
+  max-width: 100%;
+}
+
+.chat-panel .dm-chat-row--user .chat-bubble {
+  max-width: 85%;
+}
+
+/* --------------------------------------------------------------------------
    Berichten: assistent-berichten krijgen een avatar links ernaast, eigen
    berichten staan rechts zonder avatar — zoals in elke chat-app.
    -------------------------------------------------------------------------- */

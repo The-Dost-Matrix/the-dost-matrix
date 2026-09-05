@@ -747,12 +747,14 @@ const [bulkProgress, setBulkProgress] = useState({
         </div>
 
         <div className="top-actions">
-          <button
-            className="secondary"
-            onClick={() => router.push("/dashboard/chat")}
-          >
-            Chat
-          </button>
+          {/*
+            Hier stond ook een knop "Chat" naar /dashboard/chat. Die pagina
+            was een oude kopie van het hele Command Center, inclusief een
+            tweede, gekopieerd chatpaneel en het inmiddels vervangen
+            missiemodel. De chat woont nu op het Command Center zelf, dus die
+            pagina is verwijderd en deze knop zou naar dezelfde plek wijzen
+            als "Dashboard" hiernaast.
+          */}
           <button
             className="secondary"
             onClick={() => router.push("/dashboard")}
