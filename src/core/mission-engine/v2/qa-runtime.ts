@@ -18,6 +18,7 @@ import {
   type PullRequestFileChange,
   type PullRequestSummary,
 } from "./github/github-client";
+import { QA_BRANCH_PREFIX } from "./mission-branch";
 import type { MissionV2 } from "./mission";
 
 /**
@@ -96,12 +97,14 @@ import type { MissionV2 } from "./mission";
  */
 
 /**
- * Geëxporteerd (niet langer module-lokaal) omdat director-runtime.ts dit nu
- * ook nodig heeft: vóórdat een missie op COMPLETED mag, moet zij kunnen
- * controleren of de bijbehorende pull request al gemerged is — zie de
- * toelichting bij `findUnmergedCompletionBlocker` in director-runtime.ts.
+ * De branchnaam-afspraak zelf staat sinds de invoering van één stabiele
+ * missiebranch in `mission-branch.ts`, zodat de Builder (die de branch
+ * aanmaakt) en deze rol (die de pull request terugvindt) dezelfde bron
+ * gebruiken zonder dat builder-runtime.ts deze hele module hoeft te
+ * importeren. Hier alleen nog doorgegeven, omdat director-runtime.ts dit ook
+ * nodig heeft — zie de toelichting bij `findUnmergedCompletionBlocker` daar.
  */
-export const QA_BRANCH_PREFIX = (missionId: string) => `director/mission-${missionId.slice(0, 8)}-`;
+export { QA_BRANCH_PREFIX };
 const MAX_FILES_CONSIDERED = 40;
 /**
  * Zelfde grens en dezelfde reden als MAX_FILE_CONTENT_LENGTH in
