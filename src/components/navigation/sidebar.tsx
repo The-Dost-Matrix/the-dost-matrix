@@ -3,66 +3,37 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const mainNavigation = [
-  {
-    label: "Command Center",
-    href: "/dashboard",
-    icon: "◉",
-  },
+import {
+  statusIcon,
+  statusLabel,
+  statusModifier,
+  summarizeReportLevel,
+  useSystemStatus,
+} from "@/domains/system/system-status-service";
 
-  {
-    label: "Knowledge",
-    href: "/dashboard/knowledge",
-    icon: "◇",
-  },
-  {
-    label: "Documents",
-    href: "/dashboard/documents",
-    icon: "▧",
-    disabled: true,
-  },
-  {
-    label: "Missions",
-    href: "/dashboard/missions",
-    icon: "◎",
-    disabled: true,
-  },
-  {
-    label: "Mission Engine V2",
-    href: "/dashboard/missions-v2",
-    icon: "⚙",
-  },
-  {
-    label: "Director",
-    href: "/dashboard/director",
-    icon: "⌘",
-    disabled: true,
-  },
-  {
-    label: "Agents",
-    href: "/dashboard/agents",
-    icon: "⬡",
-    disabled: true,
-  },
+/**
+ * Navigatie en statusblok van het Command Center.
+ *
+ * Twee bewuste wijzigingen ten opzichte van de eerste versie:
+ *
+ * 1. Het statusblok onderaan toonde vaste teksten ("All systems operational",
+ *    "KNOWLEDGE CORE ONLINE", "AI CONNECTION READY") die niets controleerden.
+ *    Het komt nu uit /api/system/status, met per onderdeel het echte niveau.
+ * 2. De navigatie bevatte items die nergens heen gingen en ook niet op de
+ *    roadmap staan (Code Studio, Database, API Hub, System Logs). Die zijn
+ *    verwijderd. Wat als "BINNENKORT" blijft staan, hoort bij een concrete
+ *    roadmapstap; het stapnummer staat erbij zodat zichtbaar is dat het geen
+ *    loze belofte is.
+ */
+const mainNavigation = [
+  { label: "Command Center", href: "/dashboard", icon: "◉" },
+  { label: "Mission Engine", href: "/dashboard/missions-v2", icon: "⚙" },
+  { label: "Knowledge", href: "/dashboard/knowledge", icon: "◇" },
 ];
 
-const developmentNavigation = [
-  {
-    label: "Code Studio",
-    icon: "⌨",
-  },
-  {
-    label: "Database",
-    icon: "▤",
-  },
-  {
-    label: "API Hub",
-    icon: "⌁",
-  },
-  {
-    label: "System Logs",
-    icon: "≡",
-  },
+const plannedNavigation = [
+  { label: "Dost Council", icon: "⬡", step: "stap 13" },
+  { label: "Second Brain", icon: "◈", step: "stap 18" },
 ];
 
 function isActivePath(pathname: string, href: string): boolean {
@@ -75,6 +46,8 @@ function isActivePath(pathname: string, href: string): boolean {
 
 export function Sidebar() {
   const pathname = usePathname();
+  const systemStatus = useSystemStatus();
+  const summaryLevel = summarizeReportLevel(systemStatus);
 
   return (
     <aside className="matrix-sidebar">
@@ -88,48 +61,27 @@ export function Sidebar() {
       </div>
 
       <nav className="matrix-navigation">
-        <p className="matrix-navigation-title">MAIN INTERFACE</p>
+        <p className="matrix-navigation-title">WERKRUIMTE</p>
 
         <div className="matrix-navigation-list">
-          {mainNavigation.map((item) => {
-            if (item.disabled) {
-              return (
-                <button
-                  key={item.label}
-                  className="matrix-navigation-item matrix-navigation-item--disabled"
-                  disabled
-                  type="button"
-                >
-                  <span className="matrix-navigation-icon">{item.icon}</span>
-                  <span>{item.label}</span>
-                  <small>SOON</small>
-                </button>
-              );
-            }
-
-            return (
-              <Link
-                key={item.label}
-                className={`matrix-navigation-item ${
-                  isActivePath(pathname, item.href)
-                    ? "matrix-navigation-item--active"
-                    : ""
-                }`}
-                href={item.href}
-              >
-                <span className="matrix-navigation-icon">{item.icon}</span>
-                <span>{item.label}</span>
-              </Link>
-            );
-          })}
+          {mainNavigation.map((item) => (
+            <Link
+              key={item.label}
+              className={`matrix-navigation-item ${
+                isActivePath(pathname, item.href) ? "matrix-navigation-item--active" : ""
+              }`}
+              href={item.href}
+            >
+              <span className="matrix-navigation-icon">{item.icon}</span>
+              <span>{item.label}</span>
+            </Link>
+          ))}
         </div>
 
-        <p className="matrix-navigation-title matrix-navigation-title--spaced">
-          DEVELOPMENT
-        </p>
+        <p className="matrix-navigation-title matrix-navigation-title--spaced">GEPLAND</p>
 
         <div className="matrix-navigation-list">
-          {developmentNavigation.map((item) => (
+          {plannedNavigation.map((item) => (
             <button
               key={item.label}
               className="matrix-navigation-item matrix-navigation-item--disabled"
@@ -138,7 +90,7 @@ export function Sidebar() {
             >
               <span className="matrix-navigation-icon">{item.icon}</span>
               <span>{item.label}</span>
-              <small>SOON</small>
+              <small>{item.step}</small>
             </button>
           ))}
         </div>
@@ -146,28 +98,33 @@ export function Sidebar() {
 
       <div className="matrix-sidebar-status">
         <div className="matrix-sidebar-status-header">
-          <span className="matrix-status-dot" />
+          <span
+            aria-hidden="true"
+            className={`matrix-status-glyph ${statusModifier(summaryLevel)}`}
+          >
+            {statusIcon(summaryLevel)}
+          </span>
 
           <div>
-            <strong>MATRIX STATUS</strong>
-            <span>All systems operational</span>
+            <strong>SYSTEEMSTATUS</strong>
+            <span>
+              {systemStatus.loading ? "wordt gecontroleerd…" : statusLabel(summaryLevel)}
+            </span>
           </div>
         </div>
 
-        <div className="matrix-sidebar-metric">
-          <span>KNOWLEDGE CORE</span>
-          <strong>ONLINE</strong>
-        </div>
+        {systemStatus.report?.components.map((component) => (
+          <div className="matrix-sidebar-metric" key={component.id}>
+            <span>{component.label}</span>
+            <strong className={statusModifier(component.level)}>
+              {statusLabel(component.level)}
+            </strong>
+          </div>
+        ))}
 
-        <div className="matrix-sidebar-metric">
-          <span>DOCUMENT PIPELINE</span>
-          <strong>ACTIVE</strong>
-        </div>
-
-        <div className="matrix-sidebar-metric">
-          <span>AI CONNECTION</span>
-          <strong>READY</strong>
-        </div>
+        {systemStatus.error && (
+          <p className="matrix-status-error">{systemStatus.error}</p>
+        )}
       </div>
     </aside>
   );

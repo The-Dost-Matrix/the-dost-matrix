@@ -5,7 +5,10 @@ import type {
   LlmProvider,
 } from "@/core/llm/types";
 
-const OPENAI_CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || "gpt-4o";
+/** Zie de toelichting bij ANTHROPIC_DEFAULT_CHAT_MODEL. */
+export const OPENAI_DEFAULT_CHAT_MODEL = "gpt-4o";
+
+const OPENAI_CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || OPENAI_DEFAULT_CHAT_MODEL;
 const OPENAI_EMBEDDING_MODEL =
   process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small";
 const REQUEST_TIMEOUT_MS = 60_000;

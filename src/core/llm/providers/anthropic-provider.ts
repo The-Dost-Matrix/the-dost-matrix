@@ -1,6 +1,13 @@
 import type { ChatCompletionResult, LlmMessage, LlmProvider } from "@/core/llm/types";
 
-const ANTHROPIC_MODEL = process.env.ANTHROPIC_CHAT_MODEL || "claude-sonnet-5";
+/**
+ * Geëxporteerd zodat de systeemstatus in het Command Center hetzelfde
+ * standaardmodel kan tonen als hier daadwerkelijk wordt gebruikt, zonder die
+ * waarde te dupliceren (en dus te laten verouderen).
+ */
+export const ANTHROPIC_DEFAULT_CHAT_MODEL = "claude-sonnet-5";
+
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_CHAT_MODEL || ANTHROPIC_DEFAULT_CHAT_MODEL;
 // Ruim genoeg om een volledig, groot bestand te laten genereren (zie
 // MAX_OUTPUT_TOKENS hieronder) — 60s en later 180s bleken in de praktijk nog
 // te krap zodra een bestaand bestand (zoals globals.css, ~38KB) helemaal

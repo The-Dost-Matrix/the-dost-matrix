@@ -93,13 +93,13 @@ function createBrainData(): BrainData {
     );
 
   const cyan =
-    new THREE.Color("#53dcff");
+    new THREE.Color("#62edbd");
 
   const purple =
-    new THREE.Color("#925cff");
+    new THREE.Color("#4fe0b4");
 
   const pink =
-    new THREE.Color("#d55cff");
+    new THREE.Color("#9dffd8");
 
   const points:
     THREE.Vector3[] = [];
@@ -391,7 +391,7 @@ export function HolographicBrainSceneV2() {
   
               <lineBasicMaterial
   
-                color="#8268ff"
+                color="#3fd9a8"
   
                 transparent
   
@@ -418,7 +418,7 @@ export function HolographicBrainSceneV2() {
   />
 
 <meshBasicMaterial
-  color="#4b25d8"
+  color="#0f6f57"
   transparent
   opacity={0.012}
   blending={THREE.AdditiveBlending}
@@ -437,7 +437,7 @@ export function HolographicBrainSceneV2() {
   />
 
 <meshBasicMaterial
-  color="#1f9dff"
+  color="#35c9b0"
   transparent
   opacity={0.01}
   blending={THREE.AdditiveBlending}
@@ -482,7 +482,7 @@ args={[
 />
 
 <meshBasicMaterial
-color="#925cff"
+color="#4fe0b4"
 transparent
 opacity={0.72}
 blending={
@@ -510,7 +510,7 @@ args={[
 />
 
 <meshBasicMaterial
-color="#53dcff"
+color="#62edbd"
 transparent
 opacity={0.45}
 blending={
@@ -536,7 +536,7 @@ size={1.2}
 
 speed={0.24}
 
-color="#8f5cff"
+color="#62edbd"
 
 />
 

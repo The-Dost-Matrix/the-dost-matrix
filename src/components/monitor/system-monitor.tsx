@@ -1,85 +1,65 @@
 "use client";
 
+import {
+  statusIcon,
+  statusLabel,
+  statusModifier,
+  useSystemStatus,
+} from "@/domains/system/system-status-service";
+
+/**
+ * Toonde tot nu toe vier hardgecodeerde regels ("Firebase ONLINE", "OpenAI
+ * READY", ...) die niets controleerden. Nu komt alles uit /api/system/status,
+ * inclusief de vermelding hoe elke status is vastgesteld: uit configuratie of
+ * met een echte aanroep. Ontbrekende configuratie wordt als zodanig getoond in
+ * plaats van als "actief".
+ */
 export function SystemMonitorPanel() {
+  const { report, loading, error } = useSystemStatus();
+
   return (
     <section className="matrix-hud-panel matrix-dropdown-panel">
       <div className="matrix-hud-panel-header">
-        <h3>System Monitor</h3>
-        <span>STABLE</span>
+        <h3>Systeemstatus</h3>
+        <span>{loading ? "CONTROLEREN" : error ? "ONBEKEND" : "GECONTROLEERD"}</span>
       </div>
 
-      <div className="matrix-monitor-list">
-        <div>
-          <span>Firebase</span>
-          <strong>ONLINE</strong>
-        </div>
+      {error && <p className="matrix-status-error">{error}</p>}
 
-        <div>
-          <span>OpenAI</span>
-          <strong>READY</strong>
-        </div>
+      {loading && !report && <p className="matrix-status-empty">Status wordt opgehaald…</p>}
 
-        <div>
-          <span>Knowledge</span>
-          <strong>CONNECTED</strong>
-        </div>
+      {report && (
+        <>
+          <div className="matrix-status-list">
+            {report.components.map((component) => (
+              <article key={component.id} className="matrix-status-row">
+                <div className="matrix-status-row-head">
+                  <span className={`matrix-status-badge ${statusModifier(component.level)}`}>
+                    <span aria-hidden="true">{statusIcon(component.level)}</span>
+                    {statusLabel(component.level)}
+                  </span>
 
-        <div>
-          <span>Documents</span>
-          <strong>ACTIVE</strong>
-        </div>
-      </div>
-    </section>
-  );
-}
+                  <strong>{component.label}</strong>
+                </div>
 
-export function ActiveAgentsPanel() {
-  return (
-    <section className="matrix-hud-panel matrix-dropdown-panel">
-      <div className="matrix-hud-panel-header">
-        <h3>Active Agents</h3>
-        <span>FOUNDATION</span>
-      </div>
+                <p className="matrix-status-detail">{component.detail}</p>
 
-      <div className="matrix-agent-list">
-        <article>
-          <span className="matrix-agent-symbol">◈</span>
-          <div>
-            <strong>Director</strong>
-            <small>Central interface</small>
+                <small className="matrix-status-source">
+                  vastgesteld via {component.checkedVia}
+                </small>
+              </article>
+            ))}
           </div>
-          <span className="matrix-agent-state">ACTIVE</span>
-        </article>
 
-        <article>
-          <span className="matrix-agent-symbol">◇</span>
-          <div>
-            <strong>Knowledge Agent</strong>
-            <small>Review pipeline</small>
-          </div>
-          <span className="matrix-agent-state">ACTIVE</span>
-        </article>
-
-        <article>
-          <span className="matrix-agent-symbol">▧</span>
-          <div>
-            <strong>Document Agent</strong>
-            <small>Import foundation</small>
-          </div>
-          <span className="matrix-agent-state">ACTIVE</span>
-        </article>
-
-        <article>
-          <span className="matrix-agent-symbol">⌘</span>
-          <div>
-            <strong>Builder Agent</strong>
-            <small>Not connected yet</small>
-          </div>
-          <span className="matrix-agent-state matrix-agent-state--idle">
-            IDLE
-          </span>
-        </article>
-      </div>
+          <p className="matrix-status-timestamp">
+            Gecontroleerd om{" "}
+            {new Date(report.checkedAt).toLocaleTimeString("nl-NL", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </p>
+        </>
+      )}
     </section>
   );
 }
