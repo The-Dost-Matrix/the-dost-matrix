@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -51,13 +52,27 @@ export function Sidebar() {
 
   return (
     <aside className="matrix-sidebar">
-      <div className="matrix-brand">
-        <div className="matrix-brand-mark">◇</div>
+      {/*
+        Het echte logo, aangeleverd door de eigenaar. Hier stond eerder een
+        ruitje ◇ met daarnaast de teksten "THE DOST MATRIX" en "AI OPERATING
+        SYSTEM"; die staan allebei al in de afbeelding zelf, dus ze zijn
+        weggehaald in plaats van dubbel getoond.
 
-        <div>
-          <strong>THE DOST MATRIX</strong>
-          <span>AI OPERATING SYSTEM</span>
-        </div>
+        Breedte en hoogte zijn de werkelijke afmetingen van het bestand
+        (432×290). Next.js gebruikt die verhouding om ruimte te reserveren
+        vóórdat de afbeelding geladen is, zodat de navigatie eronder niet
+        verspringt; de zichtbare grootte wordt in globals.css bepaald
+        (.matrix-brand-logo).
+      */}
+      <div className="matrix-brand">
+        <Image
+          alt="The Dost Matrix"
+          className="matrix-brand-logo"
+          height={290}
+          priority
+          src="/logo-dost-matrix.png"
+          width={432}
+        />
       </div>
 
       <nav className="matrix-navigation">
