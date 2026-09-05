@@ -294,48 +294,33 @@ input:focus, textarea:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px r
     overflow-y: auto;
   }
   
+  /*
+    Merkblok linksboven in de zijbalk. Bevatte eerder een ruitje ◇ naast de
+    teksten "THE DOST MATRIX" en "AI OPERATING SYSTEM" (klassen
+    .matrix-brand-mark, .matrix-brand strong en .matrix-brand span). Die zijn
+    verwijderd toen het echte logo hier kwam: naam en ondertitel staan al in
+    de afbeelding, dus ze stonden er dubbel.
+  */
   .matrix-brand {
     display: flex;
     align-items: center;
-    gap: 12px;
-    min-height: 54px;
-    padding: 4px 6px 18px;
+    padding: 2px 2px 16px;
     border-bottom: 1px solid rgba(98, 237, 189, 0.12);
   }
-  
-  .matrix-brand-mark {
-    display: grid;
-    flex: 0 0 auto;
-    place-items: center;
-    width: 42px;
-    height: 42px;
-    border: 1px solid rgba(57, 137, 109, 0.66);
-    border-radius: 13px;
-    color: #62edbd;
-    font-size: 1.7rem;
-    background:
-      radial-gradient(circle, rgba(45, 110, 88, 0.3), transparent 67%),
-      rgba(13, 10, 36, 0.86);
-    box-shadow:
-      0 0 24px rgba(45, 108, 86, 0.32),
-      inset 0 0 18px rgba(45, 109, 87, 0.15);
-  }
-  
-  .matrix-brand strong {
+
+  /*
+    De afbeelding is 432×290; hier schaalt hij mee met de breedte van de
+    zijbalk (250px min de padding) en houdt hij zijn verhouding, zodat er
+    niets uitgerekt of afgesneden wordt. De donkere achtergrond van het
+    bestand loopt door in de zijbalk, daarom staat er geen rand omheen.
+  */
+  .matrix-brand-logo {
     display: block;
-    color: #eafff4;
-    font-size: 0.84rem;
-    letter-spacing: 0.12em;
+    width: 100%;
+    height: auto;
+    border-radius: 12px;
   }
-  
-  .matrix-brand span {
-    display: block;
-    margin-top: 4px;
-    color: #7f91a7;
-    font-size: 0.56rem;
-    letter-spacing: 0.18em;
-  }
-  
+
   .matrix-navigation {
     flex: 1;
     padding-top: 18px;
