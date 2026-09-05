@@ -220,6 +220,43 @@ Dost Council-paneel uit het functioneel ontwerp (de Council bestaat nog niet
 — stap 13; zodra die er is wordt het ontwerp van deze pagina opnieuw
 bekeken).
 
+**Deel 4 — chatbediening en het einde van de dubbele chat.** De chat kreeg de
+bediening van een gewone chat-app: een invoerveld dat als één regel begint en
+meegroeit tot ongeveer zes regels, een ronde verstuurknop, drie bewegende
+puntjes zolang de Director nadenkt, een avatar naast zijn antwoorden en vier
+startsuggesties die alleen zichtbaar zijn zolang het gesprek leeg is (ze
+vullen het invoerveld, ze versturen niets). Enter-om-te-versturen en het
+direct verschijnen van het eigen bericht werkten al: chat-service.ts schrijft
+het bericht van de eigenaar naar Firestore vóór de LLM-aanroep.
+
+Bijlagen zijn bewust NIET gebouwd. `LlmProvider.chatCompletion` accepteert
+`LlmMessage[]` met een `content` van het type string, en er is nergens opslag
+voor bestanden ingericht — een paperclip zou dus een bestandsnaam tonen die
+de Director nooit ziet. Dat komt terug wanneer de modelverbinding beeld
+aankan; tot die tijd staat er niets.
+
+Daarnaast is een bug opgelost die al bestond vóór deze UI-ronde: lange
+berichten liepen buiten de kolom en dwongen een horizontale schuifbalk af.
+Twee oorzaken. `.chat-log` is een grid zonder opgegeven kolom, en een
+grid-kolom is standaard `auto` — dus minstens zo breed als de breedste
+inhoud; nu `minmax(0, 1fr)`. En tekst breekt alleen op een spatie, waardoor
+een Firestore-id of een pad als één onbreekbaar woord doorliep; nu
+`overflow-wrap: anywhere` binnen de chatbubbels. Dezelfde valkuil als eerder
+bij `.mev2-top-grid`.
+
+Ten slotte is `/dashboard/chat` verwijderd. Dat was geen los chatpaneel maar
+een complete oude kopie van het Command Center — eigen missielijst op het
+inmiddels vervangen missiemodel, eigen Second Brain-paneel, eigen tellers en
+een gekopieerde chat. De pagina stond niet in de navigatie en was alleen
+bereikbaar via een knop "Chat" op de Knowledge-pagina; die knop is weg, want
+"Dashboard" ernaast wijst nu naar dezelfde plek. Er is nog één chat in de
+app.
+
+Restpunt: in `globals.css` staan nu enkele stijlblokken die alleen die
+verwijderde pagina gebruikte (`command-center-intro`, `-stats`, `-brain`,
+`-dashboard`, `-mission-list`). Bewust niet in dezelfde commit opgeruimd,
+zodat zichtbaar blijft wat wat is.
+
 ## Voorgestelde volgende stappen
 
 Stap 9 t/m 14 zijn door Claude bedacht als logisch vervolg op de voltooide
