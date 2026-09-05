@@ -148,49 +148,203 @@ vangnetten (CI + verificatie vóór merge) hebben elke keer gewerkt: er is
 nooit iets kapots op `main` beland. Dit is een pragmatische keuze specifiek
 voor testbestanden, geen permanente wijziging aan de Mission Engine.
 
-### Stap 9 — Multi-LLM-selector
-Verbind de Anthropic Claude API naast de bestaande OpenAI/ChatGPT-koppeling,
-en bouw een eenvoudige, uitlegbare selector die per taaktype het meest
-geschikte model kiest (bijv. op basis van rol — Director/Builder/QA — en
-taakcomplexiteit), met ruimte om later gratis LLM's via API toe te voegen.
+### Herziening van de volgende stappen (4 september 2026)
+De oorspronkelijke stap 9 (een multi-LLM-selector die per taak het beste
+model kiest) is vervallen. Aanleiding: een experiment met `claude-opus-5`
+in plaats van `claude-sonnet-5` op exact dezelfde testopdracht faalde op
+dezelfde manier (PR #31). Modelkeuze is dus niet de beperkende factor, en
+een selector zou het bewezen probleem niet hebben opgelost. Wat er wél voor
+in de plaats komt, staat hieronder.
 
-### Stap 10 — In-app CI/PR-zichtbaarheid
-Toon PR-status (open/gemerged, CI groen/rood, welke checks) direct in de
-missie-kaart in The Dost Matrix, zodat Elroy nooit naar GitHub.com hoeft om
-te zien waar een missie op vastloopt.
+De onderstaande volgorde is vastgesteld na een volledige architectuurreview
+van de Builder-keten (`docs/mission-engine-v2-review.docx`), een
+onafhankelijke tweede beoordeling door ChatGPT
+(`ChatsAnswerToClaude_V1.docx`), een broncodeverificatie daarvan
+(`ClaudesAnswerToChat_V1.docx`) en een gezamenlijke ontwerpspecificatie voor
+de raadslaag (`TheDostCouncil_V2.docx`). Alle vier staan in `docs/`.
 
-### Stap 11 — Doorzoekbare Second Brain-UI
-Second Brain is nu een lijst met goedgekeurde items. Voeg een eenvoudig
-zoek-/filterscherm toe (op onderwerp, missie, datum) binnen Command Center,
-zodat kennis ook terugvindbaar is zonder dat Elroy weet welke missie 'm
-oorspronkelijk voorstelde.
+De bewezen oorzaak achter vijf mislukte testopdrachten: de Builder krijgt de
+broncode die hij moet gebruiken structureel niet te zien. `writeSingleFile()`
+stelt de context statisch samen vóórdat er iets geschreven is, en bij een
+opdracht "schrijf tests voor bestaand bestand X" valt X buiten de toewijzing
+— precies omdat de opdracht verbiedt X te wijzigen. Het onderscheid dat
+ontbreekt is dat tussen *schrijfbare* bestanden en *leesbaar bewijs*.
 
-### Stap 12 — Missie-sjablonen
-Voor terugkerende soorten missies (bijv. "voeg unit tests toe aan X",
-"onderzoek library Y") een herbruikbaar sjabloon met vooraf ingevulde
-objective/succescriteria, zodat Elroy niet telkens from scratch een missie
-hoeft te formuleren.
+Leidend principe voor de volgorde hieronder: de kleinste stap die Elroy het
+snelst uit de handmatige correctielus haalt, gaat vóór architectonische
+volledigheid. Reden: er is geen team dat dit bouwt, en de rol die het zou
+moeten bouwen (de Builder) is precies de kapotte rol — elke stap wordt met
+de hand geschreven en door Elroy gecommit.
 
-### Stap 13 — Claude zichtbaar ingebed in de app
-Eerste concrete stap richting "Claude embedded in The Dost Matrix": een
-paneel in Command Center dat live meekijkt met een externe Claude Code/
-Cowork-sessie (logs/activiteit), zodat Elroy niet meer hoeft te schakelen
-tussen scherm en sessie om te volgen wat er gebeurt. Nog geen twee-richtingen
-besturing — puur zichtbaarheid als eerste stap.
+### Stap 9 — Eén stabiele missiebranch
+Bevestigde bug: `executeBuilderAssignment()` vertrekt bij ELKE toewijzing
+opnieuw vanaf de standaardbranch, maakt een nieuwe branch met tijdstempel,
+en leest ook de "huidige inhoud" van bestanden van de standaardbranch. Werk
+van een eerdere toewijzing binnen dezelfde missie is daardoor onzichtbaar,
+en kan bij het mergen van een latere pull request stilzwijgend worden
+overschreven. Ook QA raakt dit: `findMissionPullRequest` pakt altijd alleen
+de nieuwste pull request van een missie.
 
-### Stap 14 — Autonome missie-triggers
-De Director mag zelf, op basis van een eenvoudige, vooraf goedgekeurde regel
-(bijv. "elke maandag: controleer op verouderde dependencies"), een missie
-voorstellen of starten zonder dat Elroy eerst zelf op "nieuwe missie" klikt —
-met dezelfde risico-classificatie en approve-and-merge-veiligheidsnetten als
-elke andere missie. Dit is de eerste concrete stap richting het
-oorspronkelijke Jarvis-achtige eindbeeld ("praat of typ, het systeem gaat
-zelf aan het werk").
+Wat er komt: één stabiele missiebranch per missie, alle lees- en
+schrijfacties vanaf die branch, en `currentCommitSha` in de missiestatus.
+Dit is bovendien een harde voorwaarde voor stap 11.
 
-### Stap 15 — Visualisatie van wat er achter de schermen gebeurt
-Een visuele weergave van de live activiteit binnen The Dost Matrix (missies,
-rollen, Second Brain-updates, etc.) zodat Elroy in één oogopslag ziet wat het
-systeem op dit moment doet, in plaats van losse statuswaarden per scherm bij
-elkaar te moeten zoeken. De precieze vorm (bijv. een live diagram, een
-tijdlijn, een "systeemkaart") wordt later samen ontworpen zodra deze stap aan
-de beurt is — dit is bewust nog niet ingevuld.
+### Stap 10 — Bewijslaag voor de Builder (Context Resolver V1)
+Splits binnen een toewijzing expliciet twee soorten bestanden: schrijfbare
+bestanden (mag gewijzigd worden) en leesbaar bewijs (moet zichtbaar zijn,
+mag niet gewijzigd worden). Voor een testbestand wordt automatisch de module
+onder test plus zijn directe relatieve imports als bewijs meegestuurd, plus
+een relevant bestaand testbestand uit dezelfde map (nu is dat de alfabetisch
+eerste uit de hele repo — willekeurig). In de prompt komt een expliciet
+contextmanifest: dit is wat je daadwerkelijk hebt gezien.
+
+Bewust dom en deterministisch in V1: geen AST-analyse, geen path-aliassen,
+geen barrel-exports. Kan het benodigde bewijs niet betrouwbaar worden
+gevonden, dan faalt de toewijzing expliciet met een gestructureerde fout
+`INSUFFICIENT_CONTEXT` — in dezelfde stijl als de bestaande foutcodes uit
+stap 5, en in dezelfde geest als het bestaande harde falen bij te grote
+bestanden. Liever expliciet stoppen dan stilzwijgend gokken.
+
+### Stap 11 — Verificatie als missiestatus, met technische herstellus
+GitHub Actions is de uitvoeromgeving die we al hebben; we gebruiken hem
+alleen te laat. Nieuwe volgorde: de Builder commit naar de missiebranch, de
+missie krijgt status `AWAITING_VERIFICATION`, en het HTTP-request eindigt
+daar (geen minutenlange wachtlus in een Next.js API-route). Een volgende
+Director-stap leest de CI-status op exact die commit-SHA: groen → pull
+request openen; rood → `TECHNICAL_REPAIR` met de echte foutuitvoer erbij,
+met een hard plafond van drie pogingen; plafond bereikt → gestructureerd
+falen in plaats van een slechte pull request.
+
+Herstelpogingen zijn nieuwe commits op dezelfde missiebranch, en `upsertFile`
+moet daarbij de bestands-SHA van de missiebranch gebruiken — niet die van
+`main`, want dan draait een herstelpoging zijn eigen vorige poging terug.
+Vereist eenmalig een handmatige wijziging in `.github/workflows/ci.yml` (een
+push-trigger op de missiebranch-prefix), door Elroy zelf geplakt: de
+remote-tool blokkeert bewust schrijven onder `.github/workflows/`, en die
+grens blijft.
+
+Dit is de stap die Elroy uit de correctielus haalt.
+
+### Stap 12 — QA-bewijsbundel en semantische herstellus
+QA heeft dezelfde blinde vlek als de Builder: hij haalt alleen de gewijzigde
+bestanden van een pull request op, dus bij een testbestand ziet hij de module
+niet waar die tests tegenaan praten. QA krijgt daarom een bewijsbundel:
+gewijzigde bestanden plus diff, de opgeloste afhankelijkheden daarvan, de
+verificatieresultaten, en de succescriteria.
+
+Daarnaast een tweede, aparte herstelroute: `SEMANTIC_REPAIR` voor het geval
+de CI groen is maar QA een criterium afkeurt. Dat is een andere soort fout
+dan een compileerfout en vraagt een andere reparatie, met een eigen
+pogingteller. Uitgeput → `MISSION_NEEDS_REVIEW`.
+
+### Stap 13 — The Dost Council V1 (dun)
+Een raadslaag naast de Mission Engine: meerdere modellen die onafhankelijk
+analyseren, elkaars voorstel bekritiseren, en expliciet oneens mogen zijn.
+Het waardevolste product is niet de consensus maar de bewijsgebonden
+onenigheid.
+
+V1 draait op de twee API-sleutels die al werken (Anthropic en OpenAI) en op
+de bestaande `chatCompletion`-interface — function calling is hiervoor niet
+nodig. Protocol: ronde 1 blind en parallel (voorkomt anchoring), ronde 2
+geanonimiseerde wederzijdse kritiek, ronde 3 synthese die waar mogelijk
+deterministisch door code gebeurt. Geen meerderheidsstem als waarheid; bij
+QA-inzet geldt alleen unanimiteit als goedkeuring en gaat elke onenigheid
+met beide argumenten naar Elroy.
+
+Eerste plek: een expliciete raadsmodus in de Director-chat ("Ask the
+Council"), omdat een fout besluit daar de merge-route niet raakt. De Builder
+blijft één model — daar is het probleem context, niet gebrek aan meningen.
+
+Bewust NIET in V1, om te voorkomen dat we opnieuw een groot bouwwerk
+neerzetten voordat het idee zich bewezen heeft: het volledige Claim Ledger
+met gevalideerde bewijsverwijzingen, persistente datamodellen, automatische
+triggers en extra providers.
+
+Stopcriterium, vooraf vastgelegd: als de raad na tien sessies geen enkele
+keer een besluit heeft veranderd of een fout heeft gevangen die één model
+miste, gaat de raad er weer uit. Verwachte kosten: grofweg een halve dollar
+per sessie bij een bewijspakket van zo'n 10.000 tokens, meer zodra er
+volledige bronbestanden in zitten. Kosten blokkeren nooit — maar ze worden
+wel gemeten.
+
+### Stap 14 — Council V1.5: Claim Ledger, validatie en uitbreiding
+Pas nadat stap 13 zich bewezen heeft: het Claim Ledger waarin elke
+technische claim bewijsverwijzingen, steun/tegenspraak en een status
+(SUPPORTED / DISPUTED / UNKNOWN / REFUTED) krijgt, met runtime-validatie dat
+een bewijsverwijzing daadwerkelijk bestaat — een verzonnen verwijzing wordt
+geweigerd in plaats van geloofd. Bewijsverwijzingen zijn gepind aan de
+commit-SHA van het bewijspakket; na een herstelpoging vervalt eerder bewijs.
+
+Daarna pas: extra providers via een Model Registry (de OpenAI-compatibele
+aanbieders vragen alleen configuratie, Google vraagt een eigen adapter),
+en automatische triggers bij herhaald falen, hoog risico of tegenstrijdige
+QA.
+
+### Stap 15 — Director Evidence Upgrade
+De Director ziet nu alleen rol, status en opdrachttekst van eerdere
+toewijzingen — niet de roleOutput, niet de inhoud van de pull request, niet
+de CI-uitkomst. Zolang de Builder faalde was dat niet de knellendste
+beperking; zodra stap 9 t/m 12 staan, wordt dit de volgende bovengrens aan
+wat de missielus zelfstandig kan. Compacte, gepinde resultaten van vorige
+stappen beschikbaar maken voor de volgende beslissing.
+
+### Stap 16 — Geavanceerde context en tools voor de Builder
+Pas na bewezen behoefte: alias-, barrel- en typeresolutie in de Context
+Resolver, begrensde lees-/zoektools voor de Builder (vereist uitbreiding van
+de `LlmProvider`-interface met function calling, per aanbieder verschillend),
+patch-gebaseerd schrijven in plaats van hele bestanden herschrijven, en een
+deterministische signatuurcontrole als extra verdediging.
+
+### Stap 17 — In-app CI/PR-zichtbaarheid
+(voorheen stap 10) Toon PR-status (open/gemerged, CI groen/rood, welke
+checks) direct in de missie-kaart, zodat Elroy nooit naar GitHub.com hoeft om
+te zien waar een missie op vastloopt. Sluit aan op de verificatiestatus uit
+stap 11.
+
+### Stap 18 — Doorzoekbare Second Brain-UI
+(voorheen stap 11) Een eenvoudig zoek-/filterscherm (op onderwerp, missie,
+datum) binnen Command Center, zodat kennis terugvindbaar is zonder dat Elroy
+weet welke missie 'm oorspronkelijk voorstelde.
+
+### Stap 19 — Missie-sjablonen
+(voorheen stap 12) Voor terugkerende soorten missies een herbruikbaar
+sjabloon met vooraf ingevulde objective/succescriteria.
+
+### Stap 20 — Claude zichtbaar ingebed in de app
+(voorheen stap 13) Een paneel in Command Center dat live meekijkt met een
+externe Claude Code/Cowork-sessie (logs/activiteit). Nog geen
+twee-richtingen besturing — puur zichtbaarheid als eerste stap.
+
+### Stap 21 — Autonome missie-triggers
+(voorheen stap 14) De Director mag zelf, op basis van een vooraf goedgekeurde
+regel, een missie voorstellen of starten — met dezelfde risicoclassificatie
+en approve-and-merge-veiligheidsnetten als elke andere missie. Eerste
+concrete stap richting het Jarvis-achtige eindbeeld.
+
+### Stap 22 — Visualisatie van wat er achter de schermen gebeurt
+(voorheen stap 15, door Elroy zelf toegevoegd) Een visuele weergave van de
+live activiteit binnen The Dost Matrix (missies, rollen, Second
+Brain-updates, verificatiestatus, raadssessies) zodat Elroy in één oogopslag
+ziet wat het systeem doet. De precieze vorm wordt later samen ontworpen —
+dit is bewust nog niet ingevuld.
+
+## Acceptatiecriteria voor stap 9 t/m 12
+
+Overgenomen uit de tweede beoordeling: het probleem geldt pas als opgelost
+wanneer deze regressiemissies slagen, niet wanneer één missie toevallig goed
+gaat.
+
+- **A** — Tests toevoegen aan een bestaande functie met twee argumenten,
+  terwijl wijzigen van productiecode verboden is. De Builder moet de echte
+  signatuur lezen en groene tests opleveren zonder tussenkomst. (stap 10)
+- **B** — Een functie testen waarvan het gedrag afhangt van geïmporteerde
+  helpers met gemockte returnvormen. Geen verzonnen vormen. (stap 10)
+- **C** — Een module die via een barrel-export of path-alias wordt
+  geïmporteerd. (pas verwacht bij stap 16)
+- **D** — Opzettelijk een compileerfout in poging 1. De CI-fout moet
+  automatisch worden hersteld binnen het pogingplafond. (stap 11)
+- **E** — Een missie met twee opeenvolgende Builder-toewijzingen. De tweede
+  moet het werk van de eerste zien. (stap 9)
+- **F** — QA een test-only diff voorleggen met een bewust verkeerde
+  mock-signatuur. QA moet die afkeuren op inhoud, niet pas via de CI.
+  (stap 12)
