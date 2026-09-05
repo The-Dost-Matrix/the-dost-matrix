@@ -1,0 +1,420 @@
+/* ==========================================================================
+   Panelen en indeling van het Command Center.
+
+   Uitgangspunten (afgesproken met de eigenaar):
+   - Drie kolommen met een VASTE breedte; alleen de hoogte mag meebewegen.
+   - Tekstvelden groeien naar beneden, nooit in de breedte.
+   - Elk paneel is zelfstandig: geen props, alles uit MissionEngineProvider,
+     zodat een paneel naar een andere kolom of pagina verplaatsen niet meer
+     is dan de regel JSX verzetten.
+
+   Dit bestand verving mission-engine-v2-panel.css. De opmaakregels van de
+   panelen zelf (formulier, missiekaart, voortgang, criteria) staan hieronder
+   ongewijzigd overgenomen; wat verdween waren uitsluitend de oude
+   indelingsregels (.mev2-top-grid, .mev2-col*, .mev2-command-grid), omdat de
+   indeling nu van de pagina komt en niet meer van het paneel.
+   ========================================================================== */
+
+:root {
+  /* Vaste kolombreedtes. Eén plek om de indeling bij te stellen. */
+  --dm-col-chat: 520px;
+  --dm-col-engine: 440px;
+  --dm-col-status: 480px;
+  /* Ruimte die topbar, marges en footer innemen; bepaalt de kolomhoogte. */
+  --dm-chrome-height: 210px;
+}
+
+/* ==========================================================================
+   Indeling: drie vaste kolommen naast elkaar.
+   ========================================================================== */
+
+.dm-command-grid {
+  display: grid;
+  grid-template-columns: var(--dm-col-chat) var(--dm-col-engine) var(--dm-col-status);
+  gap: 20px;
+  align-items: start;
+  /* Zonder dit kan een lange regel (bijvoorbeeld een pad of een URL) een
+     kolom alsnog oprekken, ondanks de vaste breedte hierboven. */
+  min-width: 0;
+}
+
+.dm-command-grid > * {
+  min-width: 0;
+}
+
+/* De statuskolom bevat twee panelen onder elkaar: uitvoering en voortgang. */
+.dm-command-column {
+  display: grid;
+  gap: 20px;
+  align-content: start;
+  min-width: 0;
+}
+
+/*
+  Elke kolom krijgt dezelfde maximale hoogte en scrollt van binnen, zodat de
+  drie kolommen samen in beeld blijven zonder dat de pagina zelf scrolt.
+*/
+.dm-command-grid > * {
+  max-height: calc(100vh - var(--dm-chrome-height));
+}
+
+/* Alleen binnen het Command Center: op de detailpagina mogen de panelen wél
+   hun natuurlijke hoogte houden. */
+.dm-command-grid .dm-command-column > * {
+  max-height: calc((100vh - var(--dm-chrome-height) - 20px) / 2);
+}
+
+/* ==========================================================================
+   Een paneel: kop vast, inhoud scrollt, knoppen onderaan vast.
+   ========================================================================== */
+
+.dm-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.dm-panel-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.dm-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/*
+  Knoppenrij onderaan een paneel. Flex + gap zodat "Missie annuleren"
+  (secondary, alleen bij een annuleerbare status) netjes naast de primaire
+  knop staat in plaats van er zonder tussenruimte tegenaan.
+*/
+.dm-panel-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.dm-panel-actions > button {
+  flex: 1 1 auto;
+}
+
+/* Het criteriaveld vult de resterende hoogte van het formulier. */
+.dm-grow {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.dm-textarea-grow {
+  flex: 1 1 auto;
+  min-height: 120px;
+  /* Alleen verticaal: de kolombreedte ligt vast, dus horizontaal slepen zou
+     de hele indeling uit elkaar trekken. */
+  resize: vertical;
+  width: 100%;
+}
+
+/* Lange paden, URL's en modelnamen mogen nooit een kolom oprekken. */
+.dm-panel :where(p, li, small, strong, pre, code, a) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
+}
+
+/*
+  Het chatpaneel is niet van de Mission Engine en heeft daarom zijn eigen
+  klassen (.chat-panel/.chat-log in globals.css) met een vaste min-hoogte en
+  een max-height van 60vh op het gesprek. Binnen deze indeling bepaalt de
+  kolom de hoogte, niet het paneel: hier wordt dat teruggedraaid zodat het
+  gesprek precies de resterende ruimte vult en van binnen scrollt.
+*/
+.dm-command-grid .chat-panel {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dm-command-grid .chat-log {
+  max-height: none;
+  min-height: 0;
+}
+
+/* ==========================================================================
+   Aanmaakformulier (overgenomen uit mission-engine-v2-panel.css).
+   ========================================================================== */
+
+.mission-engine-v2-form-group {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 16px;
+}
+
+.mission-engine-v2-form-field {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.mission-engine-v2-form-textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 160px;
+  resize: vertical;
+}
+
+.mission-engine-v2-form-submit {
+  display: block;
+  margin-top: 16px;
+  width: 100%;
+}
+
+.mission-engine-v2-form-submit-block {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+  box-sizing: border-box;
+}
+
+/* Label boven de risiconiveau-select — dezelfde gedempte stijl als de
+   recente-missies-titel, niet zo prominent als een koptekst. */
+.mev2-risk-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--muted-foreground, #94a3b8);
+  margin-bottom: 4px;
+}
+
+/* Binnen een kolom met vaste hoogte mag het criteriaveld niet zijn eigen
+   min-height van 160px afdwingen; .dm-textarea-grow bepaalt hem daar. */
+.dm-grow .mission-engine-v2-form-textarea {
+  min-height: 120px;
+}
+
+/* De laatste veldgroep boven de knop hoeft geen dubbele marge. */
+.mission-create-form .mission-engine-v2-form-group:last-of-type {
+  margin-bottom: 0;
+}
+
+/* ==========================================================================
+   Missiekaart: meta-informatie rechts.
+   ========================================================================== */
+
+/*
+ * Wrapper voor de <small>-regels (versie/toewijzingen + kosten) rechts in
+ * een .mission-card — houdt ze als één flex-kind samen zodat de bestaande
+ * .mission-card { justify-content: space-between }-tweedeling (titel/doel
+ * links, meta-info rechts) intact blijft.
+ */
+.mev2-card-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  text-align: right;
+}
+
+/* Kostenregel: puur informatief (blokkeert nooit iets), daarom bewust
+   dezelfde gedempte stijl als de versie-regel erboven, niet nadrukkelijker. */
+.mev2-cost {
+  font-size: 0.72rem;
+}
+
+/* Risiconiveau-regel: in tegenstelling tot de kostenregel hierboven
+   verandert dit WEL daadwerkelijk het gedrag van de Director (zie
+   classifyPullRequestRiskForMission), dus bewust iets nadrukkelijker. */
+.mev2-risk {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--warning, #c2820a);
+}
+
+/* ==========================================================================
+   Recente missies.
+   ========================================================================== */
+
+.mev2-recent-missions {
+  margin-top: 22px;
+  opacity: 0.95;
+}
+
+.mev2-recent-missions h2,
+.mev2-recent-missions h3 {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--muted-foreground, #94a3b8);
+}
+
+.mev2-recent-missions__title {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--muted-foreground, #94a3b8);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 0.5rem;
+}
+
+.mev2-recent-missions__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.mev2-recent-missions__item {
+  font-size: 0.8rem;
+  color: var(--muted-foreground, #94a3b8);
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.375rem;
+  background: transparent;
+  text-align: left;
+}
+
+/* ==========================================================================
+   Missievoortgang (fases + succescriteria). Zie mission-progress-panel.tsx.
+   ========================================================================== */
+
+.mev2-progress-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.mev2-phase-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mev2-phase {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .015);
+}
+
+.mev2-phase strong {
+  display: block;
+  font-size: 12.5px;
+}
+
+.mev2-phase small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.mev2-phase-icon {
+  font-size: 13px;
+  text-align: center;
+}
+
+.mev2-phase-state {
+  font-size: 9.5px;
+  letter-spacing: .1em;
+  color: var(--muted);
+}
+
+.mev2-phase--klaar .mev2-phase-icon,
+.mev2-phase--klaar .mev2-phase-state { color: var(--green); }
+.mev2-phase--bezig .mev2-phase-icon,
+.mev2-phase--bezig .mev2-phase-state { color: var(--cyan); }
+.mev2-phase--aandacht { border-color: rgba(255, 180, 84, .45); }
+.mev2-phase--aandacht .mev2-phase-icon,
+.mev2-phase--aandacht .mev2-phase-state { color: var(--amber); }
+
+.mev2-criteria {
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.mev2-criteria-title {
+  margin: 0 0 8px;
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.mev2-criteria ul {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mev2-criterion {
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.mev2-criterion-status {
+  font-size: 9.5px;
+  letter-spacing: .1em;
+  color: var(--muted);
+}
+
+.mev2-criterion--passed .mev2-criterion-status { color: var(--green); }
+.mev2-criterion--failed .mev2-criterion-status { color: var(--red); }
+
+.mev2-criterion-note {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+/*
+  Onder deze breedte passen drie vaste kolommen niet meer naast elkaar; dan
+  wordt het één kolom onder elkaar in plaats van kolommen die versmallen.
+*/
+@media (max-width: 1560px) {
+  .dm-command-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dm-command-grid > *,
+  .dm-command-grid .dm-command-column > * {
+    max-height: none;
+  }
+
+  .dm-command-grid .chat-log {
+    max-height: 60vh;
+  }
+}
+
+/* Detailweergave (/dashboard/missions-v2): twee kolommen boven, recente
+   missies over de volle breedte eronder. Zelfde panelen, andere indeling —
+   precies waar de opzet zonder props voor bedoeld is. */
+.dm-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.dm-detail-grid > * {
+  min-width: 0;
+}
+
+@media (max-width: 1100px) {
+  .dm-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
