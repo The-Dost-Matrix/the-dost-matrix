@@ -229,6 +229,35 @@ async function githubRequest<T>(path: string, init: RequestInit = {}): Promise<T
   return (await response.json()) as T;
 }
 
+/**
+ * Zelfde als githubRequest, maar voor endpoints die platte tekst teruggeven
+ * in plaats van JSON — in de praktijk alleen het logboek van een
+ * Actions-taak. Dat endpoint antwoordt met een omleiding naar een tijdelijke
+ * URL; `fetch` volgt die standaard, dus daar hoeft hier niets extra's voor
+ * te gebeuren.
+ */
+async function githubRequestText(path: string): Promise<string> {
+  const token = await getToken();
+
+  const response = await fetch(`${GITHUB_API_ROOT}${path}`, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    throw new GithubApiError(
+      response.status,
+      `GitHub-aanvraag mislukt (${response.status} ${path}): ${bodyText || response.statusText}`,
+    );
+  }
+
+  return response.text();
+}
+
 export async function getDefaultBranch(target: GithubRepoTarget): Promise<string> {
   const data = await githubRequest<{ default_branch: string }>(
     `/repos/${target.owner}/${target.repo}`,
@@ -617,4 +646,174 @@ export async function getPullRequestFiles(
     status: file.status,
     patch: file.patch,
   }));
+}
+/**
+ * Eén gefaalde check-run, met alles wat nodig is om de échte foutmelding op
+ * te sporen. Toegevoegd voor roadmapstap 11: tot dan wist de app alleen de
+ * NAAM van een gefaalde controle (zie `CombinedCheckStatus.failingCheckNames`),
+ * en daar valt niets mee te repareren.
+ */
+export interface FailingCheckRun {
+  name: string;
+  checkRunId: number;
+  /** URL naar de taak op github.com; hieruit volgt het taaknummer. */
+  detailsUrl: string | null;
+  outputTitle: string | null;
+  outputSummary: string | null;
+}
+
+/**
+ * Haalt de gefaalde check-runs voor een commit op, mét hun identificatie en
+ * eigen uitvoer. Bewust naast `getCombinedCheckStatus` in plaats van erin:
+ * die functie beantwoordt de vraag "mag ik mergen?" en wordt op elke
+ * Director-stap aangeroepen; deze beantwoordt "wat ging er precies mis?" en
+ * hoeft alleen bij rood te draaien.
+ *
+ * Net als daar telt een 403 als "geen informatie" in plaats van een fout:
+ * een ontbrekende permissie mag een missie nooit laten crashen.
+ */
+export async function getFailingCheckRuns(
+  target: GithubRepoTarget,
+  ref: string,
+): Promise<FailingCheckRun[]> {
+  let data: {
+    total_count: number;
+    check_runs: {
+      id: number;
+      name: string;
+      status: string;
+      conclusion: string | null;
+      details_url: string | null;
+      output?: { title?: string | null; summary?: string | null } | null;
+    }[];
+  };
+
+  try {
+    data = await githubRequest(
+      `/repos/${target.owner}/${target.repo}/commits/${encodeURIComponent(ref)}/check-runs?per_page=100`,
+    );
+  } catch (error) {
+    if (error instanceof GithubApiError && error.status === 403) return [];
+    throw error;
+  }
+
+  const nonSuccessConclusions = new Set([
+    "failure",
+    "timed_out",
+    "cancelled",
+    "action_required",
+    "stale",
+  ]);
+
+  return data.check_runs
+    .filter(
+      (run) =>
+        run.status === "completed" &&
+        run.conclusion !== null &&
+        nonSuccessConclusions.has(run.conclusion),
+    )
+    .map((run) => ({
+      name: run.name,
+      checkRunId: run.id,
+      detailsUrl: run.details_url ?? null,
+      outputTitle: run.output?.title ?? null,
+      outputSummary: run.output?.summary ?? null,
+    }));
+}
+
+/** Een door GitHub aangewezen plek in de code waar een controle op stukliep. */
+export interface CheckRunAnnotation {
+  path: string;
+  startLine: number | null;
+  level: string;
+  message: string;
+}
+
+/**
+ * Annotaties van een check-run: bestand, regelnummer en melding.
+ *
+ * Let op: GitHub Actions maakt deze alleen aan wanneer een stap ze expliciet
+ * uitstuurt (via de `::error file=...`-notatie). `tsc` en `vitest` doen dat
+ * van zichzelf niet, dus voor dit project zal deze lijst vaak leeg zijn — het
+ * logboek hieronder is dan de bron. Bewust toch opgehaald: als de lijst er
+ * wél is, is hij preciezer dan welke logregel ook.
+ */
+export async function getCheckRunAnnotations(
+  target: GithubRepoTarget,
+  checkRunId: number,
+): Promise<CheckRunAnnotation[]> {
+  try {
+    const data = await githubRequest<
+      {
+        path: string;
+        start_line: number | null;
+        annotation_level: string | null;
+        message: string | null;
+      }[]
+    >(
+      `/repos/${target.owner}/${target.repo}/check-runs/${checkRunId}/annotations?per_page=50`,
+    );
+
+    return data.map((annotation) => ({
+      path: annotation.path,
+      startLine: annotation.start_line ?? null,
+      level: annotation.annotation_level ?? "unknown",
+      message: annotation.message ?? "",
+    }));
+  } catch (error) {
+    if (error instanceof GithubApiError && (error.status === 403 || error.status === 404)) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+/** Waarom het logboek van een taak niet kon worden opgehaald. */
+export interface JobLogResult {
+  log: string | null;
+  unavailableReason: string | null;
+}
+
+/**
+ * Het ruwe logboek van één Actions-taak.
+ *
+ * Dit endpoint vraagt de permissie **Actions: Read** op de GitHub App. Die
+ * stond er bij het bouwen van stap 6 niet bij (toen waren Contents, Pull
+ * requests en Checks genoeg). Ontbreekt hij, dan geeft GitHub een 403 en
+ * geeft deze functie de reden terug in plaats van te crashen — het verslag
+ * vermeldt dan expliciet dát het logboek mist, zodat niemand denkt dat de
+ * foutmelding compleet is.
+ */
+export async function getJobLog(
+  target: GithubRepoTarget,
+  jobId: string,
+): Promise<JobLogResult> {
+  try {
+    const log = await githubRequestText(
+      `/repos/${target.owner}/${target.repo}/actions/jobs/${encodeURIComponent(jobId)}/logs`,
+    );
+
+    return { log, unavailableReason: null };
+  } catch (error) {
+    if (error instanceof GithubApiError && error.status === 403) {
+      return {
+        log: null,
+        unavailableReason:
+          'de GitHub App heeft geen toegang tot Actions-logboeken (permissie "Actions: Read" ontbreekt of is nog niet goedgekeurd op de installatie)',
+      };
+    }
+
+    if (error instanceof GithubApiError && error.status === 404) {
+      return {
+        log: null,
+        unavailableReason: `GitHub kent taak ${jobId} niet (meer); logboeken worden na verloop van tijd opgeruimd`,
+      };
+    }
+
+    if (error instanceof GithubApiError && error.status === 410) {
+      return { log: null, unavailableReason: "het logboek is door GitHub verwijderd (verlopen)" };
+    }
+
+    throw error;
+  }
 }

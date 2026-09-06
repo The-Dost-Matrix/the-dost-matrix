@@ -39,6 +39,23 @@ vi.mock("./github/github-client", () => ({
   mergePullRequest: vi.fn(),
 }));
 
+/**
+ * Sinds roadmapstap 11 haalt ensureMissionPullRequestMerged bij een rode CI
+ * ook de échte foutmelding op (zie ci-failure-source.ts). Die keten wordt
+ * hier als geheel vervangen, en niet functie voor functie in de
+ * github-client-mock hierboven.
+ *
+ * Reden: deze tests gaan over de vraag wanneer de Director wél en niet
+ * mergt, niet over hoe een foutverslag wordt samengesteld. Door de naad te
+ * mocken in plaats van de onderdelen, breken ze niet opnieuw zodra dat
+ * verslag meer gegevens gaat ophalen — wat bij de eerste versie van stap 11
+ * wél gebeurde, omdat de github-client-mock hierboven een vaste lijst
+ * functies opsomt en `getFailingCheckRuns` daar niet bij stond.
+ */
+vi.mock("./ci-failure-source", () => ({
+  collectCiFailureReport: vi.fn(async () => null),
+}));
+
 vi.mock("./qa-runtime", () => ({
   findMissionPullRequest: vi.fn(),
 }));

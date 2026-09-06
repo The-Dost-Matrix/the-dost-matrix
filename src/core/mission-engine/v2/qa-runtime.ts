@@ -19,6 +19,7 @@ import {
   type PullRequestSummary,
 } from "./github/github-client";
 import { QA_BRANCH_PREFIX } from "./mission-branch";
+import { collectCiFailureReport } from "./ci-failure-source";
 import type { MissionV2 } from "./mission";
 
 /**
@@ -543,6 +544,13 @@ export async function executeQaAssignment({
   const effectiveCriteria = applyFailingCiOverride(afterRecommendation, ciStatus);
   const ciOverrode = ciStatus.state === "failure";
 
+  // Roadmapstap 11: bij rood niet alleen de NAAM van de gefaalde controle
+  // laten zien, maar de echte foutmelding erbij. Zonder dat moest de eigenaar
+  // naar GitHub om te achterhalen wát er stuk was, en zou een herstellende
+  // Builder straks blind repareren. Alleen ophalen wanneer er ook echt iets
+  // faalt: dit kost extra GitHub-aanroepen.
+  const ciFailureReport = ciOverrode ? await collectCiFailureReport(target, pr.headSha) : null;
+
   const successCriteriaResults: Record<string, boolean> = {};
   for (const entry of effectiveCriteria) {
     successCriteriaResults[entry.criterionId] = entry.passed;
@@ -555,7 +563,9 @@ export async function executeQaAssignment({
       (entry) => `- (${entry.passed ? "GEHAALD" : "NIET GEHAALD"}) ${entry.criterionId}: ${entry.reason}`,
     ),
     ciOverrode
-      ? `\nCI-status: ❌ MISLUKT (${ciStatus.failingCheckNames.join(", ")}) — alle succescriteria hierboven zijn daarom hard op NIET GEHAALD gezet, ongeacht de inhoudelijke beoordeling hierboven. Dit wordt pas opnieuw op GEHAALD gezet nadat een nieuwe builder-toewijzing de CI-fout heeft opgelost en de check daarna zelf weer slaagt.`
+      ? `\nCI-status: ❌ MISLUKT (${ciStatus.failingCheckNames.join(", ")}) — alle succescriteria hierboven zijn daarom hard op NIET GEHAALD gezet, ongeacht de inhoudelijke beoordeling hierboven. Dit wordt pas opnieuw op GEHAALD gezet nadat een nieuwe builder-toewijzing de CI-fout heeft opgelost en de check daarna zelf weer slaagt.${
+          ciFailureReport ? `\n\n${ciFailureReport}` : ""
+        }`
       : ciStatus.state === "success"
         ? "\nCI-status: ✅ geslaagd."
         : "",
