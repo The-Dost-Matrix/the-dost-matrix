@@ -87,3 +87,4 @@ describe("splitConversationIntoChunks", () => {
     expect(chunks[1].startsWith("A")).toBe(true);
   });
 });
+const eersteChunk: number = splitConversationIntoChunks("een korte tekst")[0];
