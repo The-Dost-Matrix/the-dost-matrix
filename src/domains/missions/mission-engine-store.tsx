@@ -64,6 +64,20 @@ const CANCELLABLE_STATUSES: MissionV2["status"][] = [
  */
 const NEEDS_SIGNOFF_CODE = "NEEDS_SIGNOFF";
 
+/**
+ * Hoeveel missies de lijst ophaalt, gesorteerd op laatst bijgewerkt.
+ *
+ * Stond op 5. Dat leverde een echt gat op: er is geen knop om verder te
+ * bladeren, dus een missie die niet bij de vijf laatst bijgewerkte hoort was
+ * via de UI onbereikbaar — ook als hij nog ACTIVE was en dus alleen dáár
+ * geannuleerd kon worden. Twintig is het maximum dat de API-route accepteert
+ * (zie app/api/missions/v2/route.ts); hoger vragen valt daar terug op vijf.
+ *
+ * Dit is bewust geen echte paginering: dat is pas de moeite waard als
+ * twintig ook te weinig blijkt.
+ */
+const MISSION_LIST_LIMIT = 20;
+
 export type MissionEngineBusyAction = "create" | "auto-step" | "cancel" | "approve" | null;
 
 export interface MissionEngineState {
@@ -141,7 +155,7 @@ export function MissionEngineProvider({ children }: { children: ReactNode }) {
 
     void (async () => {
       try {
-        const loaded = await listMissionsV2(user, 5);
+        const loaded = await listMissionsV2(user, MISSION_LIST_LIMIT);
         if (cancelled) return;
 
         setMissions(loaded);
@@ -206,7 +220,7 @@ export function MissionEngineProvider({ children }: { children: ReactNode }) {
       });
 
       setMission(created);
-      setMissions((current) => [created, ...current].slice(0, 5));
+      setMissions((current) => [created, ...current].slice(0, MISSION_LIST_LIMIT));
       setTitle("");
       setObjective("");
       setSuccessCriteriaText("");

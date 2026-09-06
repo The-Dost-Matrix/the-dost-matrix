@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 import { DirectorChat } from "@/components/workspace/director-chat";
@@ -9,7 +9,6 @@ import { MissionExecutionPanel } from "@/components/workspace/mission-engine/mis
 import { MissionProgressPanel } from "@/components/workspace/mission-progress-panel";
 import { useAuth } from "@/domains/auth/auth-provider";
 import { MissionEngineProvider } from "@/domains/missions/mission-engine-store";
-import { subscribeToMissions } from "@/domains/missions/mission-service";
 
 import "@/components/workspace/mission-engine/mission-panels.css";
 
@@ -36,33 +35,18 @@ export default function DashboardPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
 
-  const [error, setError] = useState("");
-
   useEffect(() => {
     if (!loading && !user) {
       router.replace("/login");
     }
   }, [loading, user, router]);
 
-  useEffect(() => {
-    if (!user) return;
-
-    // De missies zelf worden hier niet bijgehouden (de panelen hebben hun
-    // eigen bron via MissionEngineProvider). Deze subscription blijft alleen
-    // bestaan om een ontbrekende Firestore-index te blijven signaleren —
-    // zonder dit is die fout nergens in de UI zichtbaar.
-    return subscribeToMissions(
-      user.uid,
-      () => {},
-      (subscriptionError) => {
-        setError(
-          subscriptionError.message.includes("index")
-            ? "Firestore vraagt om een index. Open de link in de browserconsole of gebruik de instructie in README.md."
-            : subscriptionError.message,
-        );
-      },
-    );
-  }, [user]);
+  // Hier stond een subscription op de oude `missions`-collectie, die niets
+  // toonde maar wel een ontbrekende Firestore-index zou signaleren. Sinds
+  // niets meer naar die collectie schrijft, kon dat signaal nooit meer
+  // afgaan — en de missies die deze pagina wél toont komen langs een heel
+  // andere weg binnen (MissionEngineProvider, via de server). Verwijderd in
+  // plaats van laten staan als schijnvangnet.
 
   if (loading || !user) {
     return <main className="center-screen">Matrix Core wordt geladen...</main>;
@@ -80,8 +64,6 @@ export default function DashboardPage() {
           <MissionProgressPanel />
         </div>
       </section>
-
-      {error && <p className="error">{error}</p>}
     </MissionEngineProvider>
   );
 }
