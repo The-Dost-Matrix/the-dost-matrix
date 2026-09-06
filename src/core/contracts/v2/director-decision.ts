@@ -22,6 +22,15 @@ export interface DirectorDecision {
   reason: string;
   nextAction: string;
   assignedRole?: string;
+  /**
+   * Wat voor soort toewijzing hieruit moet ontstaan bij DISPATCH_ROLE. Alleen
+   * gezet wanneer het geen gewone opdracht is — op dit moment uitsluitend
+   * "TECHNICAL_REPAIR", de herstelpoging na een mislukte CI-controle
+   * (roadmapstap 11). De engine neemt dit over op de toewijzing zelf; zie
+   * AssignmentKind in mission.ts voor waarom dit een veld is en geen
+   * afleiding uit de opdrachttekst.
+   */
+  assignmentKind?: "BUILD" | "TECHNICAL_REPAIR";
   requiredCapabilities: string[];
   contextRequirements: string[];
   modelConstraints: Record<string, JsonValue>;

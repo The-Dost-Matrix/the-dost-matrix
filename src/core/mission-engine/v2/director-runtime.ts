@@ -16,6 +16,14 @@ import {
 } from "./github/github-client";
 import { collectCiFailureReport } from "./ci-failure-source";
 import { hasPassedAllCriteria, type MissionV2 } from "./mission";
+import {
+  MAX_TECHNICAL_REPAIR_ATTEMPTS,
+  TECHNICAL_REPAIR_KIND,
+  buildTechnicalRepairExhaustedMessage,
+  buildTechnicalRepairObjective,
+  buildTechnicalRepairReason,
+  countTechnicalRepairAttempts,
+} from "./technical-repair";
 import { proposeMissionKnowledge } from "./mission-knowledge";
 import { findMissionPullRequest } from "./qa-runtime";
 import { classifyPullRequestRiskForMission } from "./risk-classification";
@@ -158,7 +166,8 @@ export type DirectorRuntimeErrorCode =
   | "CI_CHECKS_PENDING"
   | "MERGE_FAILED"
   | "PULL_REQUEST_NOT_FOUND"
-  | "CRITERIA_NOT_PASSED";
+  | "CRITERIA_NOT_PASSED"
+  | "TECHNICAL_REPAIR_EXHAUSTED";
 
 /**
  * Gestructureerde fout voor situaties binnen de Director-runtime die de
@@ -406,6 +415,85 @@ async function decideNextStep(
  * `{pullRequest, riskClassification}`-object dat nooit bij de echte
  * functiesignatuur paste.
  */
+/**
+ * Wat de Director moet doen wanneer de CI van deze missie rood staat, of
+ * `null` wanneer er niets te herstellen valt.
+ */
+export interface TechnicalRepairPlan {
+  objective: string;
+  reason: string;
+  attempt: number;
+}
+
+/**
+ * Kijkt of er een herstelpoging nodig is, en zo ja: met welke opdracht.
+ *
+ * Dit is een vaste regel en géén beslissing van het taalmodel. Reden: of code
+ * compileert is objectief vast te stellen, en een LLM heeft eerder al
+ * bewezen zo'n falende controle niet als blokkerend te herkennen (zie de
+ * toelichting bij `getCombinedCheckStatus` in github-client.ts). Wat
+ * mechanisch controleerbaar is, hoort niet aan een oordeel te hangen.
+ *
+ * Wordt alleen aangeroepen wanneer er geen toewijzing meer loopt — anders is
+ * de CI-status van dit moment nog niet het oordeel over het uiteindelijke
+ * werk, en zou de Director een rol onderbreken die nog bezig is.
+ *
+ * Gooit TECHNICAL_REPAIR_EXHAUSTED wanneer het plafond is bereikt: liever
+ * expliciet stoppen met een leesbare uitleg dan eindeloos blijven proberen.
+ */
+export async function planTechnicalRepair(
+  mission: MissionV2,
+): Promise<TechnicalRepairPlan | null> {
+  const target = getGithubRepoTarget();
+  const prs = await listPullRequests(target, "all");
+  const pr = findMissionPullRequest(prs, mission.missionId);
+
+  if (!pr || pr.merged) return null;
+
+  const ciStatus = await getCombinedCheckStatus(target, pr.headSha);
+
+  if (ciStatus.state !== "failure") return null;
+
+  const alreadyAttempted = countTechnicalRepairAttempts(mission);
+
+  if (alreadyAttempted >= MAX_TECHNICAL_REPAIR_ATTEMPTS) {
+    throw new DirectorRuntimeError(
+      "TECHNICAL_REPAIR_EXHAUSTED",
+      buildTechnicalRepairExhaustedMessage(
+        MAX_TECHNICAL_REPAIR_ATTEMPTS,
+        pr.number,
+        pr.url,
+        ciStatus.failingCheckNames,
+      ),
+    );
+  }
+
+  const attempt = alreadyAttempted + 1;
+
+  const failureReport =
+    (await collectCiFailureReport(target, pr.headSha)) ??
+    `De CI-controle(s) ${ciStatus.failingCheckNames.join(", ")} zijn mislukt, maar GitHub gaf geen nadere details terug.`;
+
+  const changedFiles = await getPullRequestFiles(target, pr.number);
+
+  return {
+    attempt,
+    objective: buildTechnicalRepairObjective({
+      attempt,
+      maxAttempts: MAX_TECHNICAL_REPAIR_ATTEMPTS,
+      pullRequestNumber: pr.number,
+      changedFilePaths: changedFiles.map((file) => file.filename),
+      failureReport,
+    }),
+    reason: buildTechnicalRepairReason({
+      attempt,
+      maxAttempts: MAX_TECHNICAL_REPAIR_ATTEMPTS,
+      pullRequestNumber: pr.number,
+      failingCheckNames: ciStatus.failingCheckNames,
+    }),
+  };
+}
+
 export async function ensureMissionPullRequestMerged(mission: MissionV2): Promise<void> {
   const target = getGithubRepoTarget();
   const prs = await listPullRequests(target, "all");
@@ -574,6 +662,64 @@ export async function approveAndMergeMissionPullRequest(
  * `ensureMissionPullRequestMerged` hierboven) de bijbehorende pull request
  * gemerged is — die merge voert de Director in dat geval hier zelf uit.
  */
+/**
+ * Zet een herstelpoging uit als gewone builder-toewijzing.
+ *
+ * Bewust via hetzelfde `applyDirectorDecision` als elk ander besluit: dan
+ * gelden dezelfde statusovergangen, dezelfde versiecontrole en dezelfde
+ * gebeurtenissen in de missiegeschiedenis. Het enige verschil is dat dit
+ * besluit niet van het taalmodel komt maar van een vaste regel — en dat het
+ * `assignmentKind` meegeeft, zodat de volgende ronde kan tellen hoeveel
+ * pogingen er al zijn geweest.
+ */
+async function dispatchTechnicalRepair({
+  engine,
+  mission,
+  actor,
+  repair,
+}: {
+  engine: MissionEngine;
+  mission: MissionV2;
+  actor: ActorRef;
+  repair: TechnicalRepairPlan;
+}): Promise<RunDirectorStepResult> {
+  const now = new Date().toISOString();
+
+  const decision: DirectorDecision = {
+    decisionId: randomUUID(),
+    missionId: mission.missionId,
+    decisionType: "DISPATCH_ROLE",
+    reason: repair.reason,
+    nextAction: repair.objective,
+    assignedRole: "builder",
+    assignmentKind: TECHNICAL_REPAIR_KIND,
+    requiredCapabilities: [],
+    contextRequirements: [],
+    modelConstraints: {},
+    approvalRequirement: "none",
+    successCriteria: mission.successCriteria.map((criterion) => criterion.description),
+    failureStrategy: "Bij falen opnieuw plannen (REPLANNING).",
+    createdAt: now,
+  };
+
+  const updated = await engine.applyDirectorDecision({
+    actor,
+    correlationId: decision.decisionId,
+    issuedAt: now,
+    commandVersion: "1.0",
+    commandId: randomUUID(),
+    commandType: "ApplyDirectorDecision",
+    targetId: mission.missionId,
+    expectedTargetVersion: mission.version,
+    payload: { decision: decision as unknown as JsonValue },
+  });
+
+  // Geen kennisophaling en geen LLM-aanroep: dit besluit staat vast, dus
+  // context verzamelen zou alleen tijd en geld kosten zonder iets te
+  // veranderen aan de uitkomst.
+  return { mission: updated, decision, usedKnowledge: [] };
+}
+
 export async function runDirectorStep({
   engine,
   missionId,
@@ -589,6 +735,21 @@ export async function runDirectorStep({
     throw new Error(
       `De Director kan alleen een beslissing nemen wanneer de mission ACTIEF is (huidige status: ${mission.status}).`,
     );
+  }
+
+  // Technische herstellus (roadmapstap 11). Staat bewust vóór alles wat het
+  // taalmodel doet: bij een rode CI is er niets te overwegen. De code
+  // compileert niet, en dus is elk ander besluit — QA laten oordelen,
+  // mergen, de missie afronden — zinloos totdat dat is opgelost.
+  //
+  // Alleen wanneer er geen toewijzing meer loopt: anders is de CI-status van
+  // dit moment nog niet het oordeel over het werk dat nog bezig is.
+  if (mission.activeAssignmentIds.length === 0) {
+    const repair = await planTechnicalRepair(mission);
+
+    if (repair) {
+      return dispatchTechnicalRepair({ engine, mission, actor, repair });
+    }
   }
 
   const allowComplete = hasPassedAllCriteria(mission) && mission.activeAssignmentIds.length === 0;

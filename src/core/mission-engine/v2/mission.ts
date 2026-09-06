@@ -57,6 +57,20 @@ export interface MissionCriterion {
   lastEvaluationNote?: string;
 }
 
+/**
+ * Waarom een toewijzing is uitgezet.
+ *
+ * "TECHNICAL_REPAIR" is een herstelpoging na een mislukte CI-controle
+ * (roadmapstap 11). Het staat als eigen veld en niet als iets dat je uit de
+ * opdrachttekst kunt afleiden: op die tekst tellen zou breken zodra de
+ * formulering verandert — dezelfde reden waarom stap 5 de string-matching op
+ * foutmeldingen heeft vervangen door foutcodes.
+ *
+ * Optioneel, zodat toewijzingen van vóór deze wijziging geldig blijven; die
+ * tellen als gewone opdracht.
+ */
+export type AssignmentKind = "BUILD" | "TECHNICAL_REPAIR";
+
 export interface MissionAssignmentRecord {
   assignmentId: EntityId;
   decisionId: EntityId;
@@ -64,6 +78,7 @@ export interface MissionAssignmentRecord {
   status: AssignmentStatus;
   objective: string;
   successCriteria: string[];
+  kind?: AssignmentKind;
   resultId?: EntityId;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
