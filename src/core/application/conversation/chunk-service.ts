@@ -64,3 +64,4 @@ export function splitConversationIntoChunks(
 
   return chunks;
 }
+const eersteChunk: number = splitConversationIntoChunks("een korte tekst")[0];
