@@ -15,9 +15,6 @@ import {
   summarizeReportLevel,
   useSystemStatus,
 } from "@/domains/system/system-status-service";
-import { subscribeToMissions } from "@/domains/missions/mission-service";
-
-import type { Mission } from "@/shared/types/mission";
 
 /**
  * Topbar zonder de "ACTIVE MISSIONS" / "LIVE MATRIX" tickers: die scrollende
@@ -37,10 +34,19 @@ import type { Mission } from "@/shared/types/mission";
  * `monitor`-prop meer nodig, en `dashboard/layout.tsx` geeft die ook niet
  * meer door.
  *
- * De losse `missions`-subscription hieronder is een NIEUWE, kleine
- * toevoeging (los van de sanering hierboven): puur om de "Missies"-teller
- * hieronder te voeden, zonder ticker of scroll-animatie — dus geen
- * tegenspraak met de reden waarom de tickers destijds verwijderd zijn.
+ * Ook de "MISSIES"-teller is inmiddels weg, en met hem de laatste
+ * subscription hier. Die teller stond wél op echte data, maar op de
+ * verkeerde: hij las de Firestore-collectie `missions` — het missiemodel van
+ * vóór Mission Engine V2, dat naar `missionEngineV2Missions` schrijft. Het
+ * getal liep dus niet mee met de missies die je in de Mission Engine ziet.
+ * Sinds het oude paneel en de dubbele chatpagina zijn verwijderd, schrijft
+ * niets meer naar `missions` en stond dat getal permanent stil.
+ *
+ * Bewust niet vervangen door een teller op Mission Engine V2: een juist
+ * totaal vraagt een telquery aan de serverkant, want de bestaande
+ * lijst-route geeft hooguit twintig missies terug en niet het totaal.
+ * Zolang die er niet is, telt dit scherm liever niets dan het verkeerde —
+ * dezelfde regel als bij "AGENTS" en "APPROVALS" hieronder.
  */
 type TopbarDropdownId = "activity" | "system";
 
@@ -48,7 +54,7 @@ type TopbarDropdownId = "activity" | "system";
  * De tellers "AGENTS" en "APPROVALS" stonden hier eerder als vaste getallen
  * (4 en 0) omdat er geen live bron voor bestond. Ze zijn verwijderd in plaats
  * van blijven staan: een scherm hoort niets te tellen wat het niet echt kan
- * tellen. Het aantal missies hieronder komt wél uit een echte subscription.
+ * tellen.
  */
 const DROPDOWN_TOOLS: Array<{
   id: TopbarDropdownId;
@@ -66,17 +72,10 @@ export function Topbar() {
   const [openDropdown, setOpenDropdown] = useState<TopbarDropdownId | null>(
     null,
   );
-  const [missions, setMissions] = useState<Mission[]>([]);
   const systemStatus = useSystemStatus();
   const summaryLevel = summarizeReportLevel(systemStatus);
 
   const toolsRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!user) return;
-
-    return subscribeToMissions(user.uid, setMissions, () => {});
-  }, [user]);
 
   useEffect(() => {
     if (!openDropdown) {
@@ -133,17 +132,10 @@ export function Topbar() {
 
         <div className="matrix-topbar-actions">
           {/*
-            Verhuisd vanuit de voormalige MATRIX CORE-hero op het Command
-            Center (die hero-sectie is daar verwijderd, zie dashboard/
-            page.tsx) — nu zichtbaar op elke /dashboard-pagina in plaats van
-            alleen daar.
+            Hier stond de teller "MISSIES". Verwijderd omdat hij de oude
+            `missions`-collectie telde in plaats van Mission Engine V2 — zie
+            de toelichting bovenaan dit bestand.
           */}
-          <div className="matrix-topbar-stats">
-            <div className="matrix-topbar-stat">
-              <strong>{missions.length}</strong>
-              <span>MISSIES</span>
-            </div>
-          </div>
 
           {/*
             Stond hier eerder als vaste tekst "SYSTEM STATUS / OPERATIONAL",
