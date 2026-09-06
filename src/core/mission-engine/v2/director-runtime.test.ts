@@ -65,6 +65,7 @@ describe("DirectorRuntimeError", () => {
       "PULL_REQUEST_NOT_FOUND",
       "CRITERIA_NOT_PASSED",
       "TECHNICAL_REPAIR_EXHAUSTED",
+      "SEMANTIC_REPAIR_EXHAUSTED",
     ];
 
     for (const code of codes) {

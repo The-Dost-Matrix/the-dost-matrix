@@ -30,7 +30,7 @@ export interface DirectorDecision {
    * AssignmentKind in mission.ts voor waarom dit een veld is en geen
    * afleiding uit de opdrachttekst.
    */
-  assignmentKind?: "BUILD" | "TECHNICAL_REPAIR";
+  assignmentKind?: "BUILD" | "TECHNICAL_REPAIR" | "SEMANTIC_REPAIR";
   requiredCapabilities: string[];
   contextRequirements: string[];
   modelConstraints: Record<string, JsonValue>;

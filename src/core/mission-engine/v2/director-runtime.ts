@@ -24,6 +24,15 @@ import {
   buildTechnicalRepairReason,
   countTechnicalRepairAttempts,
 } from "./technical-repair";
+import {
+  MAX_SEMANTIC_REPAIR_ATTEMPTS,
+  SEMANTIC_REPAIR_KIND,
+  buildSemanticRepairExhaustedMessage,
+  buildSemanticRepairObjective,
+  buildSemanticRepairReason,
+  collectFailedCriteria,
+  countSemanticRepairAttempts,
+} from "./semantic-repair";
 import { proposeMissionKnowledge } from "./mission-knowledge";
 import { findMissionPullRequest } from "./qa-runtime";
 import { classifyPullRequestRiskForMission } from "./risk-classification";
@@ -167,7 +176,8 @@ export type DirectorRuntimeErrorCode =
   | "MERGE_FAILED"
   | "PULL_REQUEST_NOT_FOUND"
   | "CRITERIA_NOT_PASSED"
-  | "TECHNICAL_REPAIR_EXHAUSTED";
+  | "TECHNICAL_REPAIR_EXHAUSTED"
+  | "SEMANTIC_REPAIR_EXHAUSTED";
 
 /**
  * Gestructureerde fout voor situaties binnen de Director-runtime die de
@@ -416,34 +426,50 @@ async function decideNextStep(
  * functiesignatuur paste.
  */
 /**
- * Wat de Director moet doen wanneer de CI van deze missie rood staat, of
- * `null` wanneer er niets te herstellen valt.
+ * Wat de Director moet doen voordat er iets te overwegen valt, of `null`
+ * wanneer er niets te herstellen is.
  */
-export interface TechnicalRepairPlan {
+export interface MissionRepairPlan {
+  kind: "TECHNICAL_REPAIR" | "SEMANTIC_REPAIR";
   objective: string;
   reason: string;
   attempt: number;
 }
 
 /**
- * Kijkt of er een herstelpoging nodig is, en zo ja: met welke opdracht.
+ * Kijkt of er een herstelpoging nodig is, en zo ja: welke soort en met welke
+ * opdracht.
  *
- * Dit is een vaste regel en géén beslissing van het taalmodel. Reden: of code
- * compileert is objectief vast te stellen, en een LLM heeft eerder al
- * bewezen zo'n falende controle niet als blokkerend te herkennen (zie de
- * toelichting bij `getCombinedCheckStatus` in github-client.ts). Wat
- * mechanisch controleerbaar is, hoort niet aan een oordeel te hangen.
+ * Twee soorten, in deze volgorde:
+ *
+ * 1. TECHNISCH — de CI faalt. Er valt dan niets te wegen: de code compileert
+ *    niet, dus elk ander besluit (QA laten oordelen, mergen, afronden) is
+ *    zinloos. Roadmapstap 11.
+ * 2. INHOUDELIJK — de CI is groen, maar QA heeft een succescriterium
+ *    afgekeurd. Roadmapstap 12.
+ *
+ * Beide zijn vaste regels en géén beslissing van het taalmodel, om
+ * verschillende redenen. Bij de technische: of code compileert is objectief
+ * vast te stellen, en een LLM heeft eerder bewezen zo'n falende controle niet
+ * als blokkerend te herkennen (zie `getCombinedCheckStatus` in
+ * github-client.ts). Bij de inhoudelijke: de Director stuurde de Builder
+ * eindeloos terug zolang QA bleef afkeuren — bij regressietest D drie keer
+ * achter elkaar, zonder plafond, tot de eigenaar ingreep. Een lus zonder
+ * teller hoort niet aan een oordeel te hangen.
+ *
+ * Beide gebruiken dezelfde opgehaalde pull request en CI-status, zodat er per
+ * Director-stap niet twee keer hetzelfde bij GitHub wordt opgevraagd.
  *
  * Wordt alleen aangeroepen wanneer er geen toewijzing meer loopt — anders is
- * de CI-status van dit moment nog niet het oordeel over het uiteindelijke
- * werk, en zou de Director een rol onderbreken die nog bezig is.
+ * de stand van dit moment nog geen oordeel over werk dat nog bezig is.
  *
- * Gooit TECHNICAL_REPAIR_EXHAUSTED wanneer het plafond is bereikt: liever
- * expliciet stoppen met een leesbare uitleg dan eindeloos blijven proberen.
+ * Gooit TECHNICAL_REPAIR_EXHAUSTED of SEMANTIC_REPAIR_EXHAUSTED wanneer het
+ * bijbehorende plafond is bereikt: liever expliciet stoppen met een leesbare
+ * uitleg dan eindeloos blijven proberen.
  */
-export async function planTechnicalRepair(
+export async function planMissionRepair(
   mission: MissionV2,
-): Promise<TechnicalRepairPlan | null> {
+): Promise<MissionRepairPlan | null> {
   const target = getGithubRepoTarget();
   const prs = await listPullRequests(target, "all");
   const pr = findMissionPullRequest(prs, mission.missionId);
@@ -452,44 +478,90 @@ export async function planTechnicalRepair(
 
   const ciStatus = await getCombinedCheckStatus(target, pr.headSha);
 
-  if (ciStatus.state !== "failure") return null;
+  // Nog bezig: niets doen. Een oordeel op een halve CI-uitslag is geen
+  // oordeel — dezelfde regel die QA sinds stap 7 al hanteert.
+  if (ciStatus.state === "pending") return null;
 
-  const alreadyAttempted = countTechnicalRepairAttempts(mission);
+  if (ciStatus.state === "failure") {
+    const alreadyAttempted = countTechnicalRepairAttempts(mission);
 
-  if (alreadyAttempted >= MAX_TECHNICAL_REPAIR_ATTEMPTS) {
+    if (alreadyAttempted >= MAX_TECHNICAL_REPAIR_ATTEMPTS) {
+      throw new DirectorRuntimeError(
+        "TECHNICAL_REPAIR_EXHAUSTED",
+        buildTechnicalRepairExhaustedMessage(
+          MAX_TECHNICAL_REPAIR_ATTEMPTS,
+          pr.number,
+          pr.url,
+          ciStatus.failingCheckNames,
+        ),
+      );
+    }
+
+    const attempt = alreadyAttempted + 1;
+
+    const failureReport =
+      (await collectCiFailureReport(target, pr.headSha)) ??
+      `De CI-controle(s) ${ciStatus.failingCheckNames.join(", ")} zijn mislukt, maar GitHub gaf geen nadere details terug.`;
+
+    const changedFiles = await getPullRequestFiles(target, pr.number);
+
+    return {
+      kind: TECHNICAL_REPAIR_KIND,
+      attempt,
+      objective: buildTechnicalRepairObjective({
+        attempt,
+        maxAttempts: MAX_TECHNICAL_REPAIR_ATTEMPTS,
+        pullRequestNumber: pr.number,
+        changedFilePaths: changedFiles.map((file) => file.filename),
+        failureReport,
+      }),
+      reason: buildTechnicalRepairReason({
+        attempt,
+        maxAttempts: MAX_TECHNICAL_REPAIR_ATTEMPTS,
+        pullRequestNumber: pr.number,
+        failingCheckNames: ciStatus.failingCheckNames,
+      }),
+    };
+  }
+
+  // Vanaf hier is de CI groen of afwezig. Blijft alleen een inhoudelijk
+  // bezwaar van QA over.
+  const failedCriteria = collectFailedCriteria(mission);
+
+  if (failedCriteria.length === 0) return null;
+
+  const alreadyAttempted = countSemanticRepairAttempts(mission);
+
+  if (alreadyAttempted >= MAX_SEMANTIC_REPAIR_ATTEMPTS) {
     throw new DirectorRuntimeError(
-      "TECHNICAL_REPAIR_EXHAUSTED",
-      buildTechnicalRepairExhaustedMessage(
-        MAX_TECHNICAL_REPAIR_ATTEMPTS,
+      "SEMANTIC_REPAIR_EXHAUSTED",
+      buildSemanticRepairExhaustedMessage(
+        MAX_SEMANTIC_REPAIR_ATTEMPTS,
         pr.number,
         pr.url,
-        ciStatus.failingCheckNames,
+        failedCriteria,
       ),
     );
   }
 
   const attempt = alreadyAttempted + 1;
-
-  const failureReport =
-    (await collectCiFailureReport(target, pr.headSha)) ??
-    `De CI-controle(s) ${ciStatus.failingCheckNames.join(", ")} zijn mislukt, maar GitHub gaf geen nadere details terug.`;
-
   const changedFiles = await getPullRequestFiles(target, pr.number);
 
   return {
+    kind: SEMANTIC_REPAIR_KIND,
     attempt,
-    objective: buildTechnicalRepairObjective({
+    objective: buildSemanticRepairObjective({
       attempt,
-      maxAttempts: MAX_TECHNICAL_REPAIR_ATTEMPTS,
+      maxAttempts: MAX_SEMANTIC_REPAIR_ATTEMPTS,
       pullRequestNumber: pr.number,
       changedFilePaths: changedFiles.map((file) => file.filename),
-      failureReport,
+      failedCriteria,
     }),
-    reason: buildTechnicalRepairReason({
+    reason: buildSemanticRepairReason({
       attempt,
-      maxAttempts: MAX_TECHNICAL_REPAIR_ATTEMPTS,
+      maxAttempts: MAX_SEMANTIC_REPAIR_ATTEMPTS,
       pullRequestNumber: pr.number,
-      failingCheckNames: ciStatus.failingCheckNames,
+      failedCriteriaCount: failedCriteria.length,
     }),
   };
 }
@@ -670,9 +742,9 @@ export async function approveAndMergeMissionPullRequest(
  * gebeurtenissen in de missiegeschiedenis. Het enige verschil is dat dit
  * besluit niet van het taalmodel komt maar van een vaste regel — en dat het
  * `assignmentKind` meegeeft, zodat de volgende ronde kan tellen hoeveel
- * pogingen er al zijn geweest.
+ * pogingen er al zijn geweest, per soort apart.
  */
-async function dispatchTechnicalRepair({
+async function dispatchRepair({
   engine,
   mission,
   actor,
@@ -681,7 +753,7 @@ async function dispatchTechnicalRepair({
   engine: MissionEngine;
   mission: MissionV2;
   actor: ActorRef;
-  repair: TechnicalRepairPlan;
+  repair: MissionRepairPlan;
 }): Promise<RunDirectorStepResult> {
   const now = new Date().toISOString();
 
@@ -692,7 +764,7 @@ async function dispatchTechnicalRepair({
     reason: repair.reason,
     nextAction: repair.objective,
     assignedRole: "builder",
-    assignmentKind: TECHNICAL_REPAIR_KIND,
+    assignmentKind: repair.kind,
     requiredCapabilities: [],
     contextRequirements: [],
     modelConstraints: {},
@@ -737,18 +809,19 @@ export async function runDirectorStep({
     );
   }
 
-  // Technische herstellus (roadmapstap 11). Staat bewust vóór alles wat het
-  // taalmodel doet: bij een rode CI is er niets te overwegen. De code
-  // compileert niet, en dus is elk ander besluit — QA laten oordelen,
-  // mergen, de missie afronden — zinloos totdat dat is opgelost.
+  // Herstellussen (roadmapstap 11 en 12). Staan bewust vóór alles wat het
+  // taalmodel doet: zolang de CI rood is of QA een criterium heeft afgekeurd,
+  // is elk ander besluit — QA opnieuw laten oordelen, mergen, de missie
+  // afronden — voorbarig. En allebei hebben ze een plafond, wat een
+  // LLM-afweging per definitie niet heeft.
   //
-  // Alleen wanneer er geen toewijzing meer loopt: anders is de CI-status van
-  // dit moment nog niet het oordeel over het werk dat nog bezig is.
+  // Alleen wanneer er geen toewijzing meer loopt: anders is de stand van dit
+  // moment nog geen oordeel over werk dat nog bezig is.
   if (mission.activeAssignmentIds.length === 0) {
-    const repair = await planTechnicalRepair(mission);
+    const repair = await planMissionRepair(mission);
 
     if (repair) {
-      return dispatchTechnicalRepair({ engine, mission, actor, repair });
+      return dispatchRepair({ engine, mission, actor, repair });
     }
   }
 

@@ -61,7 +61,11 @@ export interface MissionCriterion {
  * Waarom een toewijzing is uitgezet.
  *
  * "TECHNICAL_REPAIR" is een herstelpoging na een mislukte CI-controle
- * (roadmapstap 11). Het staat als eigen veld en niet als iets dat je uit de
+ * (roadmapstap 11); "SEMANTIC_REPAIR" is een herstelpoging nadat QA een
+ * succescriterium afkeurde terwijl de CI groen is (roadmapstap 12).
+ * Bewust twee waarden en geen gedeelde teller: het zijn verschillende
+ * soorten problemen, en drie mislukte compileerreparaties zeggen niets over
+ * hoeveel inhoudelijke rondes nog zinvol zijn. Het staat als eigen veld en niet als iets dat je uit de
  * opdrachttekst kunt afleiden: op die tekst tellen zou breken zodra de
  * formulering verandert — dezelfde reden waarom stap 5 de string-matching op
  * foutmeldingen heeft vervangen door foutcodes.
@@ -69,7 +73,7 @@ export interface MissionCriterion {
  * Optioneel, zodat toewijzingen van vóór deze wijziging geldig blijven; die
  * tellen als gewone opdracht.
  */
-export type AssignmentKind = "BUILD" | "TECHNICAL_REPAIR";
+export type AssignmentKind = "BUILD" | "TECHNICAL_REPAIR" | "SEMANTIC_REPAIR";
 
 export interface MissionAssignmentRecord {
   assignmentId: EntityId;
