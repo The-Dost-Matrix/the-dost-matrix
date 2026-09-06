@@ -64,6 +64,7 @@ describe("DirectorRuntimeError", () => {
       "MERGE_FAILED",
       "PULL_REQUEST_NOT_FOUND",
       "CRITERIA_NOT_PASSED",
+      "TECHNICAL_REPAIR_EXHAUSTED",
     ];
 
     for (const code of codes) {

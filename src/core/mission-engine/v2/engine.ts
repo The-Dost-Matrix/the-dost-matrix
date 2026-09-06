@@ -137,6 +137,10 @@ export class MissionEngine {
           status: "ACTIVE",
           objective: decision.nextAction,
           successCriteria: [...decision.successCriteria],
+          // Bewust alleen opnemen wanneer het besluit het meegeeft: een veld
+          // met de waarde `undefined` weigert Firestore, en een toewijzing
+          // zonder dit veld is precies wat een gewone opdracht is.
+          ...(decision.assignmentKind ? { kind: decision.assignmentKind } : {}),
           createdAt: now,
           updatedAt: now,
         };
