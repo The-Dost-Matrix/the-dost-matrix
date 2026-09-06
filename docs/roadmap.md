@@ -362,9 +362,107 @@ foutteksten in de test koppelen aan de formulering in state-machine.ts — is
 bewust NIET overgenomen: dan vergelijkt de test de code met zichzelf en kan
 hij per definitie niet meer merken dát die tekst verandert.
 
+### Stap 11 — Technische herstellus bij een mislukte CI
+De CI-controle bestond al sinds stap 7: QA weigert een oordeel zolang de CI
+niet klaar is, en de Director weigert te mergen bij rood. Wat ontbrak was het
+hérstel — bij rood stopte de missie en stapte de eigenaar in. Dat is de
+correctielus die deze stap wegneemt.
+
+**Afwijking van het oorspronkelijke plan.** Dat plan wilde de pull request pas
+openen zodra de CI groen was, met een nieuwe missiestatus
+`AWAITING_VERIFICATION` en een push-trigger in `ci.yml`. Daar is bewust van
+afgezien: het vraagt een nieuwe status door het hele missiemodel, een
+handmatige wijziging in een workflowbestand dat de agents nooit kunnen
+repareren, en het geeft een reëel risico dat een missie eeuwig blijft hangen
+wanneer die trigger niet precies matcht. De gekozen opzet laat de pull request
+gewoon meteen opengaan — CI draait daar al op, en draait automatisch opnieuw
+bij elke nieuwe commit. Geen nieuwe status, geen workflowwijziging, geen
+kans op vastlopen. Wat we ervoor inleveren: de pull request is korte tijd
+zichtbaar rood. Dat is cosmetisch; hij wordt niet gemerged zolang hij rood is,
+en de herstelcommits maken de geschiedenis juist beter leesbaar.
+
+**Deel 1 — de echte foutmelding.** De app kende alleen de NAAM van een
+gefaalde controle ("CI / Typecheck & import-check"). Daar valt niets mee te
+repareren; een Builder die alleen dát hoort gaat opnieuw invullen wat hij niet
+weet — precies de fout die stap 10 wegnam. `ci-failure-report.ts` (zonder
+netwerk, apart getest) zet de ruwe gegevens om in één verslag: de gefaalde
+controle, de door GitHub aangewezen bestanden en regels, en de relevante
+regels uit het taaklogboek, ontdaan van tijdstempels en installatieruis.
+`ci-failure-source.ts` doet het ophalen. Het verslag verschijnt zowel in het
+QA-oordeel als in de melding van de Director.
+
+Elk weggelaten stuk logboek wordt gemarkeerd met `[...]`, ook aan het begin —
+dat kwam uit een test die faalde: de eerste versie liet honderden regels vóór
+de fout stilzwijgend weg, waardoor het leek alsof het logboek bij de foutregel
+begon. Dezelfde stille misleiding als het afkappen van globals.css. Ontbreekt
+het logboek helemaal, dan staat er letterlijk dát het mist en waarom.
+
+Vereist eenmalig de permissie **Actions: Read** op de GitHub App (bovenop
+Contents, Pull requests en Checks uit stap 6), inclusief het goedkeuren van
+het permissieverzoek op de installatie.
+
+**Deel 2 — de herstellus.** Vóór alles wat het taalmodel doet kijkt de
+Director of de CI van deze missie rood staat. Zo ja, dan zet hij zonder
+tussenkomst van een LLM een herstelopdracht uit met het foutverslag erbij, als
+nieuwe commit op dezelfde missiebranch (sinds stap 9 veilig). Bewust géén
+LLM-beslissing: of code compileert is objectief vast te stellen, en een LLM
+heeft eerder bewezen een falende typecheck niet als blokkerend te herkennen.
+
+De herstelopdracht bevat de lijst bestanden die de missie tot nu toe wijzigde
+met de instructie zich daartoe te beperken, en het expliciete verbod om een
+test of controle uit te zetten om de CI groen te krijgen ("een groene CI die
+zo bereikt is telt als mislukt"). Pogingen worden geteld op een eigen veld
+`kind` op de toewijzing, niet op de bewoording van de opdrachttekst — er is
+een test die aantoont dat een missie waarvan de tekst toevallig op een
+herstelpoging lijkt, niet meetelt. Drie pogingen, daarna
+`TECHNICAL_REPAIR_EXHAUSTED` met uitleg.
+
+**Regressietest D — geslaagd.** Missie "Tests voor het opknippen van
+gesprekken" (PR #43). Nadat de Builder klaar was is er met de hand een
+typefout op de missiebranch gezet. Resultaat: de Director sloeg QA en mergen
+over en zette meteen een herstelopdracht uit — *"herstelpoging 1 van 3. Dit is
+een vaste regel, geen afweging van het taalmodel"* — waarna de Builder de fout
+oploste op dezelfde branch en de CI groen werd. De commitgeschiedenis van #43
+vertelt het verhaal zelf: twee rode commits, dan
+`Director: HERSTELOPDRACHT (poging 1 van 3)` en groen.
+
+Niet vastgesteld: óf het GitHub-logboek daadwerkelijk in die herstelopdracht
+zat, of dat de Builder de fout uit het bestand zelf afleidde. De
+opdrachttekst wordt wel opgeslagen op de toewijzing maar is nergens zichtbaar
+in de app. Restpunt.
+
+**Wat dezelfde test blootlegde, en waarom stap 12 nu bewezen nodig is.** Na
+het herstel liep de missie vast op één succescriterium, en daar bleef de
+Director de Builder op terugsturen: drie extra toewijzingen, zeven commits,
+kosten van 12 naar 63 cent, zonder plafond. Drie oorzaken:
+
+1. QA krijgt bij een pull request die alleen een testbestand wijzigt
+   uitsluitend dát testbestand. Hij kon daardoor niet nagaan of
+   `CHUNK_LENGTH` geëxporteerd is (dat is zo) en keurde het criterium af als
+   "niet te controleren". Exact de blinde vlek die stap 10 aan de Builderkant
+   oploste.
+2. De inhoudelijke herstellus heeft géén pogingteller, in tegenstelling tot de
+   technische. Hij loopt door tot de eigenaar ingrijpt. Dit is het eerste wat
+   stap 12 moet dichtzetten.
+3. De Director vroeg de Builder om "bewijs van groene runs" te leveren. De
+   Builder kan niets uitvoeren; hij schrijft alleen bestanden. Zo'n opdracht
+   kan per definitie niet slagen.
+
+Bijvangst over het opstellen van missies: het criterium was geformuleerd als
+"npm run typecheck en npx vitest run zijn beide groen". Dat gaat over een
+commando dat lokaal draait en dat QA niet kan waarnemen. Formuleer zoiets als
+"de CI-controle op de pull request slaagt" — dat is wél zichtbaar. Ook
+opvallend: bij een falende CI worden alle criteria hard op NIET GEHAALD gezet,
+maar een geslaagde CI wordt nergens als positief bewijs gebruikt, terwijl dit
+criterium er letterlijk over ging.
+
+De missie is met de hand afgerond: PR #43 zelf gemerged (CI groen, werk in
+orde) en de missie daarna geannuleerd, omdat een missie met één afgekeurd
+criterium niet op voltooid kan komen.
+
 ## Voorgestelde volgende stappen
 
-Stap 11 t/m 14 (oorspronkelijk 9 t/m 14; 9 en 10 staan inmiddels hierboven
+Stap 12 t/m 14 (oorspronkelijk 9 t/m 14; 9, 10 en 11 staan inmiddels hierboven
 onder Voltooid) zijn door Claude bedacht als logisch vervolg op de voltooide
 stappen, gebaseerd op wat Elroy al eerder heeft aangegeven te willen
 (multi-LLM, Claude ingebed in de app zelf, een écht autonome Director) en op
@@ -419,37 +517,33 @@ volledigheid. Reden: er is geen team dat dit bouwt, en de rol die het zou
 moeten bouwen (de Builder) is precies de kapotte rol — elke stap wordt met
 de hand geschreven en door Elroy gecommit.
 
-### Stap 11 — Verificatie als missiestatus, met technische herstellus
-GitHub Actions is de uitvoeromgeving die we al hebben; we gebruiken hem
-alleen te laat. Nieuwe volgorde: de Builder commit naar de missiebranch, de
-missie krijgt status `AWAITING_VERIFICATION`, en het HTTP-request eindigt
-daar (geen minutenlange wachtlus in een Next.js API-route). Een volgende
-Director-stap leest de CI-status op exact die commit-SHA: groen → pull
-request openen; rood → `TECHNICAL_REPAIR` met de echte foutuitvoer erbij,
-met een hard plafond van drie pogingen; plafond bereikt → gestructureerd
-falen in plaats van een slechte pull request.
-
-Herstelpogingen zijn nieuwe commits op dezelfde missiebranch, en `upsertFile`
-moet daarbij de bestands-SHA van de missiebranch gebruiken — niet die van
-`main`, want dan draait een herstelpoging zijn eigen vorige poging terug.
-Vereist eenmalig een handmatige wijziging in `.github/workflows/ci.yml` (een
-push-trigger op de missiebranch-prefix), door Elroy zelf geplakt: de
-remote-tool blokkeert bewust schrijven onder `.github/workflows/`, en die
-grens blijft.
-
-Dit is de stap die Elroy uit de correctielus haalt.
-
 ### Stap 12 — QA-bewijsbundel en semantische herstellus
-QA heeft dezelfde blinde vlek als de Builder: hij haalt alleen de gewijzigde
-bestanden van een pull request op, dus bij een testbestand ziet hij de module
-niet waar die tests tegenaan praten. QA krijgt daarom een bewijsbundel:
-gewijzigde bestanden plus diff, de opgeloste afhankelijkheden daarvan, de
-verificatieresultaten, en de succescriteria.
+Niet langer een vermoeden: alle drie de onderdelen hieronder zijn tijdens
+regressietest D live opgetreden (zie stap 11). Volgorde naar urgentie, niet
+naar netheid.
 
-Daarnaast een tweede, aparte herstelroute: `SEMANTIC_REPAIR` voor het geval
-de CI groen is maar QA een criterium afkeurt. Dat is een andere soort fout
-dan een compileerfout en vraagt een andere reparatie, met een eigen
-pogingteller. Uitgeput → `MISSION_NEEDS_REVIEW`.
+**Eerst het plafond.** De inhoudelijke herstellus heeft er geen. Blijft QA
+een criterium afkeuren, dan stuurt de Director de Builder eindeloos terug —
+bij test D drie keer achter elkaar, zeven commits, kosten maal vijf, en
+alleen te stoppen door zelf in te grijpen. Dit wordt `SEMANTIC_REPAIR` met een
+eigen pogingteller naast de technische uit stap 11 (bewust apart: een
+compileerfout en een inhoudelijk bezwaar zijn verschillende soorten fouten).
+Uitgeput → `MISSION_NEEDS_REVIEW`.
+
+**Dan de bewijsbundel.** QA heeft dezelfde blinde vlek als de Builder vóór
+stap 10: hij haalt alleen de gewijzigde bestanden van een pull request op, dus
+bij een test-only wijziging ziet hij de module niet waar die tests tegenaan
+praten. Bij test D leidde dat tot een afkeuring op iets dat gewoon in orde
+was. QA krijgt daarom dezelfde soort bewijslaag als de Builder: gewijzigde
+bestanden plus diff, de opgeloste afhankelijkheden daarvan (de resolver uit
+stap 10 is er al), de verificatieresultaten, en de succescriteria.
+
+**En de onmogelijke opdracht.** De Director vroeg de Builder om "bewijs van
+groene runs" te leveren. De Builder kan niets uitvoeren; hij schrijft alleen
+bestanden. Een opdracht die een rol vraagt om iets buiten zijn vermogen kan
+per definitie niet slagen en hoort niet uitgezet te kunnen worden. Daarbij
+hoort ook: een geslaagde CI meetellen als positief bewijs voor een criterium
+dat over de CI gaat — nu wordt alleen een falende CI verwerkt.
 
 ### Stap 13 — The Dost Council V1 (dun)
 Een raadslaag naast de Mission Engine: meerdere modellen die onafhankelijk
@@ -556,7 +650,11 @@ gaat.
 - **C** — Een module die via een barrel-export of path-alias wordt
   geïmporteerd. (pas verwacht bij stap 16)
 - **D** — Opzettelijk een compileerfout in poging 1. De CI-fout moet
-  automatisch worden hersteld binnen het pogingplafond. (stap 11)
+  automatisch worden hersteld binnen het pogingplafond. (stap 11) — GESLAAGD,
+  live gedraaid op 6 september 2026 met een met de hand geplaatste typefout op
+  de missiebranch van PR #43; hersteld in poging 1 van 3, zonder tussenkomst.
+  Zie stap 11 hierboven, inclusief de drie gebreken die dezelfde test
+  blootlegde en die nu stap 12 sturen.
 - **E** — Een missie met twee opeenvolgende Builder-toewijzingen. De tweede
   moet het werk van de eerste zien. (stap 9) — GESLAAGD, live gedraaid op
   5 september 2026, zie stap 9 hierboven.
