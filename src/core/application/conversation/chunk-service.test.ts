@@ -36,6 +36,15 @@ describe("splitConversationIntoChunks", () => {
     expect(chunks[0]).toBe(content);
   });
 
+  it("returns chunks as strings", () => {
+    const eersteChunk: string = splitConversationIntoChunks(
+      "een korte tekst",
+    )[0];
+
+    expect(typeof eersteChunk).toBe("string");
+    expect(eersteChunk).toBe("een korte tekst");
+  });
+
   it("keeps content of exactly the chunk length in a single chunk", () => {
     const content = makeText(CHUNK_LENGTH);
 
@@ -87,4 +96,3 @@ describe("splitConversationIntoChunks", () => {
     expect(chunks[1].startsWith("A")).toBe(true);
   });
 });
-const eersteChunk: number = splitConversationIntoChunks("een korte tekst")[0];
