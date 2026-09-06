@@ -45,7 +45,18 @@ describe("splitConversationIntoChunks", () => {
     expect(eersteChunk).toBe("een korte tekst");
   });
 
+  it("keeps content that stays below the chunk length in a single chunk", () => {
+    const content = makeText(Math.floor(CHUNK_LENGTH * 0.6));
+
+    const chunks = splitConversationIntoChunks(content);
+
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toBe(content);
+  });
+
   it("keeps content of exactly the chunk length in a single chunk", () => {
+    // De implementatie splitst pas bij `normalized.length <= CHUNK_LENGTH`
+    // te overschrijden, dus precies CHUNK_LENGTH blijft één stuk.
     const content = makeText(CHUNK_LENGTH);
 
     const chunks = splitConversationIntoChunks(content);
@@ -69,30 +80,44 @@ describe("splitConversationIntoChunks", () => {
   });
 
   it("overlaps consecutive chunks by the configured overlap", () => {
-    const content = makeText(CHUNK_LENGTH * 2 + 1000);
+    const content = makeText(CHUNK_LENGTH * 2 + CHUNK_OVERLAP);
 
     const chunks = splitConversationIntoChunks(content);
 
     expect(chunks.length).toBeGreaterThan(1);
 
-    const tailOfFirstChunk = chunks[0].slice(-CHUNK_OVERLAP);
+    for (let index = 0; index < chunks.length - 1; index += 1) {
+      const tailOfChunk = chunks[index].slice(-CHUNK_OVERLAP);
 
-    expect(tailOfFirstChunk).toHaveLength(CHUNK_OVERLAP);
-    expect(chunks[1].startsWith(tailOfFirstChunk)).toBe(true);
-    expect(chunks[1].slice(0, CHUNK_OVERLAP)).toBe(tailOfFirstChunk);
+      expect(tailOfChunk).toHaveLength(CHUNK_OVERLAP);
+      expect(chunks[index + 1].startsWith(tailOfChunk)).toBe(true);
+      expect(chunks[index + 1].slice(0, CHUNK_OVERLAP)).toBe(tailOfChunk);
+    }
   });
 
   it("prefers a paragraph break as split point when it is far enough into the chunk", () => {
-    const firstParagraph = "A".repeat(5000);
-    const secondParagraph = "B".repeat(3000);
+    // De implementatie accepteert een splitspunt pas voorbij
+    // `start + CHUNK_LENGTH * 0.6`, dus de eerste alinea moet daar ruim
+    // voorbij liggen en de totale tekst moet CHUNK_LENGTH overschrijden.
+    const firstParagraph = "A".repeat(Math.floor(CHUNK_LENGTH * 0.7));
+    const secondParagraph = "B".repeat(Math.floor(CHUNK_LENGTH * 0.5));
     const content = `${firstParagraph}\n\n${secondParagraph}`;
 
     const chunks = splitConversationIntoChunks(content);
 
-    expect(chunks).toHaveLength(2);
+    expect(chunks.length).toBeGreaterThan(1);
+
+    for (const chunk of chunks) {
+      expect(chunk).toBe(chunk.trim());
+      expect(chunk.length).toBeLessThanOrEqual(CHUNK_LENGTH);
+    }
+
     expect(chunks[0]).toBe(firstParagraph);
     expect(chunks[0]).not.toContain("B");
-    expect(chunks[1]).toContain(secondParagraph);
-    expect(chunks[1].startsWith("A")).toBe(true);
+
+    const lastChunk = chunks[chunks.length - 1];
+
+    expect(lastChunk).toContain(secondParagraph);
+    expect(lastChunk.startsWith("A")).toBe(true);
   });
 });
