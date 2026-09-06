@@ -257,9 +257,115 @@ verwijderde pagina gebruikte (`command-center-intro`, `-stats`, `-brain`,
 `-dashboard`, `-mission-list`). Bewust niet in dezelfde commit opgeruimd,
 zodat zichtbaar blijft wat wat is.
 
+### Tussentijdse fix — Missielijst en een teller op een dode collectie
+Twee gaten die pas zichtbaar werden toen de eigenaar alle actieve missies
+wilde afsluiten.
+
+De missielijst haalde er vijf op, gesorteerd op laatst bijgewerkt, en er is
+geen knop om verder te bladeren. Een missie buiten die vijf was daardoor via
+de UI onbereikbaar — ook als hij nog ACTIVE was en dus alleen dáár
+geannuleerd kon worden. Nu twintig, het maximum dat de API-route accepteert.
+Bewust geen echte paginering: dat is pas de moeite waard als twintig ook te
+weinig blijkt. Met twintig in beeld bleken er zeven missies open te staan,
+allemaal werk dat allang gemerged was maar met de hand was afgemaakt in
+plaats van door de Director; die zijn geannuleerd.
+
+De teller "MISSIES" in de topbar las de Firestore-collectie `missions` — het
+missiemodel van vóór Mission Engine V2, dat naar `missionEngineV2Missions`
+schrijft. Hij stond dus op echte data, maar op de verkeerde, en liep niet mee
+met de missies in de Mission Engine. Sinds het oude paneel en de dubbele
+chatpagina weg zijn, schrijft niets meer naar die collectie en stond het
+getal permanent stil. Verwijderd, samen met de missieregels in "Recent
+Activity" die uit diezelfde bron kwamen en met een vangnet op het Command
+Center dat een ontbrekende index van die dode collectie zou melden.
+
+Bewust NIET vervangen door een teller op Mission Engine V2: een juist totaal
+vraagt een telquery aan de serverkant, want de lijst-route geeft hooguit
+twintig missies terug en niet het totaal. Zolang die er niet is telt het
+scherm liever niets dan het verkeerde — dezelfde regel als bij de eerder
+verwijderde tellers "AGENTS" en "APPROVALS".
+
+### Stap 10 — Bewijslaag voor de Builder (Context Resolver V1)
+De Builder weet niets buiten zijn opdracht om, en vult alles wat daar niet in
+staat aannemelijk in. De fix uit "Tussentijdse fix — Builder testte code die
+hij nooit had gezien" stuurde bij een testbestand al de inhoud mee van de
+ANDERE bestanden uit dezelfde toewijzing, maar dat helpt alleen als de te
+testen module toevallig in diezelfde toewijzing wordt geschreven. Bij
+"schrijf tests voor de bestaande functie X" is er geen ander bestand, bleef
+dat blok leeg, en zag de Builder de code alsnog nooit — precies wat er bij
+PR #29 en #30 gebeurde.
+
+**Wat er is gebouwd.** Een nieuwe, dependency-vrije module
+`context-resolver.ts` met alle beslissingen erin, en één async functie
+`resolveTestContext()` in builder-runtime.ts die de GitHub-aanroepen doet.
+Bij een testbestand `x.test.ts` wordt `x.ts` in dezelfde map gezocht, volledig
+gelezen, en daarbij elk bestand dat die module direct importeert — één laag
+diep, niet dieper. De naamregel haalt telkens één punt-segment van achteren
+af, zodat `builder-runtime.mission-branch.test.ts` bij `builder-runtime.ts`
+uitkomt. Bovenaan de opdracht staat een contextmanifest: dit mag je
+schrijven, dit heb je gelezen, dit heb je NIET gezien, en alles wat je
+gebruikt moet letterlijk in die bestanden voorkomen.
+
+**Afwijking van het oorspronkelijke plan.** Daar stond "geen path-aliassen"
+om V1 simpel te houden. Bij het lezen van de codebase bleek dat averechts:
+dit project importeert 245 keer via `@/...` tegenover 126 keer relatief, dus
+zonder aliassen zou het bewijs grotendeels leeg blijven. Ze zitten er dus wél
+in, en dat is geen nieuw risico: `scripts/verify-imports.mjs` past dezelfde
+omzettingsregels al maandenlang betrouwbaar toe, en `resolveImportSpecifier()`
+volgt die regels.
+
+**Twee dingen die stilzwijgend fout gingen en nu niet meer kunnen.** Het
+stijlvoorbeeld was het alfabetisch eerste testbestand van de héle repository —
+zelden iets met de opdracht te maken; nu er een uit dezelfde map. En er is een
+budget van acht bewijsbestanden en 120.000 tekens, waarbij wat níet meepast
+mét reden in het manifest komt te staan. Dat laatste is de les van globals.css:
+een halve weergave mag nooit als "de volledige inhoud" gepresenteerd worden.
+
+Vindt de resolver de module onder test niet én schrijft de toewijzing zelf
+geen broncode, dan stopt hij met `INSUFFICIENT_CONTEXT` in plaats van te
+gokken. De API-route hoefde daar niets voor: `publicErrorCode()` leest sinds
+stap 5 elk `code`-veld generiek uit, precies zoals de toelichting daar
+destijds al beschreef.
+
+**Verificatie.** 26 tests voor de resolver (naamregel, importomzetting
+inclusief `@/` en index-bestanden, stijlvoorbeeld, budget, manifest) en 8
+tests voor het ophalen met een nagebootste GitHub, waaronder beide
+INSUFFICIENT_CONTEXT-paden. Die 26 zijn tijdens het bouwen ook echt
+uitgevoerd (getranspileerd en gedraaid), niet alleen gecompileerd; één faalde
+daarbij — de zoekregel voor het stijlvoorbeeld klom wel omhoog maar keek per
+stap alleen naar bestanden direct in die map.
+
+Onderweg gevonden: `verify-imports.mjs` leest élk bestand op importregels,
+inclusief voorbeeldcode binnen tekststrings. De eerste versie van de tests
+maakte CI daarmee rood met negen verzonnen "ontbrekende" imports. Opgelost
+door voorbeeldregels uit losse stukken op te bouwen, met de reden erbij in
+beide bestanden.
+
+**Live bewezen.** Missie "Tests voor de state machine van Mission Engine V2"
+(PR #40, gemerged): een opdracht van exact de soort die zes keer misging, met
+de functienamen bewust NIET in de opdracht genoemd. Het resultaat gebruikte de
+echte namen `canTransitionMission` en `assertMissionTransition`, de letterlijke
+foutmelding `Ongeldige mission-transitie: X -> Y`, de werkelijke overgangstabel
+(acht losse beweringen nagerekend), de verborgen regel dat een overgang naar
+dezelfde status altijd wordt geweigerd, en `MISSION_STATUSES` uit `mission.ts` —
+dat laatste is het bestand dat de bewijslaag erbij pakte omdat state-machine.ts
+het importeert, dus de tweede laag deed ook wat hij moest doen. Alle acht
+succescriteria op GEHAALD, CI groen, in één keer.
+
+Eerlijk erbij: dit is één missie. Het patroon van zes mislukkingen is
+doorbroken, maar één geslaagde run bewijst niet dat het altijd goed gaat.
+
+QA merkte terecht op dat het gegenereerde bestand geen afsluitende
+regelovergang heeft (nagekeken: klopt, het eindigt op `});`). Restpunt voor
+een latere opruimronde. QA's tweede suggestie — de hardgecodeerde
+foutteksten in de test koppelen aan de formulering in state-machine.ts — is
+bewust NIET overgenomen: dan vergelijkt de test de code met zichzelf en kan
+hij per definitie niet meer merken dát die tekst verandert.
+
 ## Voorgestelde volgende stappen
 
-Stap 9 t/m 14 zijn door Claude bedacht als logisch vervolg op de voltooide
+Stap 11 t/m 14 (oorspronkelijk 9 t/m 14; 9 en 10 staan inmiddels hierboven
+onder Voltooid) zijn door Claude bedacht als logisch vervolg op de voltooide
 stappen, gebaseerd op wat Elroy al eerder heeft aangegeven te willen
 (multi-LLM, Claude ingebed in de app zelf, een écht autonome Director) en op
 concrete technische kanttekeningen die tijdens het bouwen van stap 1 t/m 6
@@ -312,22 +418,6 @@ snelst uit de handmatige correctielus haalt, gaat vóór architectonische
 volledigheid. Reden: er is geen team dat dit bouwt, en de rol die het zou
 moeten bouwen (de Builder) is precies de kapotte rol — elke stap wordt met
 de hand geschreven en door Elroy gecommit.
-
-### Stap 10 — Bewijslaag voor de Builder (Context Resolver V1)
-Splits binnen een toewijzing expliciet twee soorten bestanden: schrijfbare
-bestanden (mag gewijzigd worden) en leesbaar bewijs (moet zichtbaar zijn,
-mag niet gewijzigd worden). Voor een testbestand wordt automatisch de module
-onder test plus zijn directe relatieve imports als bewijs meegestuurd, plus
-een relevant bestaand testbestand uit dezelfde map (nu is dat de alfabetisch
-eerste uit de hele repo — willekeurig). In de prompt komt een expliciet
-contextmanifest: dit is wat je daadwerkelijk hebt gezien.
-
-Bewust dom en deterministisch in V1: geen AST-analyse, geen path-aliassen,
-geen barrel-exports. Kan het benodigde bewijs niet betrouwbaar worden
-gevonden, dan faalt de toewijzing expliciet met een gestructureerde fout
-`INSUFFICIENT_CONTEXT` — in dezelfde stijl als de bestaande foutcodes uit
-stap 5, en in dezelfde geest als het bestaande harde falen bij te grote
-bestanden. Liever expliciet stoppen dan stilzwijgend gokken.
 
 ### Stap 11 — Verificatie als missiestatus, met technische herstellus
 GitHub Actions is de uitvoeromgeving die we al hebben; we gebruiken hem
