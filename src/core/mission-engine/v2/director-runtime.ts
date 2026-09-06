@@ -14,6 +14,7 @@ import {
   listPullRequests,
   mergePullRequest,
 } from "./github/github-client";
+import { collectCiFailureReport } from "./ci-failure-source";
 import { hasPassedAllCriteria, type MissionV2 } from "./mission";
 import { proposeMissionKnowledge } from "./mission-knowledge";
 import { findMissionPullRequest } from "./qa-runtime";
@@ -425,9 +426,15 @@ export async function ensureMissionPullRequestMerged(mission: MissionV2): Promis
   const ciStatus = await getCombinedCheckStatus(target, pr.headSha);
 
   if (ciStatus.state === "failure") {
+    // Roadmapstap 11: de echte foutmelding erbij, niet alleen de naam van de
+    // gefaalde controle. Zie ci-failure-source.ts.
+    const failureReport = await collectCiFailureReport(target, pr.headSha);
+
     throw new DirectorRuntimeError(
       "CI_CHECKS_FAILED",
-      `Alle succescriteria van deze missie zijn al gehaald, maar de CI-check(s) op pull request #${pr.number} ("${pr.title}") zijn mislukt (${ciStatus.failingCheckNames.join(", ")}) — de Director mergt daarom NIET, ongeacht de risicoclassificatie. Los de CI-fout eerst op via een nieuwe builder-toewijzing en laat QA opnieuw oordelen voordat je het opnieuw probeert: ${pr.url}`,
+      `Alle succescriteria van deze missie zijn al gehaald, maar de CI-check(s) op pull request #${pr.number} ("${pr.title}") zijn mislukt (${ciStatus.failingCheckNames.join(", ")}) — de Director mergt daarom NIET, ongeacht de risicoclassificatie. Los de CI-fout eerst op via een nieuwe builder-toewijzing en laat QA opnieuw oordelen voordat je het opnieuw probeert: ${pr.url}${
+        failureReport ? `\n\n${failureReport}` : ""
+      }`,
     );
   }
 
