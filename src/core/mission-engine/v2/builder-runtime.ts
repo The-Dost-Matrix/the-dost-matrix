@@ -20,6 +20,16 @@ import {
 } from "./github/github-client";
 import { MISSION_BRANCH_NAME } from "./mission-branch";
 import type { MissionV2 } from "./mission";
+import {
+  BuilderContextError,
+  buildContextManifest,
+  findExampleTestFile,
+  findModuleUnderTest,
+  resolveDirectImports,
+  selectEvidenceWithinBudget,
+  type EvidenceFile,
+  type EvidenceSelection,
+} from "./context-resolver";
 
 /**
  * Builder Runtime v0 — de eerste versie van de Builder-rol die daadwerkelijk
@@ -346,11 +356,25 @@ interface SingleFileWriteResult {
  * bepaald en waarom niet-testbestanden altijd vóór testbestanden worden
  * geschreven binnen dezelfde toewijzing (zodat siblingFiles altijd de
  * daadwerkelijk NIEUWE inhoud bevat, niet de oude).
+ *
+ * WAT ER SINDS STAP 10 BIJ IS GEKOMEN (`evidenceFiles`)
+ *
+ * Die fix hierboven werkte alleen wanneer de te testen module toevallig in
+ * DEZELFDE toewijzing werd geschreven. Bij "schrijf tests voor de bestaande
+ * functie X" is er geen ander bestand in de toewijzing, bleef siblingFiles
+ * leeg, en zag de Builder de code nog steeds niet — precies wat er bij pull
+ * request #29 en #30 gebeurde, ondanks de waarschuwing hierboven.
+ *
+ * `evidenceFiles` sluit dat gat: de module onder test en de bestanden die
+ * die module direct importeert, opgezocht in de repository zelf. Zie
+ * context-resolver.ts voor hoe die worden gevonden, en resolveTestContext()
+ * hieronder voor hoe ze worden opgehaald.
  */
 export function buildTestContextBlock(
   siblingFiles: BuilderFileChange[],
   exampleTestFile: { path: string; content: string } | null,
   usesVitest: boolean,
+  evidenceFiles: readonly EvidenceFile[] = [],
 ): string {
   const sections: string[] = [
     "BELANGRIJK — dit is een testbestand. Verzin NOOIT een functienaam, parameter, importpad of returnwaarde: gebruik uitsluitend wat je hieronder daadwerkelijk in de broncode ziet staan. Komt een functie niet voor in de broncode hieronder, dan bestaat hij niet en mag je hem niet gebruiken.",
@@ -360,6 +384,16 @@ export function buildTestContextBlock(
     sections.push(
       "Dit project gebruikt vitest, niet Jest: importeer describe/it/expect/vi (en indien nodig beforeEach/afterEach/beforeAll/afterAll) altijd expliciet uit 'vitest'. Gebruik nooit jest.*, en gebruik describe/it nooit als impliciete globals zonder import.",
     );
+  }
+
+  if (evidenceFiles.length > 0) {
+    sections.push(
+      "",
+      "Volledige, daadwerkelijke inhoud van de module die je test en van de bestanden die die module direct importeert. Dit is BEWIJS: je mag deze bestanden niet wijzigen, maar alle namen, parameters en returnwaarden die je gebruikt moeten hier letterlijk in staan.",
+    );
+    for (const evidence of evidenceFiles) {
+      sections.push(`--- ${evidence.path} ---`, evidence.content, `--- einde ${evidence.path} ---`);
+    }
   }
 
   if (siblingFiles.length > 0) {
@@ -383,6 +417,87 @@ export function buildTestContextBlock(
   }
 
   return sections.join("\n");
+}
+
+/**
+ * Alles wat één testbestand aan bewijs meekrijgt: de bestanden die het
+ * daadwerkelijk te zien krijgt, wat er niet in paste, en een stijlvoorbeeld.
+ */
+export interface BuilderTestContext {
+  evidence: EvidenceSelection;
+  exampleTestFile: { path: string; content: string } | null;
+}
+
+/**
+ * Verzamelt het bewijs voor één testbestand: de module onder test plus de
+ * bestanden die die module direct importeert.
+ *
+ * Waarom dit hier staat en niet in context-resolver.ts: dit is het enige
+ * deel dat GitHub moet aanroepen. Alle beslissingen — wélke module,
+ * wélke imports, wát er binnen het budget past — zitten in
+ * context-resolver.ts en zijn daar zonder netwerk getest.
+ *
+ * `hasWritableSources` geeft aan of deze toewijzing zelf al broncode
+ * schrijft die het testbestand kan testen (de siblingFiles-situatie). Is dat
+ * zo, dan is een ontbrekende module onder test geen probleem: het bewijs
+ * komt dan uit de toewijzing zelf. Is dat niet zo en wordt de module ook
+ * niet gevonden, dan zou de Builder tegen code moeten testen die hij nooit
+ * heeft gezien — en dat is precies het scenario dat we niet meer willen. Er
+ * wordt dan gestopt met INSUFFICIENT_CONTEXT in plaats van gegokt.
+ */
+export async function resolveTestContext(
+  target: GithubRepoTarget,
+  ref: string,
+  testPath: string,
+  plannedPaths: readonly string[],
+  treePaths: readonly string[],
+  hasWritableSources: boolean,
+): Promise<BuilderTestContext> {
+  const modulePath = findModuleUnderTest(testPath, treePaths);
+
+  if (!modulePath && !hasWritableSources) {
+    throw new BuilderContextError(
+      "INSUFFICIENT_CONTEXT",
+      `Voor het testbestand "${testPath}" is geen bijbehorende module in de repository gevonden, en deze toewijzing schrijft zelf ook geen broncode die getest kan worden. De Builder zou dus moeten testen tegen code die hij nooit heeft gezien. Splits de toewijzing op, of noem het te testen bestand expliciet in de opdracht.`,
+    );
+  }
+
+  const candidates: EvidenceFile[] = [];
+
+  if (modulePath) {
+    const module = await getFileContent(target, modulePath, ref);
+
+    if (!module) {
+      throw new BuilderContextError(
+        "INSUFFICIENT_CONTEXT",
+        `De module onder test ("${modulePath}") staat wel in de bestandenlijst van de branch, maar de inhoud kon niet worden opgehaald. Er wordt gestopt in plaats van door te gaan zonder die inhoud.`,
+      );
+    }
+
+    candidates.push({ path: modulePath, content: module.content });
+
+    // Eén laag diep: de bestanden waar de module zelf tegenaan praat.
+    // Bestanden die deze toewijzing al schrijft blijven eruit — die komen
+    // langs siblingFiles binnen, met hun NIEUWE inhoud in plaats van de oude.
+    for (const importPath of resolveDirectImports(modulePath, module.content, treePaths)) {
+      if (plannedPaths.includes(importPath)) continue;
+
+      const imported = await getFileContent(target, importPath, ref);
+      if (imported) candidates.push({ path: importPath, content: imported.content });
+    }
+  }
+
+  const evidence = selectEvidenceWithinBudget(candidates);
+
+  let exampleTestFile: { path: string; content: string } | null = null;
+  const examplePath = findExampleTestFile(testPath, treePaths, plannedPaths);
+
+  if (examplePath) {
+    const example = await getFileContent(target, examplePath, ref);
+    if (example) exampleTestFile = { path: examplePath, content: example.content };
+  }
+
+  return { evidence, exampleTestFile };
 }
 
 /**
@@ -430,7 +545,7 @@ async function writeSingleFile(
   file: PlannedFile,
   usageTracker: UsageTracker,
   siblingFiles: BuilderFileChange[],
-  exampleTestFile: { path: string; content: string } | null,
+  testContext: BuilderTestContext | null,
   usesVitest: boolean,
 ): Promise<SingleFileWriteResult> {
   const provider = getChatProvider();
@@ -463,11 +578,29 @@ async function writeSingleFile(
       : `Huidige inhoud van dit bestand:\n---\n${file.currentContent}\n---`;
 
   const otherPaths = plan.paths.filter((path) => path !== file.path);
-  const testContextBlock = isTestFilePath(file.path)
-    ? buildTestContextBlock(siblingFiles, exampleTestFile, usesVitest)
+
+  const testContextBlock = testContext
+    ? buildTestContextBlock(
+        siblingFiles,
+        testContext.exampleTestFile,
+        usesVitest,
+        testContext.evidence.included,
+      )
+    : "";
+
+  // Het manifest staat bewust bovenaan, vóór de opdracht zelf: het is geen
+  // verantwoording achteraf maar de regel waaronder de rest gelezen moet
+  // worden. Alleen wat hier genoemd staat bestaat; de rest niet.
+  const manifestBlock = testContext
+    ? buildContextManifest({
+        writablePaths: plan.paths,
+        evidence: testContext.evidence,
+        examplePath: testContext.exampleTestFile?.path ?? null,
+      })
     : "";
 
   const userPrompt = [
+    manifestBlock,
     buildAssignmentDescription(mission, assignment),
     "",
     `Jouw plan: ${plan.planSummary}`,
@@ -524,7 +657,7 @@ async function writeFiles(
   plan: BuilderPlan,
   plannedFiles: PlannedFile[],
   usageTracker: UsageTracker,
-  exampleTestFile: { path: string; content: string } | null,
+  testContextByPath: ReadonlyMap<string, BuilderTestContext>,
   usesVitest: boolean,
 ): Promise<BuilderWriteResult> {
   const files: BuilderFileChange[] = [];
@@ -543,7 +676,7 @@ async function writeFiles(
       file,
       usageTracker,
       siblingFiles,
-      exampleTestFile,
+      testContextByPath.get(file.path) ?? null,
       usesVitest,
     );
     files.push({ path: file.path, content: written.content });
@@ -698,25 +831,30 @@ export async function executeBuilderAssignment({
     (entry) => entry.type === "blob" && /^vitest\.config\.(ts|mts|js|mjs)$/.test(entry.path),
   );
 
-  // Eén bestaand testbestand uit de repository ophalen als stijl-/
-  // frameworkvoorbeeld — maar alleen wanneer deze toewijzing daadwerkelijk
-  // een testbestand bevat, om onnodige GitHub-aanroepen te vermijden.
-  let exampleTestFile: { path: string; content: string } | null = null;
-  if (plan.paths.some((path) => isTestFilePath(path))) {
-    const exampleTestPath = tree
-      .filter(
-        (entry) =>
-          entry.type === "blob" && isTestFilePath(entry.path) && !plan.paths.includes(entry.path),
-      )
-      .map((entry) => entry.path)
-      .sort()[0];
+  // Bewijslaag (roadmapstap 10). Per testbestand apart, want het bewijs
+  // hangt af van wélke module dat testbestand test.
+  //
+  // Hiervóór werd hier één stijlvoorbeeld voor de hele toewijzing gekozen:
+  // het alfabetisch eerste testbestand van de héle repository. Dat had
+  // zelden iets met de opdracht te maken, en verder kreeg de Builder geen
+  // enkel bestaand bestand te zien wanneer de toewijzing alleen uit een
+  // testbestand bestond. Zie context-resolver.ts en resolveTestContext().
+  const treePaths = tree.filter((entry) => entry.type === "blob").map((entry) => entry.path);
+  const hasWritableSources = plan.paths.some((path) => !isTestFilePath(path));
 
-    if (exampleTestPath) {
-      const example = await getFileContent(target, exampleTestPath, missionBranch);
-      if (example) {
-        exampleTestFile = { path: exampleTestPath, content: example.content };
-      }
-    }
+  const testContextByPath = new Map<string, BuilderTestContext>();
+  for (const path of plan.paths.filter((candidate) => isTestFilePath(candidate))) {
+    testContextByPath.set(
+      path,
+      await resolveTestContext(
+        target,
+        missionBranch,
+        path,
+        plan.paths,
+        treePaths,
+        hasWritableSources,
+      ),
+    );
   }
 
   const plannedFiles: PlannedFile[] = [];
@@ -735,7 +873,7 @@ export async function executeBuilderAssignment({
     plan,
     plannedFiles,
     usageTracker,
-    exampleTestFile,
+    testContextByPath,
     usesVitest,
   );
 
