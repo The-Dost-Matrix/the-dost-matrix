@@ -257,9 +257,65 @@ interface DirectorLlmDecision {
   role: DispatchableRole;
 }
 
-function extractJson(text: string): string {
+/**
+ * Haalt het JSON-besluit uit het antwoord van de Director.
+ *
+ * Eerst een codeblok, want dat is wat een model het vaakst doet ondanks de
+ * instructie "uitsluitend JSON". Staat er geen codeblok, dan wordt het
+ * buitenste `{ ... }` genomen in plaats van de hele tekst: een model dat er
+ * "Hier is mijn besluit:" voor zet leverde anders een onbruikbare fout op,
+ * terwijl het besluit zelf gewoon in het antwoord stond.
+ *
+ * Dit is dezelfde aanpak die qa-runtime.ts al gebruikt (extractJsonObject);
+ * de Director bleef achter met een strengere variant. Hier geen eigen fout
+ * gooien bij het ontbreken van accolades — de aanroeper hieronder maakt er
+ * één met de diagnose erbij.
+ */
+export function extractJson(text: string): string {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  return (fenced ? fenced[1] : text).trim();
+  const candidate = (fenced ? fenced[1] : text).trim();
+
+  // Bewust geen snelle uitweg voor tekst die al met "{" begint: een model dat
+  // ná het besluit nog een zin schrijft ("Laat me weten of dit klopt.")
+  // levert dan alsnog onleesbare JSON op. Altijd van de eerste accolade tot
+  // de laatste knippen dekt alle vier de gevallen: kaal, in een codeblok, met
+  // tekst ervoor, en met tekst erna.
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+
+  return start !== -1 && end > start ? candidate.slice(start, end + 1) : candidate;
+}
+
+/** Hoeveel tekens van een onleesbaar antwoord in de foutmelding komen. */
+export const MAX_DIRECTOR_ERROR_EXCERPT = 300;
+
+/**
+ * De foutmelding bij een onleesbaar Director-antwoord, mét bewijs.
+ *
+ * De oude melding was "kon het antwoord niet als JSON lezen. Probeer het
+ * opnieuw." — en gooide precies datgene weg wat nodig is om te weten wat er
+ * misging. Opnieuw proberen is dan het enige wat je kunt doen, ook wanneer
+ * het elke keer opnieuw zal mislukken.
+ *
+ * `stopReason` staat er apart bij omdat die het verschil vertelt tussen een
+ * antwoord dat door het tokenplafond is afgekapt ("max_tokens" — plafond
+ * omhoog) en een model dat gewoon iets anders schreef dan JSON (een
+ * prompt-probleem). Zie de toelichting bij ChatCompletionResult in
+ * core/llm/types.ts.
+ */
+export function buildDirectorParseErrorMessage(
+  content: string,
+  stopReason: string | undefined,
+): string {
+  const excerpt = content.trim().slice(0, MAX_DIRECTOR_ERROR_EXCERPT);
+  const truncated = content.trim().length > MAX_DIRECTOR_ERROR_EXCERPT ? "…" : "";
+
+  return [
+    "De Director gaf geen geldig besluit terug (kon het antwoord niet als JSON lezen).",
+    `Reden van stoppen volgens het model: ${stopReason ?? "onbekend"}.`,
+    `Antwoordlengte: ${content.trim().length} tekens.`,
+    `Begin van het antwoord: ${excerpt || "(leeg)"}${truncated}`,
+  ].join(" ");
 }
 
 function buildDirectorPrompt(
@@ -351,7 +407,7 @@ async function decideNextStep(
     parsed = JSON.parse(extractJson(completion.content));
   } catch {
     throw new Error(
-      "De Director gaf geen geldig besluit terug (kon het antwoord niet als JSON lezen). Probeer het opnieuw.",
+      buildDirectorParseErrorMessage(completion.content, completion.stopReason),
     );
   }
 
