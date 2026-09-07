@@ -21,10 +21,12 @@ import type { KnowledgeType } from "@/core/domain/knowledge/knowledge-entry";
 import { createAndActivateMissionV2 } from "@/core/mission-engine/v2/mission-factory";
 import { listMissionsForOwner } from "@/core/mission-engine/v2/firestore-store";
 import { buildProjectStateBlock } from "@/core/application/director/project-state";
+import {
+  ROADMAP_PATH,
+  collectProjectSignals,
+} from "@/core/application/director/project-signals";
 
 export const MAX_CHAT_CONTENT_LENGTH = 8_000;
-/** Enige bron van waarheid voor de projectstand; zie project-state.ts. */
-const ROADMAP_PATH = "docs/roadmap.md";
 const MAX_MEMORY_CONTENT_LENGTH = 12_000;
 const MAX_CODEBASE_TREE_LENGTH = 24_000;
 
@@ -410,15 +412,25 @@ export async function sendChatMessage(
   await createChatMessage({ ownerId, role: "user", content: trimmed });
 
   const embeddingProvider = getEmbeddingProvider();
-  // De roadmap en de missielijst worden bij ELK bericht opgehaald, niet
-  // alleen wanneer de Director erom vraagt. Zie project-state.ts voor waarom:
-  // gevraagd naar openstaande taken gaf hij een lijst die grotendeels al
-  // gedaan was, omdat hij uit de gespreksgeschiedenis putte in plaats van uit
-  // de actuele stand. Dit is dezelfde les als bij de Builder (stap 10) en QA
-  // (stap 12) — het bewijs vóór het model neerleggen in plaats van hopen dat
-  // het ernaar vraagt.
-  const [queryEmbedding, codebaseSnapshot, roadmapResults, recentMissions] =
-  await Promise.all([
+  // De roadmap, de missielijst en de zelf-bijwerkende signalen worden bij ELK
+  // bericht opgehaald, niet alleen wanneer de Director erom vraagt. Zie
+  // project-state.ts voor waarom: gevraagd naar openstaande taken gaf hij een
+  // lijst die grotendeels al gedaan was, omdat hij uit de
+  // gespreksgeschiedenis putte in plaats van uit de actuele stand. Dit is
+  // dezelfde les als bij de Builder (stap 10) en QA (stap 12) — het bewijs
+  // vóór het model neerleggen in plaats van hopen dat het ernaar vraagt.
+  //
+  // De signalen (openstaande pull requests, wachtende kennisitems, ouderdom
+  // van de roadmap) staan er los bij omdat de roadmap met de hand wordt
+  // bijgehouden: zonder die drie zou dit blok stiller worden naarmate er
+  // minder wordt bijgehouden, en dat is precies de verkeerde kant op.
+  const [
+    queryEmbedding,
+    codebaseSnapshot,
+    roadmapResults,
+    recentMissions,
+    projectSignals,
+  ] = await Promise.all([
     embeddingProvider
       ? embeddingProvider.embed(trimmed)
       : Promise.resolve(null),
@@ -427,6 +439,9 @@ export async function sendChatMessage(
     // Een mislukte missie-ophaling mag een chatbericht nooit blokkeren: dan
     // is het blok onvolledig, en dat zegt het blok dan ook zelf.
     listMissionsForOwner(ownerId, 20).catch(() => []),
+    // collectProjectSignals gooit zelf nooit; elk onderdeel dat mislukt komt
+    // als null terug en wordt in het blok als "onbekend" getoond.
+    collectProjectSignals(ownerId),
   ]);
   const engineeringGate =
   await createEngineeringGate(ownerId);
@@ -481,6 +496,9 @@ const projectStateBlock = buildProjectStateBlock({
     status: mission.status,
     title: mission.title,
   })),
+  openPullRequests: projectSignals.openPullRequests,
+  pendingKnowledgeCount: projectSignals.pendingKnowledgeCount,
+  roadmapFreshness: projectSignals.roadmapFreshness,
 });
 
 const contextBlock =

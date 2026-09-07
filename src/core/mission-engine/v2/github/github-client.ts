@@ -400,6 +400,12 @@ export interface PullRequestSummary {
   state: string;
   url: string;
   title: string;
+  /**
+   * Wanneer de pull request is aangemaakt, als ISO-tekst. Optioneel omdat
+   * bestaande testdubbels dit veld niet vullen; gebruikt door de Director-chat
+   * om te laten zien hoe lang een pull request al openstaat (project-state.ts).
+   */
+  createdAt?: string;
 }
 
 /**
@@ -418,6 +424,7 @@ export async function listPullRequests(
       number: number;
       head: { ref: string; sha: string };
       merged_at: string | null;
+      created_at?: string;
       state: string;
       html_url: string;
       title: string;
@@ -434,6 +441,10 @@ export async function listPullRequests(
     state: pr.state,
     url: pr.html_url,
     title: pr.title,
+    // Voorwaardelijk, zodat het veld afwezig blijft in plaats van undefined:
+    // dezelfde reden als bij `kind` in engine.ts — Firestore en strikte
+    // vergelijkingen gaan anders alsnog over een undefined struikelen.
+    ...(pr.created_at ? { createdAt: pr.created_at } : {}),
   }));
 }
 
@@ -814,6 +825,73 @@ export async function getJobLog(
       return { log: null, unavailableReason: "het logboek is door GitHub verwijderd (verlopen)" };
     }
 
+    throw error;
+  }
+}
+
+/** Eén commit, teruggebracht tot wat er nodig is om ouderdom te bepalen. */
+export interface CommitSummary {
+  sha: string;
+  committedAt: string;
+}
+
+/**
+ * De laatste commit die een specifiek bestand raakte.
+ *
+ * Toegevoegd om te kunnen bepalen hóe oud docs/roadmap.md is ten opzichte van
+ * de rest van het project: zonder dat zou de Director een met de hand
+ * bijgehouden document als actuele waarheid presenteren, ook wanneer er
+ * sindsdien tientallen commits zijn geland. Zie project-state.ts.
+ */
+export async function getLatestCommitForPath(
+  target: GithubRepoTarget,
+  filePath: string,
+): Promise<CommitSummary | null> {
+  try {
+    const data = await githubRequest<
+      { sha: string; commit: { committer?: { date?: string }; author?: { date?: string } } }[]
+    >(
+      `/repos/${target.owner}/${target.repo}/commits?path=${encodeURIComponent(filePath)}&per_page=1`,
+    );
+
+    const first = data[0];
+    if (!first) return null;
+
+    const committedAt = first.commit.committer?.date ?? first.commit.author?.date;
+    if (!committedAt) return null;
+
+    return { sha: first.sha, committedAt };
+  } catch (error) {
+    if (error instanceof GithubApiError && (error.status === 403 || error.status === 404)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Hoeveel commits er sinds een tijdstip op de standaardbranch zijn geland.
+ *
+ * Begrensd op honderd: het verschil tussen "vijf commits achter" en "meer dan
+ * honderd commits achter" verandert niets aan de conclusie, en een exacte
+ * telling zou pagineren betekenen bij elke chatbeurt.
+ */
+export async function countCommitsSince(
+  target: GithubRepoTarget,
+  sinceIso: string,
+): Promise<{ count: number; capped: boolean }> {
+  try {
+    const data = await githubRequest<{ sha: string }[]>(
+      `/repos/${target.owner}/${target.repo}/commits?since=${encodeURIComponent(sinceIso)}&per_page=100`,
+    );
+
+    // De commit op exact dat tijdstip is de wijziging zelf en telt niet mee.
+    const count = Math.max(0, data.length - 1);
+    return { count, capped: data.length >= 100 };
+  } catch (error) {
+    if (error instanceof GithubApiError && (error.status === 403 || error.status === 404)) {
+      return { count: 0, capped: false };
+    }
     throw error;
   }
 }
