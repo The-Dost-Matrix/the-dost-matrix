@@ -357,7 +357,12 @@ doorbroken, maar één geslaagde run bewijst niet dat het altijd goed gaat.
 
 QA merkte terecht op dat het gegenereerde bestand geen afsluitende
 regelovergang heeft (nagekeken: klopt, het eindigt op `});`). Restpunt voor
-een latere opruimronde. QA's tweede suggestie — de hardgecodeerde
+een latere opruimronde. **Inmiddels geen incident meer**: bij PR #54
+(7 september 2026) viel QA over exact hetzelfde. Twee van de twee door de
+Builder geschreven testbestanden missen die regelovergang, dus dit is een
+vast patroon van de schrijfroutine en niet iets van één missie. Het hoort
+daarom niet thuis in een opruimronde maar in de Builder zelf: een afsluitende
+`\n` afdwingen bij het wegschrijven van een bestand. QA's tweede suggestie — de hardgecodeerde
 foutteksten in de test koppelen aan de formulering in state-machine.ts — is
 bewust NIET overgenomen: dan vergelijkt de test de code met zichzelf en kan
 hij per definitie niet meer merken dát die tekst verandert.
@@ -588,6 +593,47 @@ Wat dit niet oplost: de drie signalen dekken lang niet alles, en dat staat er
 ook zo bij. Het verschil is dat het blok nu hardop toegeeft wat het niet weet,
 in plaats van dat gat op te vullen met een oud document.
 
+### Tussentijds — De Director las zijn eigen besluit stuk, en wat dat kostte
+Een missie liep vast op "De Director gaf geen geldig besluit terug (kon het
+antwoord niet als JSON lezen). Probeer het opnieuw." Het antwoord was 2953
+tekens lang en volkomen geldige JSON. De extractiefunctie zocht altijd éérst
+naar een markdown-codeblok en nam blind de inhoud daarvan. Dit besluit gíng
+over codeblokken: in `nextAction` stond dat de Builder moest testen of een
+antwoord "in markdown-codehekken (```json ... ```)" nog gelezen wordt. Die
+hekken stonden dus middenin een JSON-tekstwaarde. De functie knipte
+daartussenuit en hield `...` over.
+
+**De fix.** Niet meer raden welke vorm het antwoord heeft, maar vier vormen
+op volgorde proberen en de eerste nemen die daadwerkelijk te parsen is: kaal
+JSON, JSON met tekst eromheen, de inhoud van een codeblok, en JSON binnen dat
+codeblok. Kaal JSON wint altijd; een codeblok komt pas in beeld als het
+antwoord als geheel onleesbaar is. Geverifieerd door het echte gelogde
+antwoord er als invoer doorheen te halen, niet door erover te redeneren.
+
+Onderweg meegenomen: de OpenAI-provider las `finish_reason` niet uit en zette
+dus nooit `stopReason`, terwijl de Anthropic-provider dat al deed en zelfs
+expliciet waarschuwt bij afkappen. Sinds de overstap naar OpenAI was een
+afgekapt antwoord daardoor niet te onderscheiden van een model dat gewoon
+geen JSON schreef. Gelijkgetrokken.
+
+**Wat dit vooral kostte, en dat is de eigenlijke les.** Drie volledige
+oplevercycli op één avond (21:02, 21:22, 21:38), waarvan twee overbodig.
+Ronde 1 was een aanpassing op grond van de 300 tekens die de UI toonde van
+een 2953 tekens lang antwoord — de oorzaak zat in het onzichtbare deel, en de
+wijziging raakte hem niet. Ronde 2 was het logboek dat dat deel zichtbaar
+maakte. Ronde 3 duurde vijf minuten, want toen stond de oorzaak er gewoon:
+`naExtractie: '...'`. Met het logboek als eerste ronde was het in één keer
+klaar geweest.
+
+Elke oplevering kost de eigenaar uitpakken, typecheck, 300+ tests, branch,
+commit, push, PR, merge, opruimen en een herstart van de dev-server. Daaruit
+volgt een harde regel, die ook in de samenwerkings-skill is vastgelegd: faalt
+er iets en is niet te zien waaróm, dan is de eerste wijziging er één die het
+zichtbaar maakt — nooit een gok die als oplossing verpakt is. Volledige
+foutmeldingen gaan naar het serverlogboek (een rode balk in de UI kan geen
+drieduizend tekens tonen), en bewijs dat op de pc van de eigenaar staat wordt
+zelf opgehaald in plaats van hem zijn eigen terminal in te sturen.
+
 ## Voorgestelde volgende stappen
 
 Stap 12 t/m 14 (oorspronkelijk 9 t/m 14; 9, 10 en 11 staan inmiddels hierboven
@@ -773,9 +819,33 @@ gaat.
 
 - **A** — Tests toevoegen aan een bestaande functie met twee argumenten,
   terwijl wijzigen van productiecode verboden is. De Builder moet de echte
-  signatuur lezen en groene tests opleveren zonder tussenkomst. (stap 10)
+  signatuur lezen en groene tests opleveren zonder tussenkomst. (stap 10) —
+  GESLAAGD, en wel door dezelfde run als stap 10 hierboven: PR #40 testte
+  `canTransitionMission(from, to)` — twee argumenten, test-only, en de
+  functienamen stonden bewust niet in de opdracht. Achteraf hier vastgelegd
+  op 7 september 2026; het stond er alleen nooit als criterium A bij, waardoor
+  de Director het bleef melden als openstaand. Een document dat achterloopt
+  liegt in twee richtingen.
 - **B** — Een functie testen waarvan het gedrag afhangt van geïmporteerde
-  helpers met gemockte returnvormen. Geen verzonnen vormen. (stap 10)
+  helpers met gemockte returnvormen. Geen verzonnen vormen. (stap 10) —
+  GESLAAGD, live gedraaid op 7 september 2026 met de missie "Tests voor de
+  Knowledge Review Agent" (PR #54, gemerged). De Builder moest `reviewer.ts`
+  testen, dat zijn LLM-provider via `getChatProvider()` ophaalt. Hij mockte
+  die met exact de aanroepvorm uit de bron — `chatCompletion(systemPrompt,
+  messages)` — en liet hem teruggeven wat de bron werkelijk uitleest:
+  `{ content, model }`. Alle vier de foutmeldingen die hij assert staan
+  letterlijk zo in `reviewer.ts`. Acht tests in plaats van de zes gevraagde;
+  de twee extra dekken dat `edit` óók faalt als alleen de titel ontbreekt, en
+  dat spaties rond een tekstvoorstel worden weggehaald — details die je alleen
+  ziet als je de bron echt gelezen hebt. Alle acht succescriteria op GEHAALD,
+  CI groen, kosten $0,27.
+
+  QA deed hier precies waar stap 12 voor bedoeld was. Het criterium "geen
+  verzonnen en geen ontbrekende velden" was door mij slordig geformuleerd (de
+  mock geeft `{ chatCompletion }` terug terwijl `LlmProvider` ook een `id`
+  heeft). QA redeneerde daar expliciet over en oordeelde dat het criterium
+  gaat over de teruggegeven wáárde, die exact klopt — een geredeneerd oordeel
+  tegen de echte broncode, geen afvinkerij. Dat oordeel houdt stand.
 - **C** — Een module die via een barrel-export of path-alias wordt
   geïmporteerd. (pas verwacht bij stap 16)
 - **D** — Opzettelijk een compileerfout in poging 1. De CI-fout moet
@@ -789,4 +859,24 @@ gaat.
   5 september 2026, zie stap 9 hierboven.
 - **F** — QA een test-only diff voorleggen met een bewust verkeerde
   mock-signatuur. QA moet die afkeuren op inhoud, niet pas via de CI.
-  (stap 12)
+  (stap 12) — NOG NIET GEDRAAID. De opzet is wel uitgezocht op 7 september
+  2026, zodat een volgende sessie dat niet opnieuw hoeft te doen:
+
+  - **QA kan niet twee keer oordelen.** Staan alle succescriteria op PASSED
+    en loopt er geen toewijzing, dan zet `runDirectorStep` een nieuwe
+    qa-toewijzing dwingend om in COMPLETE_MISSION en gaat de missie mergen.
+    De fout injecteren ná QA's goedkeuring kan dus niet.
+  - **Het venster zit tussen de Builder en QA.** Eén klik op "Laat de
+    Director de volgende stap zetten" is precies één beslissing plus één
+    rol-uitvoering; daarna staat de missie stil. Na de klik die de Builder
+    draait kan de aangepaste testversie naar de missiebranch worden gepusht,
+    en pakt QA bij de volgende klik die versie op (hij haalt de bestanden op
+    bij de actuele `headSha` van de pull request). Dezelfde werkwijze als bij
+    regressietest D.
+  - **De fout moet CI-onzichtbaar zijn.** Een verkeerde mock die de typecheck
+    of de tests rood maakt toetst niets: dan vángt de CI het, en juist dát is
+    wat F wil uitsluiten. De fout moet dus een verzonnen vorm zijn waar de
+    test zelf consistent mee is.
+  - **Let op de opdrachttekst.** Wordt de Builder gestuurd om het fout te
+    doen, dan ziet QA dat de fout gevraagd was en is het oordeel besmet. De
+    injectie moet dus buiten de opdracht om.
