@@ -12,6 +12,7 @@ import {
   getFileContent,
   getGithubRepoTarget,
   getPullRequestFiles,
+  getRepoTree,
   listPullRequests,
   type CombinedCheckStatus,
   type GithubRepoTarget,
@@ -20,6 +21,13 @@ import {
 } from "./github/github-client";
 import { QA_BRANCH_PREFIX } from "./mission-branch";
 import { collectCiFailureReport } from "./ci-failure-source";
+import {
+  findModuleUnderTest,
+  resolveDirectImports,
+  selectEvidenceWithinBudget,
+  type EvidenceFile,
+  type EvidenceSelection,
+} from "./context-resolver";
 import type { MissionV2 } from "./mission";
 
 /**
@@ -302,10 +310,130 @@ function formatEvidenceForPrompt(evidence: QaFileEvidence[]): string {
     .join("\n\n---\n\n");
 }
 
+/**
+ * Referentiebestanden: bestanden die NIET in deze pull request zitten, maar
+ * die QA wel moet zien om erover te kunnen oordelen (roadmapstap 12).
+ *
+ * WAAROM DIT ER IS
+ *
+ * QA kreeg tot nu toe uitsluitend de gewijzigde bestanden van de pull
+ * request. Bij een wijziging die alleen een testbestand toevoegt, betekent
+ * dat: hij ziet de tests, maar niet de module waar die tests tegenaan praten.
+ * Precies dezelfde blinde vlek die de Builder had vóór stap 10.
+ *
+ * Bij regressietest D liep dat mis: QA keurde een criterium af omdat hij niet
+ * kon nagaan of `CHUNK_LENGTH` wel geëxporteerd werd. Dat wérd het — hij kon
+ * het alleen niet zien. De missie liep daarop vast.
+ *
+ * De oplossing hergebruikt letterlijk de resolver uit stap 10: bij elk
+ * gewijzigd bestand wordt gezocht of het een testbestand is met een
+ * bijbehorende module, en zo ja, dan gaan die module en zijn directe imports
+ * mee als leesbaar bewijs. `findModuleUnderTest` geeft vanzelf `null` voor
+ * een pad dat geen testbestand is, dus er is geen aparte controle nodig.
+ */
+export async function fetchReferenceEvidence(
+  target: GithubRepoTarget,
+  ref: string,
+  changedPaths: readonly string[],
+  treePaths: readonly string[],
+): Promise<EvidenceSelection> {
+  const changed = new Set(changedPaths);
+  const candidates: EvidenceFile[] = [];
+  const seen = new Set<string>();
+
+  for (const changedPath of changedPaths) {
+    const modulePath = findModuleUnderTest(changedPath, treePaths);
+
+    // Zit de module zelf al in de pull request, dan ziet QA hem al.
+    if (!modulePath || changed.has(modulePath) || seen.has(modulePath)) continue;
+
+    const module = await getFileContent(target, modulePath, ref);
+    if (!module) continue;
+
+    seen.add(modulePath);
+    candidates.push({ path: modulePath, content: module.content });
+
+    for (const importPath of resolveDirectImports(modulePath, module.content, treePaths)) {
+      if (changed.has(importPath) || seen.has(importPath)) continue;
+
+      const imported = await getFileContent(target, importPath, ref);
+      if (!imported) continue;
+
+      seen.add(importPath);
+      candidates.push({ path: importPath, content: imported.content });
+    }
+  }
+
+  return selectEvidenceWithinBudget(candidates);
+}
+
+/**
+ * Zet het referentiebewijs om in prompttekst.
+ *
+ * Twee dingen staan er nadrukkelijk in. Ten eerste dat deze bestanden GEEN
+ * onderdeel zijn van de pull request — anders gaat QA er commentaar op geven
+ * alsof het meegeleverd werk is. Ten tweede wat er NIET meegestuurd is en
+ * waarom; dat is dezelfde regel als bij het contextmanifest van de Builder:
+ * ontbrekende context mag nooit onzichtbaar zijn.
+ */
+export function formatReferenceEvidenceForPrompt(selection: EvidenceSelection): string {
+  if (selection.included.length === 0 && selection.omitted.length === 0) return "";
+
+  const parts: string[] = [
+    "Referentiebestanden — deze zitten NIET in de pull request en zijn NIET door deze missie gewijzigd. Ze staan er alleen zodat je kunt controleren of wat er in de gewijzigde bestanden gebeurt daadwerkelijk klopt (bestaan de gebruikte functies, exports en typen echt?). Beoordeel deze bestanden niet zelf en geef er geen commentaar op.",
+  ];
+
+  for (const file of selection.included) {
+    parts.push(`### ${file.path} (referentie, ongewijzigd)`, file.content);
+  }
+
+  if (selection.omitted.length > 0) {
+    parts.push(
+      "NIET meegestuurd als referentie — hierover kun je dus niets vaststellen:",
+      ...selection.omitted.map((entry) => `- ${entry.path} (${entry.reason})`),
+    );
+  }
+
+  return parts.join("\n\n");
+}
+
+/**
+ * De uitkomst van de CI als expliciet bewijs in de prompt (roadmapstap 12).
+ *
+ * Bij regressietest D keurde QA het criterium "typecheck en tests zijn groen"
+ * af met de reden dat hij het niet kon vaststellen — terwijl de CI op dat
+ * moment gewoon groen was. Een falende CI werd al hard verwerkt (zie
+ * applyFailingCiOverride), maar een geslaagde CI werd nergens als positief
+ * bewijs meegegeven. Dat gat wordt hier gedicht.
+ *
+ * Bewust geen automatisch GEHAALD: het blijft een oordeel van QA of dit
+ * criterium hiermee gedekt is. Wat verandert is dat hij het gegeven nu heeft.
+ */
+export function describeCiOutcomeForPrompt(ciStatus: CombinedCheckStatus): string {
+  const intro =
+    "Uitkomst van de automatische CI-controle op deze pull request (mechanisch vastgesteld door GitHub, geen inschatting):";
+
+  if (ciStatus.state === "success") {
+    return `${intro} GESLAAGD. De code compileert en de geautomatiseerde tests draaien zonder fouten. Gaat een succescriterium hierover, gebruik dit dan als bewijs in plaats van te schrijven dat je het niet kunt vaststellen.`;
+  }
+
+  if (ciStatus.state === "failure") {
+    return `${intro} MISLUKT (${ciStatus.failingCheckNames.join(", ")}).`;
+  }
+
+  if (ciStatus.state === "pending") {
+    return `${intro} nog niet afgerond (${ciStatus.pendingCheckNames.join(", ")}).`;
+  }
+
+  return `${intro} er zijn geen CI-controles geregistreerd voor deze commit. Je kunt hier dus niets uit afleiden, in geen van beide richtingen.`;
+}
+
 async function evaluateCriteriaAgainstEvidence(
   mission: MissionV2,
   pr: PullRequestSummary,
   evidenceText: string,
+  referenceText: string,
+  ciStatus: CombinedCheckStatus,
 ): Promise<{ verdict: QaLlmVerdict; model: string; usage?: ChatCompletionResult["usage"] }> {
   const provider = getChatProvider();
 
@@ -321,6 +449,9 @@ async function evaluateCriteriaAgainstEvidence(
     "",
     "Bewijsmateriaal per gewijzigd bestand (huidige volledige inhoud + diff van déze pull request):",
     evidenceText,
+    referenceText,
+    "",
+    describeCiOutcomeForPrompt(ciStatus),
     "",
     "Antwoord exact in dit JSON-formaat, niets anders:",
     "{",
@@ -537,7 +668,25 @@ export async function executeQaAssignment({
   const evidence = await fetchFullFileContents(target, files.slice(0, MAX_FILES_CONSIDERED), pr.headSha);
   const evidenceText = formatEvidenceForPrompt(evidence);
 
-  const { verdict, model, usage } = await evaluateCriteriaAgainstEvidence(mission, pr, evidenceText);
+  // Roadmapstap 12: bestanden erbij die niet in de pull request zitten maar
+  // wel nodig zijn om erover te kunnen oordelen. Zie fetchReferenceEvidence.
+  const tree = await getRepoTree(target, pr.headSha);
+  const treePaths = tree.filter((entry) => entry.type === "blob").map((entry) => entry.path);
+  const referenceEvidence = await fetchReferenceEvidence(
+    target,
+    pr.headSha,
+    files.map((file) => file.filename),
+    treePaths,
+  );
+  const referenceText = formatReferenceEvidenceForPrompt(referenceEvidence);
+
+  const { verdict, model, usage } = await evaluateCriteriaAgainstEvidence(
+    mission,
+    pr,
+    evidenceText,
+    referenceText,
+    ciStatus,
+  );
   const afterRecommendation = applyBlockingRecommendation(verdict.criteria, verdict);
   const recommendationOverrode = afterRecommendation !== verdict.criteria;
 
