@@ -161,6 +161,51 @@ interface BuilderPlan {
 }
 
 /**
+ * Leest de door de Builder genoemde bestandslijst uit en maakt er een
+ * schone, unieke lijst paden van.
+ *
+ * GEVONDEN ROOT CAUSE (live, missie "Tests voor de labelfuncties"): de
+ * Builder noemde hetzelfde bestand twee keer op de BESTANDEN-regel. Er werd
+ * nergens ontdubbeld, dus datzelfde pad kwam twee keer in het plan, werd twee
+ * keer geschreven, en de tweede schrijfactie liep vast op GitHub met
+ * 422 "Invalid request. \"sha\" wasn't supplied." — bij de eerste schrijfactie
+ * bestond het bestand nog niet (geen sha nodig), bij de tweede wel (sha
+ * verplicht), maar de sha die was opgehaald vóór het schrijven was leeg.
+ *
+ * Twee dingen worden hier daarom gedaan, in deze volgorde:
+ *
+ * 1. Normaliseren. "./x", "/x" en "x" zijn hetzelfde bestand; zonder dit zou
+ *    ontdubbelen ze als drie verschillende paden zien en het probleem
+ *    blijven bestaan. Ook dubbele schuine strepen binnenin worden platgeslagen.
+ * 2. Ontdubbelen, met behoud van de oorspronkelijke volgorde — die volgorde
+ *    bepaalt verderop welk bestand eerst geschreven wordt, en dat is niet
+ *    willekeurig (niet-testbestanden gaan bewust vóór testbestanden).
+ *
+ * De begrenzing op MAX_FILES_PER_ASSIGNMENT gebeurt pas ná het ontdubbelen:
+ * anders zou een lijst met duplicaten onbedoeld minder échte bestanden
+ * opleveren dan toegestaan.
+ */
+export function parsePlannedPaths(bestandenLine: string): string[] {
+  const seen = new Set<string>();
+  const paths: string[] = [];
+
+  for (const entry of bestandenLine.split(",")) {
+    const normalized = entry
+      .trim()
+      .replace(/^\.\/+/, "")
+      .replace(/^\/+/, "")
+      .replace(/\/{2,}/g, "/");
+
+    if (normalized.length === 0 || seen.has(normalized)) continue;
+
+    seen.add(normalized);
+    paths.push(normalized);
+  }
+
+  return paths.slice(0, MAX_FILES_PER_ASSIGNMENT);
+}
+
+/**
  * Vraagt welke bestanden de Builder wil aanmaken/aanpassen.
  *
  * GEEN JSON meer (zoals een eerdere versie deed): "planSummary" is vrije,
@@ -205,11 +250,7 @@ async function planFiles(
   const bestandenLine = extractLabeledLine(completion.content, "BESTANDEN");
   const summaryBlock = extractLabeledBlock(completion.content, "SAMENVATTING");
 
-  const paths = (bestandenLine ?? "")
-    .split(",")
-    .map((entry) => entry.trim().replace(/^\/+/, ""))
-    .filter((entry) => entry.length > 0)
-    .slice(0, MAX_FILES_PER_ASSIGNMENT);
+  const paths = parsePlannedPaths(bestandenLine ?? "");
 
   if (paths.length === 0) {
     throw new Error("De Builder kon geen bestanden bepalen om aan te passen voor deze opdracht.");

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildTestContextBlock, isTestFilePath } from "./builder-runtime";
+import { buildTestContextBlock, isTestFilePath, parsePlannedPaths } from "./builder-runtime";
 
 /**
  * Tests voor de fix op de root cause achter vier opeenvolgende kapotte
@@ -86,5 +86,45 @@ describe("buildTestContextBlock", () => {
   it("laat het voorbeeldgedeelte weg wanneer er geen exampleTestFile is", () => {
     const block = buildTestContextBlock([], null, true);
     expect(block).not.toContain("Ter referentie");
+  });
+});
+
+describe("parsePlannedPaths", () => {
+  it("leest een gewone, kommagescheiden lijst", () => {
+    expect(parsePlannedPaths("src/a.ts, src/b.ts")).toEqual(["src/a.ts", "src/b.ts"]);
+  });
+
+  it("noemt hetzelfde bestand maar één keer", () => {
+    // Dit is de live gevonden oorzaak van een 422 bij GitHub: hetzelfde pad
+    // twee keer schrijven binnen één toewijzing.
+    expect(parsePlannedPaths("src/a.test.ts, src/a.test.ts")).toEqual(["src/a.test.ts"]);
+  });
+
+  it("ziet ./x, /x en x als hetzelfde bestand", () => {
+    expect(parsePlannedPaths("./src/a.ts, /src/a.ts, src/a.ts")).toEqual(["src/a.ts"]);
+  });
+
+  it("slaat dubbele schuine strepen binnen een pad plat", () => {
+    expect(parsePlannedPaths("src//core//a.ts")).toEqual(["src/core/a.ts"]);
+  });
+
+  it("negeert lege stukken en overtollige spaties", () => {
+    expect(parsePlannedPaths(" src/a.ts , , src/b.ts ,")).toEqual(["src/a.ts", "src/b.ts"]);
+  });
+
+  it("houdt de oorspronkelijke volgorde aan", () => {
+    expect(parsePlannedPaths("src/b.ts, src/a.ts")).toEqual(["src/b.ts", "src/a.ts"]);
+  });
+
+  it("telt het maximum pas ná het ontdubbelen", () => {
+    const line = Array.from({ length: 12 }, (_, index) => `src/a${index % 3}.ts`).join(", ");
+
+    // Twaalf vermeldingen, maar slechts drie verschillende bestanden: die
+    // drie moeten er allemaal doorheen komen.
+    expect(parsePlannedPaths(line)).toEqual(["src/a0.ts", "src/a1.ts", "src/a2.ts"]);
+  });
+
+  it("geeft een lege lijst bij een lege regel", () => {
+    expect(parsePlannedPaths("")).toEqual([]);
   });
 });
