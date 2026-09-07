@@ -19,8 +19,12 @@ import {
 } from "@/core/repositories/knowledge-repository";
 import type { KnowledgeType } from "@/core/domain/knowledge/knowledge-entry";
 import { createAndActivateMissionV2 } from "@/core/mission-engine/v2/mission-factory";
+import { listMissionsForOwner } from "@/core/mission-engine/v2/firestore-store";
+import { buildProjectStateBlock } from "@/core/application/director/project-state";
 
 export const MAX_CHAT_CONTENT_LENGTH = 8_000;
+/** Enige bron van waarheid voor de projectstand; zie project-state.ts. */
+const ROADMAP_PATH = "docs/roadmap.md";
 const MAX_MEMORY_CONTENT_LENGTH = 12_000;
 const MAX_CODEBASE_TREE_LENGTH = 24_000;
 
@@ -406,12 +410,23 @@ export async function sendChatMessage(
   await createChatMessage({ ownerId, role: "user", content: trimmed });
 
   const embeddingProvider = getEmbeddingProvider();
-  const [queryEmbedding, codebaseSnapshot] =
+  // De roadmap en de missielijst worden bij ELK bericht opgehaald, niet
+  // alleen wanneer de Director erom vraagt. Zie project-state.ts voor waarom:
+  // gevraagd naar openstaande taken gaf hij een lijst die grotendeels al
+  // gedaan was, omdat hij uit de gespreksgeschiedenis putte in plaats van uit
+  // de actuele stand. Dit is dezelfde les als bij de Builder (stap 10) en QA
+  // (stap 12) — het bewijs vóór het model neerleggen in plaats van hopen dat
+  // het ernaar vraagt.
+  const [queryEmbedding, codebaseSnapshot, roadmapResults, recentMissions] =
   await Promise.all([
     embeddingProvider
       ? embeddingProvider.embed(trimmed)
       : Promise.resolve(null),
     createCodebaseSnapshot(),
+    readWorkspaceFiles([ROADMAP_PATH]),
+    // Een mislukte missie-ophaling mag een chatbericht nooit blokkeren: dan
+    // is het blok onvolledig, en dat zegt het blok dan ook zelf.
+    listMissionsForOwner(ownerId, 20).catch(() => []),
   ]);
   const engineeringGate =
   await createEngineeringGate(ownerId);
@@ -457,7 +472,19 @@ const directorMemory =
   Vraag maximaal 8 bestanden tegelijk op en gebruik alleen paden uit de boomstructuur.
   Vraag nooit om secrets, .env-bestanden, credentials of gegenereerde mappen.
   Na ontvangst van de bestanden beantwoord je de oorspronkelijke vraag feitelijk.`;
+const roadmapResult = roadmapResults[0];
+const projectStateBlock = buildProjectStateBlock({
+  roadmapText: roadmapResult && "content" in roadmapResult ? roadmapResult.content : "",
+  roadmapUnavailableReason:
+    roadmapResult && "error" in roadmapResult ? roadmapResult.error : null,
+  missions: recentMissions.map((mission) => ({
+    status: mission.status,
+    title: mission.title,
+  })),
+});
+
 const contextBlock =
+  projectStateBlock +
   directorMemory.promptContext +
   codebaseContext;
 
