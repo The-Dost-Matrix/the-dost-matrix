@@ -555,6 +555,39 @@ roadmapstap. Neveneffect om te onthouden: zodra een model op een document
 wordt gebaseerd, wordt de nauwkeurigheid van dát document de zwakste schakel —
 deze roadmap moet dus bijgewerkt zijn vóórdat de Director erover adviseert.
 
+### Tussentijds — Signalen die zichzelf bijwerken, en geen valse geruststelling
+Het vorige punt eindigde met een waarschuwing in een bijzin. Elroy zag er
+meteen het echte probleem in: "als ik hier stop met jou om de roadmap te
+updaten, dan zal de director altijd antwoorden: nee, niks heeft aandacht
+nodig. Dat is gewoon manipulatie eigenlijk." Terecht. Een blok dat stiller
+wordt naarmate er minder wordt bijgehouden, klinkt het meest geruststellend
+precies wanneer er het meeste ongemerkt blijft liggen — en de instructie
+"behandel dit blok als de waarheid" maakte die stilte ook nog gezaghebbend.
+
+Twee dingen veranderd. Ten eerste staan er nu drie signalen bij die niemand
+hoeft op te schrijven, opgehaald bij elk chatbericht
+(`project-signals.ts`, de ophaallaag; `project-state.ts` blijft puur):
+
+- **openstaande pull requests op GitHub**, met hoe lang ze al openstaan — een
+  PR die blijft hangen is onafgemaakt werk, wat de roadmap er ook over zegt;
+- **kennisitems die op beoordeling wachten** in Firestore;
+- **de ouderdom van docs/roadmap.md**: wanneer het bestand voor het laatst is
+  aangeraakt en hoeveel commits er sindsdien zijn geland. Vanaf tien commits
+  zegt het blok zelf dat de roadmap achterloopt en dat er werk is gedaan dat
+  er niet in beschreven staat.
+
+Ten tweede is de instructie omgedraaid. Het blok is nog steeds gezaghebbend
+over wat het lát zien, maar zegt er nu expliciet bij dat het **geen volledige
+lijst** is van wat aandacht nodig heeft, en dat "er is niets" nooit uit een
+leeg blok mag volgen. "Dat kan ik niet vaststellen, en dit zou je moeten
+bekijken" is een toegestaan antwoord; een geruststelling zonder grond niet.
+Een mislukte ophaling wordt "onbekend" en nooit stilzwijgend "geen" — dat
+onderscheid is in beide modules getest.
+
+Wat dit niet oplost: de drie signalen dekken lang niet alles, en dat staat er
+ook zo bij. Het verschil is dat het blok nu hardop toegeeft wat het niet weet,
+in plaats van dat gat op te vullen met een oud document.
+
 ## Voorgestelde volgende stappen
 
 Stap 12 t/m 14 (oorspronkelijk 9 t/m 14; 9, 10 en 11 staan inmiddels hierboven
