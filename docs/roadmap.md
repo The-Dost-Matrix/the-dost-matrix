@@ -634,6 +634,69 @@ foutmeldingen gaan naar het serverlogboek (een rode balk in de UI kan geen
 drieduizend tekens tonen), en bewijs dat op de pc van de eigenaar staat wordt
 zelf opgehaald in plaats van hem zijn eigen terminal in te sturen.
 
+## Restpunten
+
+Kleine dingen die bij een grotere stap zijn gesignaleerd en bewust zijn
+blijven liggen. Ze stonden tot 7 september 2026 verspreid door de tekst
+hierboven, waardoor niemand overzicht had en het er alleen maar meer werden.
+Vandaar dit hoofdstuk: één plek, met per punt hoe groot het is.
+
+Elk punt staat hier als eigen kopje, zodat de Director ze meekrijgt in zijn
+projectstand-index (die leest alleen `###`-kopjes). Een restpunt dat alleen
+in een alinea staat, bestaat voor hem niet.
+
+Verdwijnt een punt, haal het kopje dan weg in plaats van er "opgelost" achter
+te zetten — anders groeit dit hoofdstuk alsnog dicht.
+
+### Restpunt — Builder schrijft bestanden zonder afsluitende regelovergang
+Twee van de twee door de Builder geschreven testbestanden (PR #40, PR #54)
+eindigen zonder `\n`. QA valt er elke keer over en noemt het terecht
+cosmetisch, maar het kost wel elke keer aandacht. Geen opruimklusje: hoort in
+de schrijfroutine van de Builder, die een afsluitende regelovergang moet
+afdwingen. **Klein.**
+
+### Restpunt — Dode stijlblokken in globals.css
+`command-center-intro`, `-stats`, `-brain`, `-dashboard` en `-mission-list`
+werden alleen gebruikt door de verwijderde `/dashboard/chat`-pagina. Bewust
+niet in dezelfde commit opgeruimd zodat zichtbaar bleef wat wat was; die
+reden is inmiddels vervallen. **Klein.**
+
+### Restpunt — Opdrachttekst van een toewijzing is nergens zichtbaar
+De tekst die een rol meekrijgt wordt wel opgeslagen op de toewijzing, maar is
+in de app niet te zien. Daardoor kon bij regressietest D niet worden
+vastgesteld óf het CI-logboek daadwerkelijk in de herstelopdracht zat, of dat
+de Builder de fout uit het bestand zelf afleidde. Dit blokkeert dus
+verificatie, en is daarmee meer dan cosmetisch. **Middel** — hoort logisch bij
+stap 17 (in-app CI/PR-zichtbaarheid).
+
+### Restpunt — De beoordeelwachtrij kan stilletijds items verbergen
+De kennispagina luistert naar de 250 nieuwste kennisitems van álle statussen
+door elkaar. Op 7 september stonden er 181 goedgekeurd; komt het totaal boven
+de 250, dan verdwijnen de oudste wachtende items uit de wachtrij terwijl de
+Director ze wel blijft tellen. Precies de onzichtbaarheid die dit project
+elders bestrijdt. Snelle pleister: de grens omhoog. Nette oplossing: de
+wachtrij apart bevragen op `status == "pending"`, wat een nieuwe
+Firestore-index vraagt (`ownerId + status + createdAt`, staat nog niet in
+`firestore.indexes.json`). **Klein tot middel.**
+
+### Restpunt — Afgewezen kennisitems zijn onzichtbaar
+De kennispagina toont alleen wachtende en goedgekeurde items. Wat de AI (of
+de eigenaar) afwijst verdwijnt uit beeld en is alleen via de Firebase-console
+terug te vinden. Na een bulkactie op tientallen items is dat geen prettige
+eigenschap: een onterechte afwijzing is niet meer te zien, laat staan terug
+te draaien. **Klein.**
+
+### Restpunt — Van LLM-provider wisselen kan alleen via .env.local
+Er is geen keuzemogelijkheid in de app; wisselen betekent een sleutel
+weghalen uit `.env.local` en de dev-server herstarten. Werkt, maar het is
+onhandig en het is niet af te lezen wélke provider een missie daadwerkelijk
+heeft gedraaid zonder in een logregel te kijken. **Klein.**
+
+### Restpunt — Oude branches op GitHub en lokaal
+Er staan ongeveer tien branches van afgeronde missies en handmatige fixes die
+nooit zijn opgeruimd. **Klein**, maar het maakt het lastiger om te zien wat
+er nog echt loopt.
+
 ## Voorgestelde volgende stappen
 
 Stap 12 t/m 14 (oorspronkelijk 9 t/m 14; 9, 10 en 11 staan inmiddels hierboven
