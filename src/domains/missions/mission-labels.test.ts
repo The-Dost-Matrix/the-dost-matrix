@@ -89,11 +89,13 @@ describe("formatMissionCost", () => {
 
     const result = formatMissionCost(mission);
 
-    // Bewust geen vergelijking met een geformatteerde getalstring: het
-    // scheidingsteken van toLocaleString("nl-NL") mag hier niet uitmaken,
-    // daarom een regex die zowel punt als komma toestaat.
-    expect(result).toMatch(/12[.,]34/);
-    expect(result).toContain("25");
+    // Extraheer beide bedragen in uitvoervolgorde en vergelijk numeriek:
+    // een punt of komma en eventuele afsluitende nullen maken niet uit.
+    const spent = result
+      .match(/-?\d+(?:[.,]\d+)?/g)
+      ?.map((label) => Number(label.replace(",", ".")));
+
+    expect(spent).toEqual([mission.spentCost, mission.budget.maximumCost]);
     expect(result).toContain("EUR");
   });
 
@@ -105,8 +107,12 @@ describe("formatMissionCost", () => {
 
     expect(result).toContain(currency);
     expect(result).not.toContain("EUR");
-    expect(result).toMatch(/0[.,]50/);
-    expect(result).toContain("3");
+
+    const spent = result
+      .match(/-?\d+(?:[.,]\d+)?/g)
+      ?.map((label) => Number(label.replace(",", ".")));
+
+    expect(spent).toEqual([mission.spentCost, mission.budget.maximumCost]);
   });
 
   it("geeft altijd een niet-lege string terug, ook als er nog niets is uitgegeven", () => {
