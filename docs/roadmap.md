@@ -460,6 +460,101 @@ De missie is met de hand afgerond: PR #43 zelf gemerged (CI groen, werk in
 orde) en de missie daarna geannuleerd, omdat een missie met één afgekeurd
 criterium niet op voltooid kan komen.
 
+### Stap 12 — Plafond op de inhoudelijke lus, en bewijs voor QA
+Alle drie de onderdelen kwamen uit regressietest D (zie stap 11), niet uit een
+vermoeden.
+
+**Deel 1 — het plafond.** De inhoudelijke herstellus had er geen: bleef QA een
+criterium afkeuren, dan stuurde de Director de Builder eindeloos terug. Nu
+dezelfde opzet als de technische lus uit stap 11: een vaste poort vóór het
+taalmodel, met een eigen teller (`semantic-repair.ts`, kind
+`SEMANTIC_REPAIR`), maximaal twee pogingen, daarna
+`SEMANTIC_REPAIR_EXHAUSTED`.
+
+Twee en niet drie, bewust: bij de technische lus staat vást dat er iets stuk
+is, hier gaat het om een oordeel. Blijft dat na twee gerichte rondes staan,
+dan is het even waarschijnlijk dat het bezwaar niet klopt of dat het criterium
+niet te bewijzen is als geformuleerd. De melding bij het plafond noemt daarom
+alle drie de mogelijkheden en niet alleen "QA heeft gelijk".
+
+De opdrachttekst wordt door de code opgesteld, niet door het taalmodel. Daarin
+staat expliciet dat de Builder QA mág tegenspreken wanneer het bezwaar
+aantoonbaar niet klopt (anders is de snelste weg naar een tevreden QA het
+slopen van correcte code), dat hij nooit een test mag verzwakken, en dat hij
+zelf niets kan uitvoeren — vraagt een criterium daarom, dan moet hij dat
+zeggen in plaats van te doen alsof. Dat laatste lost het derde gebrek uit test
+D bij de bron op: de Director vroeg de Builder toen om "bewijs van groene
+runs", wat die per definitie niet kan leveren.
+
+**Deel 2 — de bewijsbundel voor QA.** QA kreeg alleen de gewijzigde bestanden
+van een pull request. Bij een test-only wijziging zag hij de module niet waar
+die tests tegenaan praten — dezelfde blinde vlek als de Builder vóór stap 10,
+en bij test D leidde dat tot een afkeuring op iets dat gewoon in orde was. QA
+krijgt nu referentiebestanden mee: de module onder test plus haar directe
+imports, opgezocht met exact dezelfde resolver uit stap 10. Er staat
+nadrukkelijk bij dat die bestanden geen onderdeel van de wijziging zijn en
+niet beoordeeld moeten worden, en wat er niet in paste wordt met reden
+benoemd.
+
+Daarnaast telt een geslaagde CI nu mee als positief bewijs. Dat was scheef:
+een falende CI zette alle criteria hard op niet-gehaald, maar een geslaagde
+werd nergens gebruikt — terwijl het afgekeurde criterium bij test D letterlijk
+over de CI ging. Bewust geen automatisch GEHAALD: het blijft QA's oordeel of
+het criterium ermee gedekt is; wat verandert is dat hij het gegeven heeft.
+
+**Live bewezen.** Missie "Tests voor de labelfuncties van de Mission Engine"
+(PR #48): QA gebruikte de CI-uitslag als bewijs ("De automatisch vastgestelde
+GitHub CI-uitkomst is GESLAAGD"), waar hij bij test D op dezelfde soort vraag
+nog "niet te controleren" antwoordde. Het plafond hield: twee pogingen, daarna
+de melding met de drie mogelijke oorzaken.
+
+**Wat die missie blootlegde.** Bij de tweede poging had de Builder het
+criterium wél gehaald — de kostenassertie vergelijkt numeriek na het
+verwijderen van opmaak — maar QA bleef afkeuren. Twee oorzaken, allebei
+leerzaam:
+
+1. Het criterium was negatief geformuleerd ("er wordt nergens hard vergeleken
+   met een tekst als 0,50"). Een afwezigheid over een heel bestand bewijzen is
+   precies waar een beoordelaar aan blijft twijfelen. Formuleer criteria
+   positief en aantoonbaar.
+2. QA kan maar twee dingen zeggen: gehaald of niet gehaald. Twijfel en
+   afkeuring zijn niet hetzelfde, maar het systeem kent dat verschil niet — zie
+   stap 12b.
+
+Bijvangst, live gevonden en apart gerepareerd: de Builder kon hetzelfde
+bestand twee keer in één plan zetten, waarna de tweede schrijfactie bij GitHub
+strandde op 422 ("sha wasn't supplied"). De bestandenlijst wordt nu
+genormaliseerd (`./x`, `/x` en `x` zijn hetzelfde bestand) en ontdubbeld
+vóórdat de grens van acht bestanden geteld wordt.
+
+### Tussentijds — De Director baseert zich op de actuele stand
+Gevraagd welke taken aandacht nodig hadden, gaf de Director een lijst die
+grotendeels achterhaald was: missies sluiten die al gesloten waren, tellers
+controleren die diezelfde dag verwijderd waren, lessen vertalen naar
+controles die al gebouwd waren. Hij zei het zelf in zijn eerste zin: "Ik kan
+de actuele Firestore-status hier niet zelf vaststellen."
+
+Dat was letterlijk waar en toch misleidend: hij kán projectbestanden lezen en
+de roadmap staat in de repository. Hij deed het alleen niet uit zichzelf.
+Dezelfde fout als bij de Builder vóór stap 10 en QA vóór stap 12, nu bij de
+Director — en dezelfde oplossing: het bewijs vóór hem neerleggen in plaats van
+hopen dat hij erom vraagt.
+
+Bij elk chatbericht gaan nu automatisch mee: de kopjesstructuur van
+docs/roadmap.md (met per kop of hij onder Voltooid staat of onder de
+voorstellen) en de twintig meest recent bijgewerkte missies met hun status.
+Het aantal openstaande missies wordt door de code geteld, niet door het model.
+Er staat expliciet bij dat dit blok wint van zijn eigen herinnering, met de
+reden erbij: hij ziet maar twintig berichten. Bewust de index en niet de
+volledige roadmap — die is bijna 40 KB; voor details kan hij het bestand
+alsnog opvragen.
+
+Direct effect, gemeten met dezelfde vraag: "Volgens de actuele projectstand
+staan er momenteel geen openstaande missies", en de juiste eerstvolgende
+roadmapstap. Neveneffect om te onthouden: zodra een model op een document
+wordt gebaseerd, wordt de nauwkeurigheid van dát document de zwakste schakel —
+deze roadmap moet dus bijgewerkt zijn vóórdat de Director erover adviseert.
+
 ## Voorgestelde volgende stappen
 
 Stap 12 t/m 14 (oorspronkelijk 9 t/m 14; 9, 10 en 11 staan inmiddels hierboven
@@ -517,33 +612,34 @@ volledigheid. Reden: er is geen team dat dit bouwt, en de rol die het zou
 moeten bouwen (de Builder) is precies de kapotte rol — elke stap wordt met
 de hand geschreven en door Elroy gecommit.
 
-### Stap 12 — QA-bewijsbundel en semantische herstellus
-Niet langer een vermoeden: alle drie de onderdelen hieronder zijn tijdens
-regressietest D live opgetreden (zie stap 11). Volgorde naar urgentie, niet
-naar netheid.
+### Stap 12b — QA mag twijfelen, en de eigenaar krijgt de vraag
+Twee keer op één dag liep een missie vast op een criterium dat aantoonbaar
+gehaald was, zonder dat er een uitweg bestond. De oorzaak is niet dat de
+rollen te dom zijn, maar dat ze geen manier hebben om te zeggen wat er aan de
+hand is.
 
-**Eerst het plafond.** De inhoudelijke herstellus heeft er geen. Blijft QA
-een criterium afkeuren, dan stuurt de Director de Builder eindeloos terug —
-bij test D drie keer achter elkaar, zeven commits, kosten maal vijf, en
-alleen te stoppen door zelf in te grijpen. Dit wordt `SEMANTIC_REPAIR` met een
-eigen pogingteller naast de technische uit stap 11 (bewust apart: een
-compileerfout en een inhoudelijk bezwaar zijn verschillende soorten fouten).
-Uitgeput → `MISSION_NEEDS_REVIEW`.
+**QA kan maar twee dingen zeggen.** Gehaald of niet gehaald. Twijfel — "ik kan
+dit niet vaststellen uit wat ik gekregen heb" — komt er daarom uit als een
+afkeuring. QA krijgt een derde antwoord: NIET VAST TE STELLEN, met de reden,
+los van afgekeurd.
 
-**Dan de bewijsbundel.** QA heeft dezelfde blinde vlek als de Builder vóór
-stap 10: hij haalt alleen de gewijzigde bestanden van een pull request op, dus
-bij een test-only wijziging ziet hij de module niet waar die tests tegenaan
-praten. Bij test D leidde dat tot een afkeuring op iets dat gewoon in orde
-was. QA krijgt daarom dezelfde soort bewijslaag als de Builder: gewijzigde
-bestanden plus diff, de opgeloste afhankelijkheden daarvan (de resolver uit
-stap 10 is er al), de verificatieresultaten, en de succescriteria.
+**En de uitweg loopt dood.** De Director kán besluiten de eigenaar een vraag
+te stellen (`REQUEST_OWNER_INPUT`), de status `WAITING_FOR_OWNER` bestaat, en
+`engine.recordOwnerInput()` is volledig geïmplementeerd inclusief
+gebeurtenis. Maar de API-route kent de actie niet en de UI heeft geen knop: een
+missie die daar belandt kan alleen nog geannuleerd worden. De vraag kán dus
+gesteld worden, het antwoord kan nooit gegeven worden. Daarom is het nog nooit
+gebeurd.
 
-**En de onmogelijke opdracht.** De Director vroeg de Builder om "bewijs van
-groene runs" te leveren. De Builder kan niets uitvoeren; hij schrijft alleen
-bestanden. Een opdracht die een rol vraagt om iets buiten zijn vermogen kan
-per definitie niet slagen en hoort niet uitgezet te kunnen worden. Daarbij
-hoort ook: een geslaagde CI meetellen als positief bewijs voor een criterium
-dat over de CI gaat — nu wordt alleen een falende CI verwerkt.
+Te bouwen: zegt QA "niet vast te stellen", of is het plafond uit stap 12
+bereikt, dan stelt de Director de vraag aan de eigenaar in plaats van te
+stoppen — met het criterium, de twijfel van QA en het tegenargument van de
+Builder erbij. De app toont die vraag en laat de eigenaar antwoorden (gehaald
+of niet gehaald, met een reden die op het criterium bewaard blijft), waarna de
+missie doorloopt.
+
+Dit is bewust geen losse "overrule QA"-knop: het is het afmaken van een lus
+die er half in zat. De eigenaar is de opdrachtgever, QA is een adviseur.
 
 ### Stap 13 — The Dost Council V1 (dun)
 Een raadslaag naast de Mission Engine: meerdere modellen die onafhankelijk
