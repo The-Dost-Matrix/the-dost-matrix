@@ -60,6 +60,33 @@ describe("extractJson", () => {
   it("geeft de tekst ongewijzigd terug wanneer er geen object in zit, zodat JSON.parse de fout maakt", () => {
     expect(extractJson("helemaal geen JSON")).toBe("helemaal geen JSON");
   });
+
+  it("laat zich niet misleiden door codehekken binnen een tekstwaarde", () => {
+    // Dit is het echte antwoord dat op 7 september 2026 een missie liet
+    // vastlopen, teruggebracht tot het kenmerk dat ertoe deed: de Director
+    // beschreef in nextAction dat de Builder moest testen op markdown-hekken,
+    // en schreef die hekken daarmee middenin een geldige JSON-tekstwaarde.
+    // De oude versie knipte tussen die hekken en hield "..." over.
+    const answer = [
+      "{",
+      '  "decisionType": "DISPATCH_ROLE",',
+      '  "role": "builder",',
+      '  "nextAction": "Test dat een antwoord in codehekken (```json ... ```) alsnog gelezen wordt.",',
+      '  "successCriteria": ["De CI is groen."]',
+      "}",
+    ].join("\n");
+
+    const extracted = extractJson(answer);
+
+    expect(extracted).not.toBe("...");
+    expect((JSON.parse(extracted) as { role: string }).role).toBe("builder");
+  });
+
+  it("neemt nog steeds de inhoud van een codeblok wanneer het antwoord zelf niet leesbaar is", () => {
+    const answer = ["Hier is het besluit.", "```json", '{"role":"qa"}', "```", "Groet!"].join("\n");
+
+    expect(JSON.parse(extractJson(answer))).toEqual({ role: "qa" });
+  });
 });
 
 describe("buildDirectorParseErrorMessage", () => {

@@ -271,19 +271,59 @@ interface DirectorLlmDecision {
  * gooien bij het ontbreken van accolades — de aanroeper hieronder maakt er
  * één met de diagnose erbij.
  */
+/** Het buitenste `{ ... }` uit een tekst, of null als dat er niet in zit. */
+function outermostObject(text: string): string | null {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+
+  return start !== -1 && end > start ? text.slice(start, end + 1) : null;
+}
+
+function isParsableJson(candidate: string): boolean {
+  try {
+    JSON.parse(candidate);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function extractJson(text: string): string {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = (fenced ? fenced[1] : text).trim();
+  const trimmed = text.trim();
 
-  // Bewust geen snelle uitweg voor tekst die al met "{" begint: een model dat
-  // ná het besluit nog een zin schrijft ("Laat me weten of dit klopt.")
-  // levert dan alsnog onleesbare JSON op. Altijd van de eerste accolade tot
-  // de laatste knippen dekt alle vier de gevallen: kaal, in een codeblok, met
-  // tekst ervoor, en met tekst erna.
-  const start = candidate.indexOf("{");
-  const end = candidate.lastIndexOf("}");
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const insideFence = fenced ? fenced[1].trim() : null;
 
-  return start !== -1 && end > start ? candidate.slice(start, end + 1) : candidate;
+  // De volgorde is het hele punt van deze functie, en is met schade en
+  // schande zo gekomen.
+  //
+  // Een eerdere versie zocht éérst naar een codeblok en nam altijd de inhoud
+  // daarvan. Dat ging fout op een besluit dat zelf over codeblokken ging: de
+  // Director schreef in zijn nextAction dat de Builder moest testen of een
+  // antwoord "in markdown-codehekken (```json ... ```)" nog gelezen wordt.
+  // Die hekken stonden dus middenin een JSON-tekstwaarde. De functie knipte
+  // daartussenuit en hield "..." over — van een antwoord dat gewoon geldige
+  // JSON was.
+  //
+  // Vandaar: niet raden welke vorm het antwoord heeft, maar de vormen op
+  // volgorde van waarschijnlijkheid proberen en de eerste nemen die
+  // daadwerkelijk te lezen is. Kaal JSON wint van alles, en een codeblok
+  // komt pas in beeld als het antwoord als geheel niet leesbaar is.
+  const candidates = [
+    trimmed,
+    outermostObject(trimmed),
+    insideFence,
+    insideFence ? outermostObject(insideFence) : null,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate && isParsableJson(candidate)) return candidate;
+  }
+
+  // Niets was leesbaar. De ruwe tekst teruggeven, zodat de aanroeper zijn
+  // eigen foutmelding maakt met het volledige antwoord erbij in plaats van
+  // met een half afgeknipt fragment.
+  return trimmed;
 }
 
 /** Hoeveel tekens van een onleesbaar antwoord in de foutmelding komen. */
