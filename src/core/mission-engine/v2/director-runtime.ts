@@ -405,7 +405,25 @@ async function decideNextStep(
   let parsed: unknown;
   try {
     parsed = JSON.parse(extractJson(completion.content));
-  } catch {
+  } catch (parseError) {
+    // Het volledige antwoord in het serverlogboek, niet alleen in de
+    // foutmelding: die staat in een smalle rode balk in de UI en kan
+    // onmogelijk drieduizend tekens tonen, terwijl de fout juist in het
+    // stuk zit dat daar niet meer in past. Zonder dit is de enige manier om
+    // te weten wat het model schreef: raden.
+    //
+    // Ook het stuk dat na extractJson() overbleef, want een verschil tussen
+    // die twee wijst het probleem meteen aan (tekst eromheen, een codeblok,
+    // of een tweede object).
+    console.error("Director-besluit kon niet als JSON gelezen worden", {
+      missionId: mission.missionId,
+      model: completion.model,
+      stopReason: completion.stopReason,
+      parseError: parseError instanceof Error ? parseError.message : parseError,
+      ruwAntwoord: completion.content,
+      naExtractie: extractJson(completion.content),
+    });
+
     throw new Error(
       buildDirectorParseErrorMessage(completion.content, completion.stopReason),
     );
