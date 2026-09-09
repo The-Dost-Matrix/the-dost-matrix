@@ -35,7 +35,7 @@ function stateModifier(state: MissionPhaseState): string {
 }
 
 export interface MissionProgressPanelProps {
-  mission: MissionV2 | null;
+  mission?: MissionV2 | null;
 }
 
 export function MissionProgressPanel({ mission }: MissionProgressPanelProps) {
