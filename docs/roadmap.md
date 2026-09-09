@@ -841,6 +841,41 @@ de `LlmProvider`-interface met function calling, per aanbieder verschillend),
 patch-gebaseerd schrijven in plaats van hele bestanden herschrijven, en een
 deterministische signatuurcontrole als extra verdediging.
 
+**Overweging: MCP als vorm voor die tools (7 september 2026).** MCP (Model
+Context Protocol) is de open standaard voor de koppeling tussen een model en
+gereedschap; de spec is gedateerd en de versie van 28 juli 2026 ging naar
+stateless verbindingen. Het is precies de vorm die deze stap nodig heeft: nu
+is elke vaardigheid van een rol met de hand geschreven glue (`github-client.ts`
+groeit met elke behoefte een functie, `context-resolver.ts` kauwt het bewijs
+voor, `project-signals.ts` haalt per signaal apart op). Met tools vraagt de
+rol zelf op wat hij nodig heeft.
+
+Concreet zou het deze dingen in deze codebase raken:
+
+- De Builder kan nu **niets uitvoeren**. Hij schrijft blind en hoort pas via
+  de CI of het klopt — dat is de enige reden dat de technische herstellus
+  (stap 11) bestaat. Een tool die typecheck en tests draait vóór de commit
+  haalt de grond onder die hele lus vandaan.
+- De bewijslaag gaat **één laag diep** (module onder test plus directe
+  imports, maximaal acht bestanden). Criterium C — een module via een
+  barrel-export of alias — is precies daarom naar deze stap doorgeschoven.
+  Met een leestool vervalt de dieptegrens als hand-geschreven probleem.
+- QA oordeelt over bewijs dat wij **vooraf selecteren**. Bij PR #54 bleek dat
+  het type dat je nodig hebt om een mock-signatuur te beoordelen twee stappen
+  ver ligt en dus buiten de bundel valt.
+
+**Maar niet in plaats van de gedwongen bewijslaag.** De hele winst van stap 10
+en 12 is dat het bewijs wordt opgedrongen in plaats van dat we hopen dat het
+model ernaar vraagt. Tools brengen dat "hopen dat hij kijkt" via de achterdeur
+terug. Tools komen er dus bovenop, nooit voor in de plaats. Andere kosten om
+mee te wegen: elke tool-aanroep is een extra modelronde (een missie kost nu
+$0,27), en de tekstafspraak met het model bleek al breekbaar — een tweede
+protocol erbij is een tweede plek waar het stuk kan.
+
+Dit verandert niets aan het principe dat rollen via GitHub werken en nooit bij
+de schijf van de eigenaar komen: de gereedschapskist blijft tot de repository
+beperkt.
+
 ### Stap 17 — In-app CI/PR-zichtbaarheid
 (voorheen stap 10) Toon PR-status (open/gemerged, CI groen/rood, welke
 checks) direct in de missie-kaart, zodat Elroy nooit naar GitHub.com hoeft om
