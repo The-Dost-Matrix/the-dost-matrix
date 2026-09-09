@@ -1034,53 +1034,21 @@ input:focus, textarea:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px r
   text-align: center;
 }
 
-/* =========================================================
-   COMMAND CENTER — CHAT + SECOND BRAIN TWEE-KOLOMS LAYOUT
-   Nieuwe, specifieke klasse. De gedeelde "command-center-main-grid"
-   klasse blijft ongewijzigd; deze klasse wordt aanvullend gebruikt
-   om alleen het chat-paneel en het brain-paneel naast elkaar te
-   zetten, met het missies-paneel er los van, over de volle breedte.
-   ========================================================= */
-
-.command-center-columns {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr);
-  align-items: start;
-  gap: 22px;
-  margin-top: 22px;
-}
-
-.command-center-columns .command-center-chat,
-.command-center-columns .command-center-brain {
-  min-width: 0;
-  min-height: 0;
-}
-
-.command-center-columns .command-center-brain {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.command-center-brain-illustration {
-  position: relative;
-  width: 100%;
-  min-height: 420px;
-  flex: 1;
-  border-radius: 16px;
-  overflow: hidden;
-}
-
-@media (max-width: 900px) {
-  .command-center-columns {
-    grid-template-columns: 1fr;
-    gap: 18px;
-  }
-
-  .command-center-brain-illustration {
-    min-height: 340px;
-  }
-}
+/* Restpunt (7 september 2026): dit blok ("COMMAND CENTER — CHAT + SECOND
+   BRAIN TWEE-KOLOMS LAYOUT", .command-center-columns en alles eronder) is
+   gecontroleerd verwijderd nadat bleek dat het dood was — niet omdat de
+   roadmap dat beweerde, want die beschreef de verkeerde selectors
+   (.command-center-intro/-stats/-brain/-dashboard/-mission-list, die
+   grotendeels van de al verwijderde /dashboard/chat-pagina waren, maar
+   .command-center-intro en .command-center-brain bleken ELDERS nog gewoon in
+   gebruik). De daadwerkelijke dode CSS was dit blok: `.command-center-columns`
+   komt als className nergens in de broncode voor, dus de regels die ervan
+   afhangen (`.command-center-columns .command-center-chat`,
+   `.command-center-columns .command-center-brain`, en de losstaande
+   `.command-center-brain-illustration`) kunnen nooit matchen. Een restant van
+   een eerdere layout-poging die is vervangen door de
+   command-center-main-grid--chat-focus / -left-column / -right-column
+   klassen verderop in dit bestand. */
 
 /* ==========================================================================
    Systeemstatus — echte, gecontroleerde status in plaats van vaste teksten.

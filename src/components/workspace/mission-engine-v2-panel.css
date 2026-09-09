@@ -1,0 +1,414 @@
+.mission-engine-v2-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  width: 100%;
+  box-sizing: border-box;
+}
+@media (max-width: 900px) {
+  .mission-engine-v2-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.mission-engine-v2-form-group {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 16px;
+}
+.mission-engine-v2-form-field {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+}
+.mission-engine-v2-form-textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 160px;
+  resize: vertical;
+}
+.mission-engine-v2-form-submit {
+  display: block;
+  margin-top: 16px;
+  width: 100%;
+}
+.mission-engine-v2-form-submit-block {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+  box-sizing: border-box;
+}
+.mev2-top-grid {
+  display: grid;
+  /*
+   * Bewust minmax(0, 1fr) in plaats van kaal "1fr": een kale 1fr-track heeft
+   * standaard een impliciete minimumbreedte van "auto", wat betekent dat lange,
+   * niet-afbrekende tekst in een kolom (bv. een missie-ID of een lang stuk
+   * QA-uitvoer) de track breder kan duwen dan de daadwerkelijk beschikbare
+   * ruimte — met als gevolg dat de kolom over de rest van de pagina (zoals een
+   * zijbalk) heen loopt. minmax(0, 1fr) dwingt de track om nooit breder te
+   * worden dan zijn aandeel van de beschikbare ruimte, ongeacht de inhoud.
+   */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1.5rem;
+  width: 100%;
+  box-sizing: border-box;
+  align-items: stretch;
+}
+@media (max-width: 56.25em) {
+  .mev2-top-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.mev2-col {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  box-sizing: border-box;
+}
+.mev2-col-form {
+  flex: 1 1 50%;
+}
+.mev2-col-director {
+  flex: 1 1 50%;
+}
+.mev2-col > * {
+  width: 100%;
+  box-sizing: border-box;
+}
+.mev2-col-body {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  height: 100%;
+  min-height: 0;
+  /*
+   * min-width: 0 is hier nodig omdat deze kolomkop zelf ook een flex-child is
+   * (van .mev2-col): zonder deze regel mag een flex-child nooit smaller worden
+   * dan de intrinsieke breedte van zijn inhoud, wat dezelfde overloop-bug kan
+   * veroorzaken als hierboven bij .mev2-top-grid beschreven.
+   */
+  min-width: 0;
+  gap: 1rem;
+}
+/*
+ * Lange, niet-afbrekende tekst (een missie-ID, een URL, een aaneengesloten
+ * stuk QA- of builder-uitvoer, of een foutmelding met een GitHub PR-link)
+ * mag deze kolom nooit breder maken dan de beschikbare ruimte. Bewust
+ * gekoppeld aan .mev2-col als voorouder (niet alleen .mev2-col-body — de
+ * foutmelding onder de "volgende stap"-knop staat er als sibling naast,
+ * niet erin), zodat dit alleen binnen dit paneel geldt en de gedeelde
+ * .knowledge-card-klasse zelf niet wordt aangepast (die wordt ook elders
+ * gebruikt).
+ */
+.mev2-col :where(p, pre, code, a, small) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
+}
+.mev2-col-spacer {
+  flex: 1 1 auto;
+}
+.mev2-col-submit {
+  margin-top: auto;
+  width: 100%;
+  box-sizing: border-box;
+  /*
+   * display:flex + gap zodat de "Missie annuleren"-knop (secondary, alleen
+   * zichtbaar bij een annuleerbare status — zie mission-engine-v2-panel.tsx)
+   * netjes naast de primaire "volgende stap"-knop komt te staan in plaats
+   * van er zonder tussenruimte tegenaan te plakken. Met maar één kind-
+   * element (zoals voorheen, en nog steeds in de meeste gevallen) heeft dit
+   * geen zichtbaar effect.
+   */
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.mev2-recent-missions {
+  margin-top: 2rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--border, rgba(148, 163, 184, 0.2));
+  opacity: 0.9;
+}
+/*
+ * Eventuele generieke koppen binnen dit blok (bv. als de sectie zelf ooit een
+ * <h2>/<h3> krijgt bovenop .mev2-recent-missions__title) moeten dezelfde,
+ * bewust minder prominente typografie krijgen als de rest van dit blok, zodat
+ * het visueel duidelijk ondergeschikt blijft aan de twee kolommen erboven.
+ */
+.mev2-recent-missions h2,
+.mev2-recent-missions h3 {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--muted-foreground, #94a3b8);
+}
+.mev2-recent-missions__title {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--muted-foreground, #94a3b8);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 0.5rem;
+}
+.mev2-recent-missions__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+.mev2-recent-missions__item {
+  font-size: 0.8rem;
+  color: var(--muted-foreground, #94a3b8);
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.375rem;
+  background: transparent;
+}
+
+/*
+ * Wrapper voor de twee <small>-regels (versie/toewijzingen + kosten) rechts
+ * in een .mission-card — houdt ze als één flex-kind samen zodat de
+ * bestaande .mission-card { justify-content: space-between }-tweedeling
+ * (titel/doel links, meta-info rechts) intact blijft. Zie de toelichting in
+ * mission-engine-v2-panel.tsx.
+ */
+.mev2-card-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  text-align: right;
+}
+
+/* Kostenregel: puur informatief (blokkeert nooit iets), daarom bewust
+   dezelfde gedempte stijl als de versie-regel erboven, niet nadrukkelijker. */
+.mev2-cost {
+  font-size: 0.72rem;
+}
+
+/* Label boven de risiconiveau-select in het aanmaakformulier — dezelfde
+   gedempte stijl als de recente-missies-titel eronder, niet zo prominent
+   als een koptekst. */
+.mev2-risk-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--muted-foreground, #94a3b8);
+  margin-bottom: 4px;
+}
+
+/* Risiconiveau-regel op de missiekaart: in tegenstelling tot de kostenregel
+   hierboven verandert dit WEL daadwerkelijk het gedrag van de Director (zie
+   classifyPullRequestRiskForMission), dus bewust iets nadrukkelijker dan
+   .mev2-cost in plaats van dezelfde gedempte stijl. */
+.mev2-risk {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--warning, #c2820a);
+}
+/* ==========================================================================
+   Command Center: missie links, voortgang rechts.
+   Toegevoegd bij de UI-basis (deel 2). Zie mission-progress-panel.tsx.
+   ========================================================================== */
+
+.mev2-command-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+
+@media (max-width: 1180px) {
+  .mev2-command-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.mev2-progress {
+  padding-bottom: 16px;
+}
+
+.mev2-progress-title {
+  margin: 0;
+  padding: 14px 16px 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.mev2-phase-list {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0 16px;
+  list-style: none;
+}
+
+.mev2-phase {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .015);
+}
+
+.mev2-phase strong {
+  display: block;
+  font-size: 12.5px;
+}
+
+.mev2-phase small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.mev2-phase-icon {
+  font-size: 13px;
+  text-align: center;
+}
+
+.mev2-phase-state {
+  font-size: 9.5px;
+  letter-spacing: .1em;
+  color: var(--muted);
+}
+
+.mev2-phase--klaar .mev2-phase-icon,
+.mev2-phase--klaar .mev2-phase-state { color: var(--green); }
+.mev2-phase--bezig .mev2-phase-icon,
+.mev2-phase--bezig .mev2-phase-state { color: var(--cyan); }
+.mev2-phase--aandacht { border-color: rgba(255, 180, 84, .45); }
+.mev2-phase--aandacht .mev2-phase-icon,
+.mev2-phase--aandacht .mev2-phase-state { color: var(--amber); }
+
+.mev2-criteria {
+  margin-top: 16px;
+  padding: 14px 16px 0;
+  border-top: 1px solid var(--line);
+}
+
+.mev2-criteria-title {
+  margin: 0 0 8px;
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.mev2-criteria ul {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mev2-criterion {
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.mev2-criterion-status {
+  font-size: 9.5px;
+  letter-spacing: .1em;
+  color: var(--muted);
+}
+
+.mev2-criterion--passed .mev2-criterion-status { color: var(--green); }
+.mev2-criterion--failed .mev2-criterion-status { color: var(--red); }
+
+.mev2-criterion-note {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+/* Restpunt (7 september 2026): opdrachttekst van een toewijzing was in de
+   app nergens zichtbaar — zie mission-progress-panel.tsx. Zelfde
+   kaart-opbouw als .mev2-criteria hierboven, met een eigen status-badge per
+   toewijzing (mev2-assignment-status) in plaats van per criterium. */
+.mev2-assignments {
+  margin-top: 16px;
+  padding: 14px 16px 0;
+  border-top: 1px solid var(--line);
+}
+
+.mev2-assignments ul {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mev2-assignment {
+  display: grid;
+  gap: 5px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .015);
+  font-size: 12px;
+}
+
+.mev2-assignment-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mev2-assignment-role {
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 10.5px;
+  letter-spacing: .06em;
+}
+
+.mev2-assignment-status {
+  font-size: 9.5px;
+  letter-spacing: .1em;
+  color: var(--muted);
+}
+
+.mev2-assignment--completed .mev2-assignment-status { color: var(--green); }
+.mev2-assignment--failed .mev2-assignment-status { color: var(--red); }
+.mev2-assignment--active .mev2-assignment-status { color: var(--cyan); }
+
+.mev2-assignment-kind {
+  font-size: 9.5px;
+  letter-spacing: .08em;
+  color: var(--amber);
+  border: 1px solid rgba(255, 180, 84, .45);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.mev2-assignment-objective {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.mev2-assignment-criteria {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* Binnen de Mission Engine-kolom staat het voortgangspaneel al in een panel;
+   geen dubbele rand of extra zijmarge daar. */
+.mev2-col-body .mev2-progress {
+  margin-top: 16px;
+  border-radius: 14px;
+}

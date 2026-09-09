@@ -80,7 +80,17 @@ index nodig:
 - Field `ownerId`: Ascending
 - Field `updatedAt`: Descending
 
-Beide indexen staan al in `firestore.indexes.json` — je hoeft de link uit de
+De wachtrij- en afgewezen-lijsten op de kennispagina (`subscribeToKnowledgeByStatus`)
+filteren op status IN de query, in plaats van pas na het ophalen — anders kon
+een oud wachtend kennisitem stilletjes uit het opgehaalde venster vallen
+zodra er genoeg nieuwere goedgekeurde items bijkwamen. Dat vraagt een eigen,
+samengestelde index:
+- Collection: `knowledge`
+- Field `ownerId`: Ascending
+- Field `status`: Ascending
+- Field `createdAt`: Descending
+
+Alle indexen staan al in `firestore.indexes.json` — je hoeft de link uit de
 foutmelding dus niet te gebruiken. Rol ze uit met:
 
 ```bash

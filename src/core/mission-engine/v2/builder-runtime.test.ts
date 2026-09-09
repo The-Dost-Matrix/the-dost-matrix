@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { buildTestContextBlock, isTestFilePath, parsePlannedPaths } from "./builder-runtime";
+import {
+  buildTestContextBlock,
+  ensureTrailingNewline,
+  isTestFilePath,
+  parsePlannedPaths,
+} from "./builder-runtime";
 
 /**
  * Tests voor de fix op de root cause achter vier opeenvolgende kapotte
@@ -86,6 +91,24 @@ describe("buildTestContextBlock", () => {
   it("laat het voorbeeldgedeelte weg wanneer er geen exampleTestFile is", () => {
     const block = buildTestContextBlock([], null, true);
     expect(block).not.toContain("Ter referentie");
+  });
+});
+
+describe("ensureTrailingNewline", () => {
+  // Restpunt (7 september 2026): PR #40 en PR #54 leverden allebei een
+  // testbestand zonder afsluitende regelovergang op — twee van de twee door
+  // de Builder geschreven testbestanden.
+  it("voegt een regelovergang toe wanneer die ontbreekt", () => {
+    expect(ensureTrailingNewline("export const x = 1;")).toBe("export const x = 1;\n");
+  });
+
+  it("laat een bestand dat al goed eindigt ongewijzigd", () => {
+    expect(ensureTrailingNewline("export const x = 1;\n")).toBe("export const x = 1;\n");
+  });
+
+  it("voegt geen tweede regelovergang toe boven op een al aanwezige", () => {
+    const withTrailingNewline = "regel een\nregel twee\n";
+    expect(ensureTrailingNewline(withTrailingNewline)).toBe(withTrailingNewline);
   });
 });
 

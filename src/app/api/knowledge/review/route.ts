@@ -17,7 +17,12 @@ import type {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// "pending" staat hier bewust bij: Restpunt (7 september 2026) — afgewezen
+// kennisitems waren alleen via de Firebase-console terug te vinden, laat
+// staan terug te draaien. "Terugzetten naar wachtrij" (zie de kennispagina)
+// zet een afgewezen item terug op "pending" via exact dit endpoint.
 const allowedStatuses: KnowledgeStatus[] = [
+  "pending",
   "approved",
   "rejected",
   "archived",

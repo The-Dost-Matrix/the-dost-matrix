@@ -3,7 +3,10 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/domains/auth/auth-provider";
-import { subscribeToKnowledge } from "@/domains/knowledge/knowledge-service";
+import {
+  subscribeToKnowledge,
+  subscribeToKnowledgeByStatus,
+} from "@/domains/knowledge/knowledge-service";
 import type {
   KnowledgeEntry,
   KnowledgeStatus,
@@ -32,6 +35,10 @@ export default function KnowledgePage() {
   const { user, loading } = useAuth();
 
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
+  const [pendingEntries, setPendingEntries] = useState<KnowledgeEntry[]>([]);
+  const [rejectedEntries, setRejectedEntries] = useState<KnowledgeEntry[]>([]);
+  const [showRejected, setShowRejected] = useState(false);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [chatContent, setChatContent] = useState("");
 const [chatImporting, setChatImporting] = useState(false);
@@ -71,10 +78,34 @@ const [bulkProgress, setBulkProgress] = useState({
     );
   }, [user]);
 
-  const pending = useMemo(
-    () => entries.filter((entry) => entry.status === "pending"),
-    [entries],
-  );
+  // Restpunt (7 september 2026): wachtend en afgewezen komen nu allebei uit
+  // hun eigen, statusgefilterde query in plaats van client-side gefilterd te
+  // worden uit de (op 250 begrensde) algemene lijst hierboven — zie de
+  // toelichting bij subscribeToKnowledgeByStatus. Zo kan de groei van
+  // goedgekeurde items de wachtrij nooit meer verdringen.
+  useEffect(() => {
+    if (!user) return;
+
+    return subscribeToKnowledgeByStatus(
+      user.uid,
+      "pending",
+      setPendingEntries,
+      (caught) => setError(caught.message),
+    );
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    return subscribeToKnowledgeByStatus(
+      user.uid,
+      "rejected",
+      setRejectedEntries,
+      (caught) => setError(caught.message),
+    );
+  }, [user]);
+
+  const pending = pendingEntries;
 
   const approved = useMemo(
     () => entries.filter((entry) => !entry.status || entry.status === "approved"),
@@ -695,7 +726,7 @@ const [bulkProgress, setBulkProgress] = useState({
   
   async function review(
     id: string,
-    status: Exclude<KnowledgeStatus, "pending">,
+    status: KnowledgeStatus,
   ): Promise<boolean> {
     if (!user) {
       return false;
@@ -730,6 +761,21 @@ const [bulkProgress, setBulkProgress] = useState({
       return false;
     }
   }
+
+  // Restpunt (7 september 2026): een afgewezen kennisitem was alleen via de
+  // Firebase-console terug te vinden, laat staan terug te draaien — na een
+  // bulkactie op tientallen items geen prettige eigenschap. Zet het item
+  // terug op "pending" via hetzelfde review-endpoint (nu met "pending" in
+  // allowedStatuses, zie route.ts) zodat het weer gewoon in de Approval
+  // Queue verschijnt.
+  async function restoreToPending(id: string) {
+    if (restoringId) return;
+
+    setRestoringId(id);
+    await review(id, "pending");
+    setRestoringId(null);
+  }
+
   if (loading || !user) {
     return (
       <main className="center-screen">
@@ -1184,6 +1230,64 @@ const [bulkProgress, setBulkProgress] = useState({
             )}
           </div>
         </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-title">
+          <div>
+            <p className="eyebrow">AFGEWEZEN</p>
+            <h3>Afgewezen kennisitems</h3>
+          </div>
+
+          <div className="review-actions">
+            <span className="badge">{rejectedEntries.length}</span>
+            <button
+              className="secondary"
+              onClick={() => setShowRejected((current) => !current)}
+            >
+              {showRejected ? "Verbergen" : "Tonen"}
+            </button>
+          </div>
+        </div>
+
+        {showRejected && (
+          <div className="knowledge-list knowledge-list--large">
+            {rejectedEntries.length === 0 ? (
+              <div className="empty">Geen afgewezen kennisitems.</div>
+            ) : (
+              rejectedEntries.map((entry) => (
+                <article className="knowledge-card" key={entry.id}>
+                  <div className="knowledge-meta">
+                    <span>
+                      {knowledgeTypePresentation[entry.type ?? "fact"]?.icon ?? "📌"}{" "}
+                      {knowledgeTypePresentation[entry.type ?? "fact"]?.label ?? entry.type}
+                    </span>
+                    <span>{entry.sourceDocument ?? entry.source}</span>
+                  </div>
+
+                  <h4>{entry.title || "Kennisitem zonder titel"}</h4>
+                  <p>{entry.content}</p>
+
+                  {entry.review?.reason && (
+                    <p className="knowledge-summary">AI-advies was: {entry.review.reason}</p>
+                  )}
+
+                  <div className="review-actions">
+                    <button
+                      className="primary"
+                      disabled={restoringId === entry.id}
+                      onClick={() => void restoreToPending(entry.id)}
+                    >
+                      {restoringId === entry.id
+                        ? "Terugzetten..."
+                        : "Terugzetten naar wachtrij"}
+                    </button>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+        )}
       </section>
     </main>
   );

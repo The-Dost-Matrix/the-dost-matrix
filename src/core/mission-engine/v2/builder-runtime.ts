@@ -557,6 +557,21 @@ function stripSurroundingCodeFence(text: string): string {
 }
 
 /**
+ * Restpunt (7 september 2026): twee van de twee door de Builder geschreven
+ * testbestanden (PR #40, PR #54) eindigden zonder afsluitende regelovergang.
+ * QA viel er elke keer terecht over — terecht cosmetisch genoemd, maar het
+ * kostte wel elke keer opnieuw aandacht. De instructie in writeSingleFile()
+ * vraagt de LLM te schrijven "van de allereerste tot de allerlaatste regel",
+ * maar dat een bestand met een newline eindigt is een editor-/POSIX-conventie,
+ * geen eigenschap die uit die instructie volgt. Dit hoort dus niet in de
+ * schrijfroutine van de Builder als hoop dat het model het goed doet, maar
+ * als iets wat de code zelf afdwingt — vandaar hier, niet in de prompt.
+ */
+export function ensureTrailingNewline(content: string): string {
+  return content.endsWith("\n") ? content : `${content}\n`;
+}
+
+/**
  * Vraagt de VOLLEDIGE inhoud van precies één bestand op bij de LLM.
  *
  * Waarom per bestand een eigen aanroep, in plaats van één aanroep voor de
@@ -665,9 +680,9 @@ async function writeSingleFile(
   ]);
   usageTracker.add(completion);
 
-  const content = stripSurroundingCodeFence(completion.content);
+  const rawContent = stripSurroundingCodeFence(completion.content);
 
-  if (!content) {
+  if (!rawContent) {
     // Log het echte antwoord naar de terminal van "npm run dev" — zo
     // hoeven we bij een onverwachte lege inhoud niet te gissen naar de
     // oorzaak, maar kunnen we het letterlijk zien.
@@ -689,7 +704,7 @@ async function writeSingleFile(
     );
   }
 
-  return { content, model: completion.model };
+  return { content: ensureTrailingNewline(rawContent), model: completion.model };
 }
 
 async function writeFiles(

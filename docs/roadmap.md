@@ -634,6 +634,46 @@ foutmeldingen gaan naar het serverlogboek (een rode balk in de UI kan geen
 drieduizend tekens tonen), en bewijs dat op de pc van de eigenaar staat wordt
 zelf opgehaald in plaats van hem zijn eigen terminal in te sturen.
 
+### Tussentijds — Zeven restpunten in één keer, en één diagnose gecorrigeerd
+Op verzoek van Elroy ("snelste klaar") in één keer opgepakt in plaats van één
+voor één, direct gebouwd (niet via de mission-loop, zelfde patroon als
+eerdere restpunten). Vijf van de zeven zijn opgelost: de Builder dwingt nu
+een afsluitende regelovergang af in plaats van erop te hopen
+(`ensureTrailingNewline` in builder-runtime.ts); de opdrachttekst van een
+toewijzing staat nu in het missievoortgangspaneel (rol, status, opdracht,
+succescriteria, nieuwste eerst); de wachtrij- en afgewezen-lijst op de
+kennispagina hebben nu allebei hun eigen, statusgefilterde Firestore-query
+(`subscribeToKnowledgeByStatus`) in plaats van client-side te filteren uit
+een op 250 begrensde algemene lijst — vraagt een nieuwe samengestelde index,
+zie README; en een afgewezen kennisitem is nu zichtbaar (met het AI-advies
+erbij) en in één klik terug te zetten naar de wachtrij.
+
+Bij de dode CSS bleek de eigen diagnose bij nader onderzoek onjuist: de vier
+genoemde klassen (-stats, -brain, -dashboard, -mission-list) hadden
+grotendeels geen eigen CSS-regel om te verwijderen, en `.command-center-intro`
+bleek nog gewoon in gebruik door de missions-v2-pagina — verwijderen had die
+kapotgemaakt. De daadwerkelijk dode CSS was een ander blok
+(`.command-center-columns` en alles eronder, een niet meer gebruikte
+tussenstap in de Command Center-layout) — gevonden door van elke genoemde
+selector na te gaan of hij nog ergens als className voorkomt, niet door de
+oorspronkelijke restpunt-tekst te vertrouwen. Les: dezelfde als bij de
+JSON-bug hierboven, nu op kleinere schaal — een eerdere eigen diagnose is
+een hypothese, geen gegeven, en verdient dezelfde verificatie als een
+diagnose van iemand anders.
+
+Bij het LLM-provider-restpunt bleek de helft van de klacht al opgelost: welke
+provider actief is, staat al in het Systeemstatus-paneel
+(`describeActiveChatModel`, eerder al gebouwd). Alleen het wisselen zelf kan
+nog steeds alleen via `.env.local` + herstart — dat structureel oplossen (de
+provider request-scoped maken in plaats van een module-level singleton op
+basis van `process.env`) raakt elke aanroeper van `getChatProvider()` en is
+geen "Klein" restpunt meer. Verplaatst naar Voorgestelde volgende stappen
+hieronder, met de gecorrigeerde omschrijving.
+
+De opruiming van oude branches is bewust niet meegenomen: dat is een
+git-actie op GitHub, geen codewijziging, en hoort dus niet in dezelfde pull
+request.
+
 ## Restpunten
 
 Kleine dingen die bij een grotere stap zijn gesignaleerd en bewust zijn
@@ -647,50 +687,6 @@ in een alinea staat, bestaat voor hem niet.
 
 Verdwijnt een punt, haal het kopje dan weg in plaats van er "opgelost" achter
 te zetten — anders groeit dit hoofdstuk alsnog dicht.
-
-### Restpunt — Builder schrijft bestanden zonder afsluitende regelovergang
-Twee van de twee door de Builder geschreven testbestanden (PR #40, PR #54)
-eindigen zonder `\n`. QA valt er elke keer over en noemt het terecht
-cosmetisch, maar het kost wel elke keer aandacht. Geen opruimklusje: hoort in
-de schrijfroutine van de Builder, die een afsluitende regelovergang moet
-afdwingen. **Klein.**
-
-### Restpunt — Dode stijlblokken in globals.css
-`command-center-intro`, `-stats`, `-brain`, `-dashboard` en `-mission-list`
-werden alleen gebruikt door de verwijderde `/dashboard/chat`-pagina. Bewust
-niet in dezelfde commit opgeruimd zodat zichtbaar bleef wat wat was; die
-reden is inmiddels vervallen. **Klein.**
-
-### Restpunt — Opdrachttekst van een toewijzing is nergens zichtbaar
-De tekst die een rol meekrijgt wordt wel opgeslagen op de toewijzing, maar is
-in de app niet te zien. Daardoor kon bij regressietest D niet worden
-vastgesteld óf het CI-logboek daadwerkelijk in de herstelopdracht zat, of dat
-de Builder de fout uit het bestand zelf afleidde. Dit blokkeert dus
-verificatie, en is daarmee meer dan cosmetisch. **Middel** — hoort logisch bij
-stap 17 (in-app CI/PR-zichtbaarheid).
-
-### Restpunt — De beoordeelwachtrij kan stilletijds items verbergen
-De kennispagina luistert naar de 250 nieuwste kennisitems van álle statussen
-door elkaar. Op 7 september stonden er 181 goedgekeurd; komt het totaal boven
-de 250, dan verdwijnen de oudste wachtende items uit de wachtrij terwijl de
-Director ze wel blijft tellen. Precies de onzichtbaarheid die dit project
-elders bestrijdt. Snelle pleister: de grens omhoog. Nette oplossing: de
-wachtrij apart bevragen op `status == "pending"`, wat een nieuwe
-Firestore-index vraagt (`ownerId + status + createdAt`, staat nog niet in
-`firestore.indexes.json`). **Klein tot middel.**
-
-### Restpunt — Afgewezen kennisitems zijn onzichtbaar
-De kennispagina toont alleen wachtende en goedgekeurde items. Wat de AI (of
-de eigenaar) afwijst verdwijnt uit beeld en is alleen via de Firebase-console
-terug te vinden. Na een bulkactie op tientallen items is dat geen prettige
-eigenschap: een onterechte afwijzing is niet meer te zien, laat staan terug
-te draaien. **Klein.**
-
-### Restpunt — Van LLM-provider wisselen kan alleen via .env.local
-Er is geen keuzemogelijkheid in de app; wisselen betekent een sleutel
-weghalen uit `.env.local` en de dev-server herstarten. Werkt, maar het is
-onhandig en het is niet af te lezen wélke provider een missie daadwerkelijk
-heeft gedraaid zonder in een logregel te kijken. **Klein.**
 
 ### Restpunt — Oude branches op GitHub en lokaal
 Er staan ongeveer tien branches van afgeronde missies en handmatige fixes die
@@ -908,6 +904,21 @@ live activiteit binnen The Dost Matrix (missies, rollen, Second
 Brain-updates, verificatiestatus, raadssessies) zodat Elroy in één oogopslag
 ziet wat het systeem doet. De precieze vorm wordt later samen ontworpen —
 dit is bewust nog niet ingevuld.
+
+### Stap 23 — LLM-provider request-scoped maken, écht in-app wisselbaar
+(voortgekomen uit een gecorrigeerd restpunt, 7 september 2026) Welke
+provider/model actief is, is al zichtbaar in het Systeemstatus-paneel
+(`describeActiveChatModel` in model-router.ts) — dat deel van het oorspronkelijke
+restpunt bleek bij nader onderzoek al opgelost. Wat overblijft: wisselen kan
+nog steeds alleen door een sleutel in `.env.local` aan te passen en de
+dev-server te herstarten, omdat `getChatProvider()` een module-level singleton
+is die zijn keuze rechtstreeks uit `process.env` leest bij het laden van de
+module. Écht in-app wisselen (bijvoorbeeld een instelling per eigenaar,
+opgeslagen in Firestore) betekent dat `getChatProvider()` die keuze per
+aanroep moet kunnen lezen in plaats van eenmalig bij het opstarten — en dus
+dat elke aanroeper (builder-runtime.ts, director-runtime.ts, qa-runtime.ts,
+reviewer.ts) een eigenaar/context moet doorgeven. Geen "Klein" restpunt meer,
+vandaar hier als eigen stap in plaats van in het Restpunten-hoofdstuk.
 
 ## Acceptatiecriteria voor stap 9 t/m 12
 
