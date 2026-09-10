@@ -121,6 +121,17 @@ describe("buildCriteriaPhase", () => {
 
     expect(phase.state).toBe("KLAAR");
   });
+
+  it("vraagt aandacht zodra QA een criterium niet kon vaststellen (stap 12b)", () => {
+    const phase = buildCriteriaPhase(
+      buildMission({
+        successCriteria: [criterion("PASSED", "c1"), criterion("UNDETERMINED", "c2")],
+      }),
+    );
+
+    expect(phase.state).toBe("AANDACHT");
+    expect(phase.detail).toContain("1 niet vast te stellen");
+  });
 });
 
 describe("buildMergePhase", () => {
@@ -139,6 +150,13 @@ describe("buildMergePhase", () => {
 
   it("blijft WACHT zolang de missie gewoon loopt", () => {
     expect(buildMergePhase(buildMission({ status: "WAITING_FOR_ROLE" })).state).toBe("WACHT");
+  });
+
+  it("vraagt aandacht wanneer de missie op het antwoord van de eigenaar wacht (stap 12b)", () => {
+    const phase = buildMergePhase(buildMission({ status: "WAITING_FOR_OWNER" }));
+
+    expect(phase.state).toBe("AANDACHT");
+    expect(phase.detail).toContain("vraag van de Director");
   });
 });
 

@@ -31,6 +31,16 @@ export interface DirectorDecision {
    * afleiding uit de opdrachttekst.
    */
   assignmentKind?: "BUILD" | "TECHNICAL_REPAIR" | "SEMANTIC_REPAIR";
+  /**
+   * Bij REQUEST_OWNER_INPUT (stap 12b): het succescriterium waar deze vraag
+   * over gaat, indien van toepassing. De engine zet dit over op
+   * MissionV2.pendingOwnerInput.relatedCriterionId (zie mission.ts), zodat
+   * het antwoord van de eigenaar dat ene criterium direct kan bijwerken in
+   * plaats van alleen de missie te hervatten (zie recordOwnerInput in
+   * engine.ts). Optioneel: een generiek inputverzoek (bijvoorbeeld vanuit
+   * een WAITING_FOR_INPUT-rolresultaat) laat dit weg.
+   */
+  relatedCriterionId?: EntityId;
   requiredCapabilities: string[];
   contextRequirements: string[];
   modelConstraints: Record<string, JsonValue>;

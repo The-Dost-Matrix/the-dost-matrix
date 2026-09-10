@@ -27,7 +27,19 @@ export type MissionApprovalState =
   | "PENDING"
   | "APPROVED"
   | "REJECTED";
-export type CriterionStatus = "PENDING" | "PASSED" | "FAILED";
+/**
+ * "UNDETERMINED" (stap 12b): QA kon dit criterium niet vaststellen — niet
+ * omdat het niet klopt, maar omdat de benodigde informatie ontbrak in wat ze
+ * kreeg (bijvoorbeeld: het criterium vraagt om iets dat alleen door
+ * daadwerkelijk uitvoeren is vast te stellen). Bewust een aparte waarde en
+ * geen (verkapt) FAILED: een geforceerd NIET GEHAALD startte tot nu toe een
+ * inhoudelijke herstellus (zie semantic-repair.ts) die nooit kon slagen,
+ * omdat er niets inhoudelijk mis was om te herstellen — alleen iets om vast
+ * te stellen. Zie owner-clarification.ts voor wat hierna gebeurt: de
+ * Director vraagt het aan de eigenaar in plaats van de Builder eindeloos
+ * dezelfde reparatie te laten proberen.
+ */
+export type CriterionStatus = "PENDING" | "PASSED" | "FAILED" | "UNDETERMINED";
 export type AssignmentStatus =
   | "ACTIVE"
   | "COMPLETED"
@@ -84,6 +96,18 @@ export interface MissionAssignmentRecord {
   successCriteria: string[];
   kind?: AssignmentKind;
   resultId?: EntityId;
+  /**
+   * Samenvatting van het laatste RoleResult op deze toewijzing (zie
+   * RoleResult.summary in contracts/v2/role-result.ts), hier gedupliceerd
+   * omdat Mission Engine V2 de volledige inhoud van een RoleResult verder
+   * nergens doorzoekbaar bewaart (zie ook findMissionPullRequest in
+   * qa-runtime.ts). Nodig voor stap 12b: wanneer de Director de eigenaar een
+   * vraag stelt over een criterium waar de Builder al een weerwoord op had
+   * (de inhoudelijke herstelpoging uit stap 12), moet dat weerwoord voor de
+   * eigenaar zichtbaar blijven — niet alleen kortstondig in de UI van het
+   * moment zelf. Zie findLatestBuilderRebuttal in owner-clarification.ts.
+   */
+  resultSummary?: string;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 }
@@ -92,6 +116,16 @@ export interface PendingOwnerInput {
   requestId: EntityId;
   question: string;
   requestedAt: IsoDateTime;
+  /**
+   * Stap 12b: wanneer gezet, gaat dit verzoek over dit specifieke
+   * succescriterium — het antwoord van de eigenaar (zie recordOwnerInput in
+   * engine.ts) mag dit criterium dan direct op GEHAALD/NIET GEHAALD zetten,
+   * in plaats van alleen de missie te hervatten. Ontbreekt bij een generiek
+   * inputverzoek (bijvoorbeeld vanuit een WAITING_FOR_INPUT-rolresultaat,
+   * zie recordRoleResult in engine.ts) — daar verandert het antwoord van de
+   * eigenaar geen enkel criterium, exact het gedrag van vóór deze stap.
+   */
+  relatedCriterionId?: EntityId;
 }
 
 export interface PendingApproval {

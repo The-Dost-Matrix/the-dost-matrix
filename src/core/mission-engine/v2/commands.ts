@@ -31,6 +31,15 @@ export interface RecordRoleResultPayload extends Record<string, JsonValue> {
 export interface RecordOwnerInputPayload extends Record<string, JsonValue> {
   requestId: EntityId;
   response: string;
+  /**
+   * Stap 12b: wanneer het openstaande verzoek over een specifiek
+   * succescriterium ging (PendingOwnerInput.relatedCriterionId, zie
+   * mission.ts), mag de eigenaar dat criterium hiermee direct op
+   * GEHAALD/NIET GEHAALD zetten — zie recordOwnerInput in engine.ts.
+   * Optioneel, en zonder effect bij een generiek inputverzoek zonder
+   * relatedCriterionId.
+   */
+  criterionOutcome?: "PASSED" | "FAILED";
 }
 
 export interface RecordApprovalPayload extends Record<string, JsonValue> {
@@ -41,7 +50,13 @@ export interface RecordApprovalPayload extends Record<string, JsonValue> {
 
 export interface EvaluateCriterionPayload extends Record<string, JsonValue> {
   criterionId: EntityId;
-  passed: boolean;
+  /**
+   * Was `passed: boolean` — verbreed naar drie waarden in stap 12b, zodat QA
+   * ook eerlijk kan zeggen dat ze een criterium niet kon vaststellen (zie
+   * CriterionStatus in mission.ts) in plaats van gedwongen te kiezen tussen
+   * GEHAALD en een NIET GEHAALD dat een zinloze herstellus zou starten.
+   */
+  outcome: "PASSED" | "FAILED" | "UNDETERMINED";
   evidenceRefs: EntityId[];
   /** Toelichting bij dit oordeel (bv. van de qa-rol) — zie MissionCriterion.lastEvaluationNote. */
   note: string | null;

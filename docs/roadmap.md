@@ -699,6 +699,52 @@ CSS hierboven, en dus voortaan hard toepassen — een bestand dat al in de
 sandbox staat is niet hetzelfde als een bestand dat vers van Elroy's schijf
 is opgehaald, ook niet middenin dezelfde sessie.
 
+### Stap 12b — QA mag twijfelen, en de eigenaar krijgt de vraag
+Sloot de twee doodlopende paden die bij stap 12 al werden voorzien.
+
+**QA kan nu drie dingen zeggen.** Naast GEHAALD/NIET GEHAALD bestaat nu
+`UNDETERMINED` ("niet vast te stellen") als eigen, eerlijke uitkomst per
+succescriterium (`CriterionStatus` in `mission.ts`) — voor het geval de
+benodigde informatie simpelweg ontbreekt in wat QA kreeg (bijvoorbeeld:
+gedrag dat alleen door daadwerkelijk uitvoeren is vast te stellen). De
+QA-prompt is expliciet: dit is geen kortere weg langs een lastig oordeel —
+twijfel over kwaliteit blijft gewoon NIET GEHAALD. Een falende CI blijft
+alles hard op NIET GEHAALD zetten, ook een `UNDETERMINED`-oordeel: een rode
+build is een sterker gegeven dan "ik kan het niet vaststellen".
+
+**De WAITING_FOR_OWNER-lus is afgemaakt.** `engine.recordOwnerInput()` bestond
+al, maar niets riep hem aan: geen API-actie, geen knop. Een missie die er
+belandde kon alleen nog geannuleerd worden. Nu:
+- De Director stelt de vraag (`REQUEST_OWNER_INPUT`) in twee vaste, niet
+  taalmodel-afhankelijke gevallen — dezelfde discipline als de herstellussen
+  uit stap 11/12: (1) QA kon een criterium niet vaststellen, of (2) het
+  inhoudelijke herstelplafond uit stap 12 (`MAX_SEMANTIC_REPAIR_ATTEMPTS`) is
+  bereikt. Situatie 2 eindigde vroeger in een harde `SEMANTIC_REPAIR_EXHAUSTED`
+  -stop; nu in een vraag.
+- De vraag bevat het criterium, de twijfel/reden van QA, én — nieuw —
+  het laatste weerwoord van de Builder zelf (`MissionAssignmentRecord.
+  resultSummary`, sinds deze stap bij elk rolresultaat bewaard, want Mission
+  Engine V2 hield de inhoud van een RoleResult daarvoor nergens doorzoekbaar
+  vast).
+- Een nieuwe API-actie (`answer-owner-input`) roept `engine.recordOwnerInput()`
+  eindelijk aan. Ging de vraag over een specifiek criterium, dan zet het
+  antwoord van de eigenaar (gehaald/niet gehaald + een reden) dat criterium
+  direct — de reden wordt bewaard als `lastEvaluationNote`, exact zoals bij
+  een QA-oordeel.
+- Het paneel "Director & uitvoering" toont de vraag, met een keuzerondje
+  gehaald/niet gehaald (verplicht wanneer de vraag aan één criterium hangt)
+  en een verplicht redetekstveld.
+
+Bewust géén generieke "QA overrulen"-knop: dit maakt alleen de twee
+hierboven genoemde, specifieke doodlopende paden af. De eigenaar blijft de
+opdrachtgever, QA een adviseur — niet andersom.
+
+Nieuw bestand `owner-clarification.ts` (met eigen tests) bundelt de
+tekstopbouw voor de vraag, apart van de GitHub- en LLM-aanroepen in
+`director-runtime.ts` — dezelfde scheiding als bij `technical-repair.ts` en
+`semantic-repair.ts`, en om dezelfde reden: zo blijft dit zonder netwerk
+testbaar.
+
 ## Restpunten
 
 Kleine dingen die bij een grotere stap zijn gesignaleerd en bewust zijn
@@ -767,35 +813,6 @@ snelst uit de handmatige correctielus haalt, gaat vóór architectonische
 volledigheid. Reden: er is geen team dat dit bouwt, en de rol die het zou
 moeten bouwen (de Builder) is precies de kapotte rol — elke stap wordt met
 de hand geschreven en door Elroy gecommit.
-
-### Stap 12b — QA mag twijfelen, en de eigenaar krijgt de vraag
-Twee keer op één dag liep een missie vast op een criterium dat aantoonbaar
-gehaald was, zonder dat er een uitweg bestond. De oorzaak is niet dat de
-rollen te dom zijn, maar dat ze geen manier hebben om te zeggen wat er aan de
-hand is.
-
-**QA kan maar twee dingen zeggen.** Gehaald of niet gehaald. Twijfel — "ik kan
-dit niet vaststellen uit wat ik gekregen heb" — komt er daarom uit als een
-afkeuring. QA krijgt een derde antwoord: NIET VAST TE STELLEN, met de reden,
-los van afgekeurd.
-
-**En de uitweg loopt dood.** De Director kán besluiten de eigenaar een vraag
-te stellen (`REQUEST_OWNER_INPUT`), de status `WAITING_FOR_OWNER` bestaat, en
-`engine.recordOwnerInput()` is volledig geïmplementeerd inclusief
-gebeurtenis. Maar de API-route kent de actie niet en de UI heeft geen knop: een
-missie die daar belandt kan alleen nog geannuleerd worden. De vraag kán dus
-gesteld worden, het antwoord kan nooit gegeven worden. Daarom is het nog nooit
-gebeurd.
-
-Te bouwen: zegt QA "niet vast te stellen", of is het plafond uit stap 12
-bereikt, dan stelt de Director de vraag aan de eigenaar in plaats van te
-stoppen — met het criterium, de twijfel van QA en het tegenargument van de
-Builder erbij. De app toont die vraag en laat de eigenaar antwoorden (gehaald
-of niet gehaald, met een reden die op het criterium bewaard blijft), waarna de
-missie doorloopt.
-
-Dit is bewust geen losse "overrule QA"-knop: het is het afmaken van een lus
-die er half in zat. De eigenaar is de opdrachtgever, QA is een adviseur.
 
 ### Stap 13 — The Dost Council V1 (dun)
 Een raadslaag naast de Mission Engine: meerdere modellen die onafhankelijk

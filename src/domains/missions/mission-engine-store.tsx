@@ -14,6 +14,7 @@ import type { KnowledgeEntry } from "@/core/domain/knowledge/knowledge-entry";
 import type { MissionRiskLevel, MissionV2 } from "@/core/mission-engine/v2/mission";
 import { useAuth } from "@/domains/auth/auth-provider";
 import {
+  answerOwnerInputV2,
   approveAndMergeMissionV2,
   autoStepMissionV2,
   cancelMissionV2,
@@ -78,7 +79,13 @@ const NEEDS_SIGNOFF_CODE = "NEEDS_SIGNOFF";
  */
 const MISSION_LIST_LIMIT = 20;
 
-export type MissionEngineBusyAction = "create" | "auto-step" | "cancel" | "approve" | null;
+export type MissionEngineBusyAction =
+  | "create"
+  | "auto-step"
+  | "cancel"
+  | "approve"
+  | "answer-owner"
+  | null;
 
 export interface MissionEngineState {
   missions: MissionV2[];
@@ -95,6 +102,19 @@ export interface MissionEngineState {
 
   canAutoStep: boolean;
   canCancel: boolean;
+
+  /**
+   * Stap 12b: het antwoordformulier voor een openstaande vraag van de
+   * Director (mission.pendingOwnerInput). `ownerInputOutcome` is alleen
+   * relevant — en verplicht vóór het versturen — wanneer
+   * mission.pendingOwnerInput.relatedCriterionId is gezet; bij een generiek
+   * inputverzoek negeert answerOwnerInput() deze waarde.
+   */
+  ownerInputResponse: string;
+  setOwnerInputResponse: (value: string) => void;
+  ownerInputOutcome: "PASSED" | "FAILED" | null;
+  setOwnerInputOutcome: (value: "PASSED" | "FAILED" | null) => void;
+  answerOwnerInput: () => Promise<void>;
 
   form: {
     title: string;
@@ -143,6 +163,8 @@ export function MissionEngineProvider({ children }: { children: ReactNode }) {
   const [usedKnowledge, setUsedKnowledge] = useState<KnowledgeEntry[]>([]);
   const [needsApproval, setNeedsApproval] = useState(false);
   const [approveInfo, setApproveInfo] = useState("");
+  const [ownerInputResponse, setOwnerInputResponse] = useState("");
+  const [ownerInputOutcome, setOwnerInputOutcome] = useState<"PASSED" | "FAILED" | null>(null);
 
   const [busy, setBusy] = useState<MissionEngineBusyAction>(null);
   const [loadingMissions, setLoadingMissions] = useState(true);
@@ -183,6 +205,8 @@ export function MissionEngineProvider({ children }: { children: ReactNode }) {
     setUsedKnowledge([]);
     setNeedsApproval(false);
     setApproveInfo("");
+    setOwnerInputResponse("");
+    setOwnerInputOutcome(null);
   }, []);
 
   const selectMission = useCallback(
@@ -286,6 +310,51 @@ export function MissionEngineProvider({ children }: { children: ReactNode }) {
     }
   }, [mission, user]);
 
+  /**
+   * Stap 12b: beantwoordt een openstaande vraag van de Director. Ging het
+   * verzoek over een specifiek succescriterium (relatedCriterionId gezet),
+   * dan is een keuze uit "gehaald"/"niet gehaald" verplicht vóór het
+   * versturen — bij een generiek verzoek is alleen de reden verplicht.
+   */
+  const answerOwnerInput = useCallback(async () => {
+    if (!user || !mission || !mission.pendingOwnerInput) return;
+
+    if (!ownerInputResponse.trim()) {
+      setError("Geef een korte reden op bij je antwoord.");
+      return;
+    }
+
+    const relatedCriterionId = mission.pendingOwnerInput.relatedCriterionId;
+
+    if (relatedCriterionId && !ownerInputOutcome) {
+      setError('Kies eerst "gehaald" of "niet gehaald".');
+      return;
+    }
+
+    setBusy("answer-owner");
+    setError("");
+
+    try {
+      const updated = await answerOwnerInputV2(
+        user,
+        mission.missionId,
+        ownerInputResponse.trim(),
+        relatedCriterionId ? (ownerInputOutcome ?? undefined) : undefined,
+      );
+
+      setMission(updated);
+      setMissions((current) =>
+        current.map((entry) => (entry.missionId === updated.missionId ? updated : entry)),
+      );
+      setOwnerInputResponse("");
+      setOwnerInputOutcome(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Antwoorden is mislukt.");
+    } finally {
+      setBusy(null);
+    }
+  }, [mission, ownerInputOutcome, ownerInputResponse, user]);
+
   const cancelMission = useCallback(async () => {
     if (!user || !mission) return;
 
@@ -326,6 +395,11 @@ export function MissionEngineProvider({ children }: { children: ReactNode }) {
       approveInfo,
       canAutoStep: Boolean(mission && AUTO_STEP_STATUSES.includes(mission.status)),
       canCancel: Boolean(mission && CANCELLABLE_STATUSES.includes(mission.status)),
+      ownerInputResponse,
+      setOwnerInputResponse,
+      ownerInputOutcome,
+      setOwnerInputOutcome,
+      answerOwnerInput,
       form: {
         title,
         objective,
@@ -343,6 +417,7 @@ export function MissionEngineProvider({ children }: { children: ReactNode }) {
       cancelMission,
     }),
     [
+      answerOwnerInput,
       approveAndMerge,
       approveInfo,
       autoStep,
@@ -356,6 +431,8 @@ export function MissionEngineProvider({ children }: { children: ReactNode }) {
       missions,
       needsApproval,
       objective,
+      ownerInputOutcome,
+      ownerInputResponse,
       riskLevel,
       roleOutput,
       selectMission,

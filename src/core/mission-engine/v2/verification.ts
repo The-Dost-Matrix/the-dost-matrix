@@ -114,7 +114,7 @@ export async function verifyMissionEngineV2(): Promise<void> {
     expectedTargetVersion: 5,
     payload: {
       criterionId: afterResult.successCriteria[0].criterionId,
-      passed: true,
+      outcome: "PASSED",
       evidenceRefs: ["result_1"],
       note: null,
     },

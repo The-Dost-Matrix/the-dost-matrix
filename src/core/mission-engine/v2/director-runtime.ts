@@ -36,6 +36,11 @@ import {
 import { proposeMissionKnowledge } from "./mission-knowledge";
 import { findMissionPullRequest } from "./qa-runtime";
 import { classifyPullRequestRiskForMission } from "./risk-classification";
+import {
+  buildOwnerClarificationQuestion,
+  collectUndeterminedCriteria,
+  findLatestBuilderRebuttal,
+} from "./owner-clarification";
 
 /**
  * Director Runtime v0 voor Mission Engine V2.
@@ -551,6 +556,21 @@ export interface MissionRepairPlan {
 }
 
 /**
+ * Stap 12b: in plaats van een herstelpoging (die de Builder opnieuw aan het
+ * werk zet), vraagt de Director de eigenaar om een oordeel over precies één
+ * succescriterium. Zie owner-clarification.ts voor de twee situaties waarin
+ * dit ontstaat.
+ */
+export interface OwnerClarificationPlan {
+  kind: "OWNER_CLARIFICATION";
+  relatedCriterionId: string;
+  relatedCriterionDescription: string;
+  question: string;
+}
+
+export type MissionInterventionPlan = MissionRepairPlan | OwnerClarificationPlan;
+
+/**
  * Kijkt of er een herstelpoging nodig is, en zo ja: welke soort en met welke
  * opdracht.
  *
@@ -577,13 +597,21 @@ export interface MissionRepairPlan {
  * Wordt alleen aangeroepen wanneer er geen toewijzing meer loopt — anders is
  * de stand van dit moment nog geen oordeel over werk dat nog bezig is.
  *
- * Gooit TECHNICAL_REPAIR_EXHAUSTED of SEMANTIC_REPAIR_EXHAUSTED wanneer het
- * bijbehorende plafond is bereikt: liever expliciet stoppen met een leesbare
- * uitleg dan eindeloos blijven proberen.
+ * Gooit TECHNICAL_REPAIR_EXHAUSTED wanneer het technische plafond is bereikt
+ * (liever expliciet stoppen dan eindeloos blijven proberen — er is bij een
+ * blijvend rode CI niets dat de eigenaar met een simpel "gehaald/niet
+ * gehaald" kan beslissen).
+ *
+ * Sinds stap 12b eindigt dit NIET meer altijd in een reparatie of een harde
+ * fout zodra de CI groen is: kon QA een criterium niet vaststellen
+ * ("UNDETERMINED", zie mission.ts), of is het inhoudelijke herstelplafond
+ * (MAX_SEMANTIC_REPAIR_ATTEMPTS) bereikt, dan geeft dit een
+ * OwnerClarificationPlan terug in plaats van een MissionRepairPlan of een
+ * SEMANTIC_REPAIR_EXHAUSTED-fout — zie owner-clarification.ts.
  */
 export async function planMissionRepair(
   mission: MissionV2,
-): Promise<MissionRepairPlan | null> {
+): Promise<MissionInterventionPlan | null> {
   const target = getGithubRepoTarget();
   const prs = await listPullRequests(target, "all");
   const pr = findMissionPullRequest(prs, mission.missionId);
@@ -638,8 +666,30 @@ export async function planMissionRepair(
     };
   }
 
-  // Vanaf hier is de CI groen of afwezig. Blijft alleen een inhoudelijk
-  // bezwaar van QA over.
+  // Vanaf hier is de CI groen of afwezig.
+
+  // Stap 12b, situatie 1: QA kon een of meer criteria niet vaststellen. Dit
+  // is geen inhoudelijk bezwaar (er is niets om te herstellen) en dus geen
+  // taak voor de Builder — de Director vraagt het meteen aan de eigenaar,
+  // zonder eerst een herstelpoging te proberen die niets zou kunnen oplossen.
+  const undetermined = collectUndeterminedCriteria(mission);
+
+  if (undetermined.length > 0) {
+    const primary = undetermined[0];
+
+    return {
+      kind: "OWNER_CLARIFICATION",
+      relatedCriterionId: primary.criterionId,
+      relatedCriterionDescription: primary.description,
+      question: buildOwnerClarificationQuestion({
+        intro: `QA kon niet vaststellen of het succescriterium "${primary.description}" is gehaald.`,
+        criteria: undetermined,
+        builderRebuttal: findLatestBuilderRebuttal(mission),
+      }),
+    };
+  }
+
+  // Blijft alleen een inhoudelijk bezwaar van QA over.
   const failedCriteria = collectFailedCriteria(mission);
 
   if (failedCriteria.length === 0) return null;
@@ -647,15 +697,31 @@ export async function planMissionRepair(
   const alreadyAttempted = countSemanticRepairAttempts(mission);
 
   if (alreadyAttempted >= MAX_SEMANTIC_REPAIR_ATTEMPTS) {
-    throw new DirectorRuntimeError(
-      "SEMANTIC_REPAIR_EXHAUSTED",
-      buildSemanticRepairExhaustedMessage(
-        MAX_SEMANTIC_REPAIR_ATTEMPTS,
-        pr.number,
-        pr.url,
-        failedCriteria,
-      ),
-    );
+    // Stap 12b, situatie 2: i.p.v. hier te stoppen (voorheen
+    // SEMANTIC_REPAIR_EXHAUSTED), vraagt de Director het nu aan de eigenaar
+    // — met dezelfde uitputtingsmelding als introductie, zodat die tekst
+    // niet dubbel wordt onderhouden.
+    const primary = failedCriteria[0];
+
+    return {
+      kind: "OWNER_CLARIFICATION",
+      relatedCriterionId: primary.criterionId,
+      relatedCriterionDescription: primary.description,
+      question: buildOwnerClarificationQuestion({
+        intro: buildSemanticRepairExhaustedMessage(
+          MAX_SEMANTIC_REPAIR_ATTEMPTS,
+          pr.number,
+          pr.url,
+          failedCriteria,
+        ),
+        criteria: failedCriteria.map((criterion) => ({
+          criterionId: criterion.criterionId,
+          description: criterion.description,
+          qaDoubt: criterion.note,
+        })),
+        builderRebuttal: findLatestBuilderRebuttal(mission),
+      }),
+    };
   }
 
   const attempt = alreadyAttempted + 1;
@@ -906,6 +972,62 @@ async function dispatchRepair({
   return { mission: updated, decision, usedKnowledge: [] };
 }
 
+/**
+ * Stelt de eigenaar een vraag over precies één succescriterium (stap 12b),
+ * via hetzelfde `applyDirectorDecision` als elk ander besluit — zie
+ * dispatchRepair hierboven voor waarom. Het verschil: dit besluit zet de
+ * missie niet weer aan het werk (geen nieuwe toewijzing), maar naar
+ * WAITING_FOR_OWNER (zie de REQUEST_OWNER_INPUT-afhandeling in engine.ts),
+ * met `relatedCriterionId` erbij zodat het antwoord van de eigenaar
+ * (recordOwnerInput) precies dat criterium kan bijwerken.
+ */
+async function dispatchOwnerClarification({
+  engine,
+  mission,
+  actor,
+  plan,
+}: {
+  engine: MissionEngine;
+  mission: MissionV2;
+  actor: ActorRef;
+  plan: OwnerClarificationPlan;
+}): Promise<RunDirectorStepResult> {
+  const now = new Date().toISOString();
+
+  const decision: DirectorDecision = {
+    decisionId: randomUUID(),
+    missionId: mission.missionId,
+    decisionType: "REQUEST_OWNER_INPUT",
+    reason:
+      "QA kon dit succescriterium niet vaststellen, of de inhoudelijke herstellus (stap 12) is uitgeput — de Director vraagt het daarom aan de eigenaar in plaats van te stoppen (stap 12b).",
+    nextAction: plan.question,
+    relatedCriterionId: plan.relatedCriterionId,
+    requiredCapabilities: [],
+    contextRequirements: [],
+    modelConstraints: {},
+    approvalRequirement: "owner",
+    successCriteria: [plan.relatedCriterionDescription],
+    failureStrategy: "Wacht op het antwoord van de eigenaar (WAITING_FOR_OWNER).",
+    createdAt: now,
+  };
+
+  const updated = await engine.applyDirectorDecision({
+    actor,
+    correlationId: decision.decisionId,
+    issuedAt: now,
+    commandVersion: "1.0",
+    commandId: randomUUID(),
+    commandType: "ApplyDirectorDecision",
+    targetId: mission.missionId,
+    expectedTargetVersion: mission.version,
+    payload: { decision: decision as unknown as JsonValue },
+  });
+
+  // Zelfde reden als bij dispatchRepair: dit besluit staat vast, geen
+  // kennisophaling of LLM-aanroep nodig.
+  return { mission: updated, decision, usedKnowledge: [] };
+}
+
 export async function runDirectorStep({
   engine,
   missionId,
@@ -923,19 +1045,23 @@ export async function runDirectorStep({
     );
   }
 
-  // Herstellussen (roadmapstap 11 en 12). Staan bewust vóór alles wat het
-  // taalmodel doet: zolang de CI rood is of QA een criterium heeft afgekeurd,
-  // is elk ander besluit — QA opnieuw laten oordelen, mergen, de missie
-  // afronden — voorbarig. En allebei hebben ze een plafond, wat een
-  // LLM-afweging per definitie niet heeft.
+  // Herstellussen (roadmapstap 11 en 12) en, sinds stap 12b, een vraag aan de
+  // eigenaar wanneer QA twijfelt of het herstelplafond is bereikt. Staan
+  // bewust vóór alles wat het taalmodel doet: zolang de CI rood is, QA een
+  // criterium heeft afgekeurd, of QA het niet kon vaststellen, is elk ander
+  // besluit — QA opnieuw laten oordelen, mergen, de missie afronden —
+  // voorbarig. En elke lus heeft een plafond, wat een LLM-afweging per
+  // definitie niet heeft.
   //
   // Alleen wanneer er geen toewijzing meer loopt: anders is de stand van dit
   // moment nog geen oordeel over werk dat nog bezig is.
   if (mission.activeAssignmentIds.length === 0) {
-    const repair = await planMissionRepair(mission);
+    const plan = await planMissionRepair(mission);
 
-    if (repair) {
-      return dispatchRepair({ engine, mission, actor, repair });
+    if (plan) {
+      return plan.kind === "OWNER_CLARIFICATION"
+        ? dispatchOwnerClarification({ engine, mission, actor, plan })
+        : dispatchRepair({ engine, mission, actor, repair: plan });
     }
   }
 

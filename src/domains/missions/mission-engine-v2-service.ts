@@ -207,3 +207,26 @@ export async function approveAndMergeMissionV2(
     body: JSON.stringify({ action: "approve-and-merge", missionId }),
   });
 }
+
+/**
+ * Roadmap-stap 12b: beantwoordt het openstaande inputverzoek van een missie
+ * (mission.pendingOwnerInput) — de Director vroeg dit omdat QA een
+ * succescriterium niet kon vaststellen, of omdat het inhoudelijke
+ * herstelplafond bereikt was (zie owner-clarification.ts). Ging het verzoek
+ * over een specifiek criterium (mission.pendingOwnerInput.relatedCriterionId
+ * is dan gezet), geef dan `criterionOutcome` mee om dat criterium direct op
+ * GEHAALD/NIET GEHAALD te zetten; laat het weg voor een generiek verzoek.
+ */
+export async function answerOwnerInputV2(
+  user: User,
+  missionId: string,
+  response: string,
+  criterionOutcome?: "PASSED" | "FAILED",
+): Promise<MissionV2> {
+  const data = await callMissionEngineApi<{ mission: MissionV2 }>(user, {
+    method: "POST",
+    body: JSON.stringify({ action: "answer-owner-input", missionId, response, criterionOutcome }),
+  });
+
+  return data.mission;
+}

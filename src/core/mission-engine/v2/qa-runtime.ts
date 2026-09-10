@@ -127,7 +127,12 @@ type AssignmentRecord = MissionV2["assignments"][number];
 
 export interface CriterionVerdict {
   criterionId: string;
-  passed: boolean;
+  /**
+   * Stap 12b: verbreed van `passed: boolean` naar drie waarden, zodat QA ook
+   * eerlijk "NIET VAST TE STELLEN" kan zeggen — zie CriterionStatus in
+   * mission.ts en owner-clarification.ts voor wat daarna gebeurt.
+   */
+  outcome: "PASSED" | "FAILED" | "UNDETERMINED";
   reason: string;
 }
 
@@ -149,7 +154,8 @@ function buildQaSystemPrompt(mission: MissionV2): string {
     "Je krijgt per gewijzigd bestand zowel de VOLLEDIGE INHOUD VAN DAT BESTAND OP DE PULL REQUEST-BRANCH (dus zoals het bestand eruit zou zien zodra deze pull request gemerged wordt, inclusief alles wat in eerdere, al gemergede pull requests van dezelfde missie is gerealiseerd) als de DIFF van specifiek déze pull request.",
     "Beoordeel elk succescriterium op basis van de VOLLEDIGE INHOUD — dat is de bron van waarheid. Gebruik de diff alleen als aanvullende context, bijvoorbeeld om te controleren wat er in déze pull request specifiek is gewijzigd.",
     "Een criterium mag GEHAALD zijn ook wanneer het niet zichtbaar is in de diff van déze pull request, zolang het wél klopt in de volledige inhoud (bijvoorbeeld omdat het al in een eerdere, gemergede pull request van dezelfde missie is gerealiseerd). Keur nooit af puur omdat 'de diff het niet aantoont' terwijl de volledige inhoud het criterium wél waarmaakt.",
-    "Wees streng en eerlijk: keur alleen goed wat je in de daadwerkelijke bestandsinhoud kunt onderbouwen. Bij twijfel: afkeuren, niet het voordeel van de twijfel geven.",
+    "Wees streng en eerlijk: keur alleen goed wat je in de daadwerkelijke bestandsinhoud kunt onderbouwen. Twijfel over de KWALITEIT van wat je ziet (werkt het goed genoeg, klopt het?) beslecht je altijd met NIET GEHAALD — nooit het voordeel van de twijfel geven.",
+    "Voor elk criterium kies je exact één outcome: \"PASSED\", \"FAILED\", of \"UNDETERMINED\". Gebruik UNDETERMINED UITSLUITEND wanneer je het criterium niet kunt beoordelen omdat de benodigde informatie simpelweg ontbreekt in wat je hebt gekregen (bijvoorbeeld: het criterium vraagt om gedrag dat alleen door het daadwerkelijk uitvoeren van code is vast te stellen, en dat kun je niet). UNDETERMINED is GEEN alternatief voor een inhoudelijk oordeel dat je wél kunt vellen, en geen manier om twijfel over kwaliteit te ontwijken — gebruik het spaarzaam: een criterium dat je met meer denkwerk over de aangeleverde bestanden wél kunt beoordelen, beoordeel je gewoon met PASSED of FAILED.",
     "Je mag naast de per-criterium oordelen ook één algemene 'recommendation' geven. Onderscheid daarbij expliciet twee soorten: (a) een puur cosmetische of optionele suggestie die niets aan de daadwerkelijke werking of het doel van de missie verandert (bijvoorbeeld een stijlvoorkeur) — zet dan recommendationBlocksCompletion op false; (b) een concreet, aanwijsbaar gebrek dat een succescriterium in de praktijk breekt of onvolledig maakt (bijvoorbeeld een klassenaam die niet overeenkomt tussen twee bestanden waardoor bedoelde styling niet wordt toegepast) — zet dan recommendationBlocksCompletion op true EN geef in recommendationCriterionId het criterionId van het succescriterium waar dit gebrek het meest op van toepassing is. Wees hier terughoudend en eerlijk: gebruik recommendationBlocksCompletion=true uitsluitend voor een echt gebrek dat de eigenaar zou willen laten oplossen vóórdat dit wordt afgerond, nooit voor smaakkwesties.",
     "Antwoord UITSLUITEND met geldige JSON, zonder uitleg of markdown eromheen.",
   ].join(" ");
@@ -231,7 +237,7 @@ function buildResult(input: {
 
 interface QaLlmVerdict {
   overallSummary: string;
-  criteria: { criterionId: string; passed: boolean; reason: string }[];
+  criteria: { criterionId: string; outcome: "PASSED" | "FAILED" | "UNDETERMINED"; reason: string }[];
   recommendation: string;
   /**
    * Wanneer waar (en `recommendation` niet leeg is), betekent dit dat QA een
@@ -457,7 +463,7 @@ async function evaluateCriteriaAgainstEvidence(
     "{",
     '  "overallSummary": "korte samenvatting van je beoordeling",',
     '  "criteria": [',
-    '    { "criterionId": "...", "passed": true, "reason": "korte onderbouwing" }',
+    '    { "criterionId": "...", "outcome": "PASSED" | "FAILED" | "UNDETERMINED", "reason": "korte onderbouwing" }',
     "  ],",
     '  "recommendation": "korte aanbeveling voor de eigenaar, of een lege string als er niets te melden valt",',
     '  "recommendationBlocksCompletion": false,',
@@ -490,7 +496,7 @@ async function evaluateCriteriaAgainstEvidence(
           !!entry &&
           typeof entry.criterionId === "string" &&
           validCriterionIds.has(entry.criterionId) &&
-          typeof entry.passed === "boolean",
+          (entry.outcome === "PASSED" || entry.outcome === "FAILED" || entry.outcome === "UNDETERMINED"),
       )
     : [];
 
@@ -508,7 +514,7 @@ async function evaluateCriteriaAgainstEvidence(
           : "Geen samenvatting opgegeven.",
       criteria: criteria.map((entry) => ({
         criterionId: entry.criterionId,
-        passed: entry.passed,
+        outcome: entry.outcome,
         reason: typeof entry.reason === "string" && entry.reason.trim() ? entry.reason.trim() : "Geen onderbouwing opgegeven.",
       })),
       recommendation:
@@ -566,8 +572,8 @@ function applyBlockingRecommendation(
   const updated = [...criteria];
   updated[targetIndex] = {
     ...target,
-    passed: false,
-    reason: target.passed
+    outcome: "FAILED" as const,
+    reason: target.outcome !== "FAILED"
       ? `QA-aanbeveling vereist eerst actie voordat dit criterium als gehaald mag gelden: ${verdict.recommendation} (oorspronkelijke beoordeling van dit criterium op zich: "${target.reason}")`
       : `${target.reason} Daarnaast: ${verdict.recommendation}`,
   };
@@ -597,8 +603,12 @@ function applyFailingCiOverride(
 
   return criteria.map((entry) => ({
     ...entry,
-    passed: false,
-    reason: entry.passed ? ciReason : `${entry.reason} Daarnaast: ${ciReason}`,
+    outcome: "FAILED" as const,
+    // Een falende CI is een harde, mechanische uitkomst — sterker dan zowel
+    // een positief oordeel als "kon niet vaststellen": beide worden hier
+    // vervangen door de CI-reden, niet ernaast gezet (bij een al FAILED
+    // criterium wordt de bestaande reden wel aangevuld).
+    reason: entry.outcome === "FAILED" ? `${entry.reason} Daarnaast: ${ciReason}` : ciReason,
   }));
 }
 
@@ -700,16 +710,27 @@ export async function executeQaAssignment({
   // faalt: dit kost extra GitHub-aanroepen.
   const ciFailureReport = ciOverrode ? await collectCiFailureReport(target, pr.headSha) : null;
 
+  // RoleResult.successCriteriaResults (contracts/v2) is en blijft een platte
+  // boolean-map — dat brede contract wordt hier bewust niet aangepast. De
+  // daadwerkelijke tri-state uitkomst (inclusief UNDETERMINED) loopt via
+  // `criteriaVerdicts` hieronder, wat role-runtime.ts ook daadwerkelijk
+  // gebruikt om de succescriteria van de missie bij te werken.
   const successCriteriaResults: Record<string, boolean> = {};
   for (const entry of effectiveCriteria) {
-    successCriteriaResults[entry.criterionId] = entry.passed;
+    successCriteriaResults[entry.criterionId] = entry.outcome === "PASSED";
+  }
+
+  function labelOutcome(outcome: CriterionVerdict["outcome"]): string {
+    if (outcome === "PASSED") return "GEHAALD";
+    if (outcome === "FAILED") return "NIET GEHAALD";
+    return "NIET VAST TE STELLEN";
   }
 
   const roleOutput = [
     verdict.overallSummary,
     "",
     ...effectiveCriteria.map(
-      (entry) => `- (${entry.passed ? "GEHAALD" : "NIET GEHAALD"}) ${entry.criterionId}: ${entry.reason}`,
+      (entry) => `- (${labelOutcome(entry.outcome)}) ${entry.criterionId}: ${entry.reason}`,
     ),
     ciOverrode
       ? `\nCI-status: ❌ MISLUKT (${ciStatus.failingCheckNames.join(", ")}) — alle succescriteria hierboven zijn daarom hard op NIET GEHAALD gezet, ongeacht de inhoudelijke beoordeling hierboven. Dit wordt pas opnieuw op GEHAALD gezet nadat een nieuwe builder-toewijzing de CI-fout heeft opgelost en de check daarna zelf weer slaagt.${
@@ -747,7 +768,7 @@ export async function executeQaAssignment({
 
   const criteriaVerdicts: CriterionVerdict[] = effectiveCriteria.map((entry) => ({
     criterionId: entry.criterionId,
-    passed: entry.passed,
+    outcome: entry.outcome,
     reason: entry.reason,
   }));
 

@@ -186,7 +186,7 @@ export async function executeRoleAssignment({
       issuedAt: new Date().toISOString(),
       payload: {
         criterionId: verdict.criterionId,
-        passed: verdict.passed,
+        outcome: verdict.outcome,
         evidenceRefs: [result.resultId],
         note: verdict.reason,
       },

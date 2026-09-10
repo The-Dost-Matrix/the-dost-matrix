@@ -157,6 +157,10 @@ export class MissionEngine {
           requestId,
           question: decision.nextAction,
           requestedAt: this.clock.now(),
+          // Bewust alleen opnemen wanneer het besluit het meegeeft — zelfde
+          // reden als bij assignmentKind hierboven: Firestore weigert een
+          // veld met de waarde `undefined`.
+          ...(decision.relatedCriterionId ? { relatedCriterionId: decision.relatedCriterionId } : {}),
         };
         this.changeStatus(mission, "WAITING_FOR_OWNER");
         eventType = "mission.owner_input_requested";
@@ -223,6 +227,11 @@ export class MissionEngine {
 
     const previousStatus = mission.status;
     assignment.resultId = result.resultId;
+    // Stap 12b: bewaart wat deze toewijzing daadwerkelijk opleverde (bv. het
+    // weerwoord van de Builder op een eerder QA-oordeel), zodat de Director
+    // dit later — bij een vraag aan de eigenaar — nog kan tonen. Zie
+    // MissionAssignmentRecord.resultSummary in mission.ts.
+    assignment.resultSummary = result.summary;
     assignment.updatedAt = this.clock.now();
     assignment.status = result.status;
     mission.activeAssignmentIds = mission.activeAssignmentIds.filter(
@@ -267,10 +276,35 @@ export class MissionEngine {
     }
     const previousStatus = mission.status;
     const requestId = mission.pendingOwnerInput.requestId;
+    const relatedCriterionId = mission.pendingOwnerInput.relatedCriterionId;
     delete mission.pendingOwnerInput;
+
+    // Stap 12b: ging dit verzoek over een specifiek succescriterium (zie
+    // PendingOwnerInput.relatedCriterionId in mission.ts), dan mag het
+    // antwoord van de eigenaar dat criterium direct bijwerken — de reden
+    // wordt bewaard als lastEvaluationNote, exact zoals bij een QA-oordeel.
+    // Zonder een geldige criterionOutcome (bijvoorbeeld een generiek
+    // inputverzoek zonder relatedCriterionId) verandert er niets aan de
+    // succescriteria — precies het gedrag van vóór deze stap.
+    if (
+      relatedCriterionId &&
+      (command.payload.criterionOutcome === "PASSED" || command.payload.criterionOutcome === "FAILED")
+    ) {
+      const criterion = mission.successCriteria.find(
+        (candidate) => candidate.criterionId === relatedCriterionId,
+      );
+      if (criterion) {
+        criterion.status = command.payload.criterionOutcome;
+        criterion.evidenceRefs = [requestId];
+        criterion.evaluatedAt = this.clock.now();
+        criterion.lastEvaluationNote = `Beslissing van de eigenaar: ${command.payload.response}`;
+      }
+    }
+
     this.changeStatus(mission, "ACTIVE");
     return this.commit(command, mission, previousStatus, "mission.owner_input_recorded", {
       requestId,
+      ...(relatedCriterionId ? { criterionId: relatedCriterionId } : {}),
     });
   }
 
@@ -304,8 +338,11 @@ export class MissionEngine {
     if (!criterion) {
       throw new Error(`Onbekend succescriterium: ${command.payload.criterionId}`);
     }
+    if (!["PASSED", "FAILED", "UNDETERMINED"].includes(command.payload.outcome)) {
+      throw new Error(`Onbekende criteriumuitkomst: ${command.payload.outcome}`);
+    }
     const previousStatus = mission.status;
-    criterion.status = command.payload.passed ? "PASSED" : "FAILED";
+    criterion.status = command.payload.outcome;
     criterion.evidenceRefs = [...command.payload.evidenceRefs];
     criterion.evaluatedAt = this.clock.now();
     criterion.lastEvaluationNote = command.payload.note ?? undefined;

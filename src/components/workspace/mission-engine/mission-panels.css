@@ -373,6 +373,9 @@
 
 .mev2-criterion--passed .mev2-criterion-status { color: var(--green); }
 .mev2-criterion--failed .mev2-criterion-status { color: var(--red); }
+/* Stap 12b: "niet vast te stellen" is geen afkeuring, maar vraagt wel
+   aandacht — zelfde kleur als .mev2-phase--aandacht hierboven. */
+.mev2-criterion--undetermined .mev2-criterion-status { color: var(--amber); }
 
 .mev2-criterion-note {
   color: var(--muted);
@@ -417,4 +420,38 @@
   .dm-detail-grid {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* ==========================================================================
+   Vraag aan de eigenaar (WAITING_FOR_OWNER, stap 12b). Zie
+   mission-execution-panel.tsx: QA kon een criterium niet vaststellen, of de
+   inhoudelijke herstellus is uitgeput — de Director vraagt de eigenaar in
+   plaats van te stoppen.
+   ========================================================================== */
+
+.mev2-owner-question {
+  white-space: pre-wrap;
+}
+
+.mev2-owner-outcome-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 10px 0;
+  font-size: 13px;
+}
+
+.mev2-owner-outcome-choice label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mev2-owner-response {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 70px;
+  margin-bottom: 10px;
 }

@@ -55,6 +55,21 @@ export const dynamic = "force-dynamic";
  *                                       een needs-signoff-melding gaf — de
  *                                       eigenaar hoeft hiervoor niet meer
  *                                       naar GitHub.com.
+ * - POST { action: "answer-owner-input",
+ *          missionId, response,
+ *          criterionOutcome? }         → roadmap-stap 12b: beantwoordt het
+ *                                       openstaande inputverzoek van een
+ *                                       missie (mission.pendingOwnerInput,
+ *                                       gezet door de Director via
+ *                                       REQUEST_OWNER_INPUT). Ging dat
+ *                                       verzoek over een specifiek
+ *                                       succescriterium, dan zet
+ *                                       criterionOutcome ("PASSED" of
+ *                                       "FAILED") dat criterium meteen op
+ *                                       GEHAALD/NIET GEHAALD (zie
+ *                                       recordOwnerInput in engine.ts) —
+ *                                       sluit de tot nu toe dode
+ *                                       WAITING_FOR_OWNER-lus.
  *
  * Alle acties zijn ownerId-scoped: een mission kan alleen worden bekeken of
  * bewerkt door de ingelogde gebruiker die hem heeft aangemaakt.
@@ -189,6 +204,13 @@ type ApproveAndMergeBody = {
   missionId?: unknown;
 };
 
+type AnswerOwnerInputBody = {
+  action: "answer-owner-input";
+  missionId?: unknown;
+  response?: unknown;
+  criterionOutcome?: unknown;
+};
+
 type PostBody =
   | CreateBody
   | DispatchBody
@@ -196,6 +218,7 @@ type PostBody =
   | AutoStepBody
   | CancelBody
   | ApproveAndMergeBody
+  | AnswerOwnerInputBody
   | { action?: unknown };
 
 const ALLOWED_RISK_LEVELS: MissionRiskLevel[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
@@ -383,6 +406,70 @@ async function handleApproveAndMerge(body: ApproveAndMergeBody, ownerId: string)
   const result = await approveAndMergeMissionPullRequest(mission);
 
   return NextResponse.json({ mission, ...result });
+}
+
+/**
+ * Roadmap-stap 12b: beantwoordt het openstaande inputverzoek van een missie
+ * (mission.pendingOwnerInput). Dit is het stuk dat tot nu toe ontbrak: de
+ * Director kon via REQUEST_OWNER_INPUT al een vraag stellen (mission naar
+ * WAITING_FOR_OWNER, zie engine.ts) en engine.recordOwnerInput() bestond al
+ * om het antwoord te verwerken, maar geen enkele API-actie riep dat aan —
+ * een missie die WAITING_FOR_OWNER werd, liep daardoor altijd dood.
+ *
+ * Ging het verzoek over een specifiek succescriterium (relatedCriterionId,
+ * gezet door de Director bij een QA-oordeel dat "niet vast te stellen" was,
+ * of nadat het inhoudelijke herstelplafond was bereikt — zie
+ * owner-clarification.ts), dan zet criterionOutcome dat criterium direct op
+ * GEHAALD/NIET GEHAALD. Zonder relatedCriterionId (een generiek
+ * inputverzoek) heeft criterionOutcome geen effect — de missie hervat dan
+ * gewoon, exact het gedrag van vóór deze stap.
+ */
+async function handleAnswerOwnerInput(body: AnswerOwnerInputBody, ownerId: string) {
+  if (typeof body.missionId !== "string" || !body.missionId.trim()) {
+    return NextResponse.json({ error: "missionId ontbreekt." }, { status: 400 });
+  }
+  if (typeof body.response !== "string" || !body.response.trim()) {
+    return NextResponse.json({ error: "Geef een reden op bij je antwoord." }, { status: 400 });
+  }
+
+  const engine = createMissionEngineV2();
+  const mission = await engine.getMission(body.missionId);
+
+  if (!mission) {
+    return NextResponse.json({ error: "Mission niet gevonden." }, { status: 404 });
+  }
+
+  assertOwnership(mission, ownerId);
+
+  if (!mission.pendingOwnerInput) {
+    return NextResponse.json(
+      { error: "Deze missie heeft geen openstaand inputverzoek om te beantwoorden." },
+      { status: 400 },
+    );
+  }
+
+  const criterionOutcome =
+    body.criterionOutcome === "PASSED" || body.criterionOutcome === "FAILED"
+      ? body.criterionOutcome
+      : undefined;
+
+  const updated = await engine.recordOwnerInput({
+    actor: { type: "owner", id: ownerId },
+    correlationId: randomUUID(),
+    issuedAt: new Date().toISOString(),
+    commandVersion: "1.0",
+    commandId: randomUUID(),
+    commandType: "RecordOwnerInput",
+    targetId: mission.missionId,
+    expectedTargetVersion: mission.version,
+    payload: {
+      requestId: mission.pendingOwnerInput.requestId,
+      response: body.response.trim(),
+      ...(criterionOutcome ? { criterionOutcome } : {}),
+    },
+  });
+
+  return NextResponse.json({ mission: updated });
 }
 
 async function handleDispatch(body: DispatchBody, ownerId: string) {
@@ -610,6 +697,8 @@ export async function POST(request: NextRequest) {
         return await handleCancel(body as CancelBody, ownerId);
       case "approve-and-merge":
         return await handleApproveAndMerge(body as ApproveAndMergeBody, ownerId);
+      case "answer-owner-input":
+        return await handleAnswerOwnerInput(body as AnswerOwnerInputBody, ownerId);
       default:
         return NextResponse.json({ error: "Onbekende actie." }, { status: 400 });
     }

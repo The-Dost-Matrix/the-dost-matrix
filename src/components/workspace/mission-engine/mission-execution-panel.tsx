@@ -14,6 +14,14 @@ import "@/components/workspace/mission-engine/mission-panels.css";
  * "Goedkeuring & Mergen" alleen wanneer de Director die specifiek heeft
  * gevraagd (gestructureerde foutcode, geen tekstherkenning), en "annuleren"
  * bewust als minder prominente uitzondering.
+ *
+ * Stap 12b: staat de missie op WAITING_FOR_OWNER, dan toont dit paneel de
+ * openstaande vraag van de Director (mission.pendingOwnerInput) met een
+ * antwoordformulier. Ging de vraag over een specifiek succescriterium
+ * (relatedCriterionId gezet), dan is een keuze uit "gehaald"/"niet gehaald"
+ * verplicht — bij een generiek verzoek volstaat alleen een reden. Dit sluit
+ * de tot nu toe dode WAITING_FOR_OWNER-lus: engine.recordOwnerInput() bestond
+ * al, maar had geen aanroeper.
  */
 export function MissionExecutionPanel() {
   const {
@@ -28,6 +36,11 @@ export function MissionExecutionPanel() {
     approveInfo,
     canAutoStep,
     canCancel,
+    ownerInputResponse,
+    setOwnerInputResponse,
+    ownerInputOutcome,
+    setOwnerInputOutcome,
+    answerOwnerInput,
     autoStep,
     approveAndMerge,
     cancelMission,
@@ -86,6 +99,53 @@ export function MissionExecutionPanel() {
               <article className="knowledge-card">
                 <strong>Goedkeuring &amp; Mergen</strong>
                 <p>{approveInfo}</p>
+              </article>
+            )}
+
+            {mission.status === "WAITING_FOR_OWNER" && mission.pendingOwnerInput && (
+              <article className="knowledge-card">
+                <strong>De Director heeft een vraag voor je</strong>
+                <p className="mev2-owner-question">{mission.pendingOwnerInput.question}</p>
+
+                {mission.pendingOwnerInput.relatedCriterionId && (
+                  <div className="mev2-owner-outcome-choice">
+                    <label>
+                      <input
+                        type="radio"
+                        name="owner-input-outcome"
+                        checked={ownerInputOutcome === "PASSED"}
+                        onChange={() => setOwnerInputOutcome("PASSED")}
+                      />
+                      Gehaald
+                    </label>
+                    <label>
+                      <input
+                        type="radio"
+                        name="owner-input-outcome"
+                        checked={ownerInputOutcome === "FAILED"}
+                        onChange={() => setOwnerInputOutcome("FAILED")}
+                      />
+                      Niet gehaald
+                    </label>
+                  </div>
+                )}
+
+                <textarea
+                  className="mev2-owner-response"
+                  rows={3}
+                  placeholder="Korte reden bij je antwoord..."
+                  value={ownerInputResponse}
+                  onChange={(event) => setOwnerInputResponse(event.target.value)}
+                />
+
+                <button
+                  className="primary"
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => void answerOwnerInput()}
+                >
+                  {busy === "answer-owner" ? "Bezig..." : "Antwoord versturen"}
+                </button>
               </article>
             )}
 

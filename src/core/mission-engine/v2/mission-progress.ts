@@ -92,6 +92,10 @@ export function buildCriteriaPhase(mission: MissionV2): MissionPhase {
   const total = mission.successCriteria.length;
   const passed = mission.successCriteria.filter((c) => c.status === "PASSED").length;
   const failed = mission.successCriteria.filter((c) => c.status === "FAILED").length;
+  // Stap 12b: QA kan een criterium ook niet-vast-te-stellen laten — dat is
+  // geen afkeuring, maar vraagt evengoed aandacht (meestal een openstaande
+  // vraag aan de eigenaar, zie owner-clarification.ts), dus telt hier mee.
+  const undetermined = mission.successCriteria.filter((c) => c.status === "UNDETERMINED").length;
 
   if (total === 0) {
     return {
@@ -102,12 +106,16 @@ export function buildCriteriaPhase(mission: MissionV2): MissionPhase {
     };
   }
 
-  if (failed > 0) {
+  if (failed > 0 || undetermined > 0) {
+    const parts = [`${passed} van ${total} gehaald`];
+    if (failed > 0) parts.push(`${failed} afgekeurd`);
+    if (undetermined > 0) parts.push(`${undetermined} niet vast te stellen`);
+
     return {
       id: "criteria",
       label: "Succescriteria",
       state: "AANDACHT",
-      detail: `${passed} van ${total} gehaald, ${failed} afgekeurd.`,
+      detail: `${parts.join(", ")}.`,
     };
   }
 
@@ -139,6 +147,16 @@ export function buildMergePhase(mission: MissionV2): MissionPhase {
         label: "Afronden & mergen",
         state: "AANDACHT",
         detail: "Wacht op jouw goedkeuring.",
+      };
+    case "WAITING_FOR_OWNER":
+      // Stap 12b: de Director stelde een vraag (zie
+      // mission.pendingOwnerInput) in plaats van te stoppen — dit vraagt
+      // net zo veel aandacht als een openstaande goedkeuring hierboven.
+      return {
+        id: "merge",
+        label: "Afronden & mergen",
+        state: "AANDACHT",
+        detail: "Wacht op jouw antwoord op een vraag van de Director.",
       };
     case "CANCELLED":
       return {

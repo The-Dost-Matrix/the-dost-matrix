@@ -89,7 +89,12 @@ export function MissionProgressPanel({ mission }: MissionProgressPanelProps) {
           <ul>
             {mission.successCriteria.map((criterion) => (
               <li className={`mev2-criterion mev2-criterion--${criterion.status.toLowerCase()}`} key={criterion.criterionId}>
-                <span className="mev2-criterion-status">{criterion.status}</span>
+                <span className="mev2-criterion-status">
+                  {/* Stap 12b: enige status die hier vertaald wordt — de
+                      andere drie (PENDING/PASSED/FAILED) tonen al sinds
+                      stap 8 hun kale Engelse waarde; dat blijft zo. */}
+                  {criterion.status === "UNDETERMINED" ? "NIET VAST TE STELLEN" : criterion.status}
+                </span>
                 <span className="mev2-criterion-text">{criterion.description}</span>
 
                 {criterion.lastEvaluationNote && (

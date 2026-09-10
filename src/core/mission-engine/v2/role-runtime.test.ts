@@ -155,8 +155,8 @@ describe("executeRoleAssignment", () => {
       result: roleResult({ resultId: "qa-result-1" }),
       roleOutput: "QA-oordeel.",
       criteriaVerdicts: [
-        { criterionId: "criterion-1", passed: true, reason: "Voldoet." },
-        { criterionId: "criterion-2", passed: false, reason: "Voldoet niet." },
+        { criterionId: "criterion-1", outcome: "PASSED", reason: "Voldoet." },
+        { criterionId: "criterion-2", outcome: "FAILED", reason: "Voldoet niet." },
       ],
     } as never);
 
@@ -175,7 +175,7 @@ describe("executeRoleAssignment", () => {
         targetId: "mission-1",
         payload: expect.objectContaining({
           criterionId: "criterion-1",
-          passed: true,
+          outcome: "PASSED",
           note: "Voldoet.",
           evidenceRefs: ["qa-result-1"],
         }),
@@ -184,7 +184,36 @@ describe("executeRoleAssignment", () => {
     expect(engine.evaluateCriterion).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        payload: expect.objectContaining({ criterionId: "criterion-2", passed: false }),
+        payload: expect.objectContaining({ criterionId: "criterion-2", outcome: "FAILED" }),
+      }),
+    );
+  });
+
+  it("past een ONDUIDELIJK (UNDETERMINED) verdict toe zonder het als gehaald te tellen", async () => {
+    // Stap 12b: QA mag ook zeggen dat ze een criterium niet kan vaststellen.
+    // role-runtime.ts moet dat verdict ongewijzigd doorgeven aan de engine —
+    // niet stilzwijgend afronden naar PASSED of FAILED.
+    const mission = buildMission({ roleId: "qa" });
+    const engine = createEngineStub(mission);
+
+    vi.mocked(executeQaAssignment).mockResolvedValue({
+      result: roleResult({ resultId: "qa-result-2" }),
+      roleOutput: "QA-oordeel.",
+      criteriaVerdicts: [
+        { criterionId: "criterion-1", outcome: "UNDETERMINED", reason: "Niet vast te stellen." },
+      ],
+    } as never);
+
+    await run(engine);
+
+    expect(engine.evaluateCriterion).toHaveBeenCalledTimes(1);
+    expect(engine.evaluateCriterion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          criterionId: "criterion-1",
+          outcome: "UNDETERMINED",
+          note: "Niet vast te stellen.",
+        }),
       }),
     );
   });
@@ -197,8 +226,8 @@ describe("executeRoleAssignment", () => {
       result: roleResult(),
       roleOutput: "QA-oordeel.",
       criteriaVerdicts: [
-        { criterionId: "criterion-1", passed: true, reason: "Voldoet." },
-        { criterionId: "criterion-2", passed: true, reason: "Voldoet ook." },
+        { criterionId: "criterion-1", outcome: "PASSED", reason: "Voldoet." },
+        { criterionId: "criterion-2", outcome: "PASSED", reason: "Voldoet ook." },
       ],
     } as never);
 

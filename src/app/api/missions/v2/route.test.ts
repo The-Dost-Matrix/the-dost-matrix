@@ -31,7 +31,7 @@ vi.mock("@/core/firebase/admin", () => ({
  * daadwerkelijk te testen foutafhandeling.
  */
 vi.mock("@/core/mission-engine/v2/engine-factory", () => {
-  const engine = { getMission: vi.fn() };
+  const engine = { getMission: vi.fn(), recordOwnerInput: vi.fn() };
   return {
     createMissionEngineV2: vi.fn(() => engine),
   };
@@ -152,5 +152,89 @@ describe("POST /api/missions/v2", () => {
 
     expect(json.code).toBe("PULL_REQUEST_CLOSED");
     expect(json.code).not.toBe("NEEDS_SIGNOFF");
+  });
+
+  describe("action: answer-owner-input (stap 12b)", () => {
+    it("geeft requestId en response door aan engine.recordOwnerInput, met criterionOutcome wanneer meegegeven", async () => {
+      const mission = mockActiveMission({
+        status: "WAITING_FOR_OWNER",
+        pendingOwnerInput: { requestId: "input-1", question: "Is dit gehaald?", requestedAt: "2026-09-10T10:00:00.000Z" },
+      });
+      const engine = createMissionEngineV2();
+      const updated = { ...mission, status: "ACTIVE" };
+      vi.mocked(engine.recordOwnerInput).mockResolvedValue(updated as never);
+
+      const response = await POST(
+        buildJsonRequest({
+          action: "answer-owner-input",
+          missionId: "mission-123",
+          response: "Klopt, ik heb het zelf getest.",
+          criterionOutcome: "PASSED",
+        }),
+      );
+
+      expect(response.ok).toBe(true);
+      expect(engine.recordOwnerInput).toHaveBeenCalledTimes(1);
+      expect(engine.recordOwnerInput).toHaveBeenCalledWith(
+        expect.objectContaining({
+          commandType: "RecordOwnerInput",
+          targetId: "mission-123",
+          payload: {
+            requestId: "input-1",
+            response: "Klopt, ik heb het zelf getest.",
+            criterionOutcome: "PASSED",
+          },
+        }),
+      );
+
+      const json = await response.json();
+      expect(json.mission).toEqual(updated);
+    });
+
+    it("laat criterionOutcome weg wanneer niet meegegeven, zonder engine.recordOwnerInput te laten falen", async () => {
+      mockActiveMission({
+        status: "WAITING_FOR_OWNER",
+        pendingOwnerInput: { requestId: "input-2", question: "Vraag?", requestedAt: "2026-09-10T10:00:00.000Z" },
+      });
+      const engine = createMissionEngineV2();
+      vi.mocked(engine.recordOwnerInput).mockResolvedValue({ status: "ACTIVE" } as never);
+
+      await POST(
+        buildJsonRequest({ action: "answer-owner-input", missionId: "mission-123", response: "Oké." }),
+      );
+
+      expect(engine.recordOwnerInput).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payload: { requestId: "input-2", response: "Oké." },
+        }),
+      );
+    });
+
+    it("geeft een 400-fout wanneer de missie geen openstaand inputverzoek heeft", async () => {
+      mockActiveMission({ status: "ACTIVE", pendingOwnerInput: undefined });
+
+      const response = await POST(
+        buildJsonRequest({ action: "answer-owner-input", missionId: "mission-123", response: "Oké." }),
+      );
+
+      expect(response.status).toBe(400);
+      const engine = createMissionEngineV2();
+      expect(engine.recordOwnerInput).not.toHaveBeenCalled();
+    });
+
+    it("geeft een 400-fout wanneer er geen reden is opgegeven", async () => {
+      mockActiveMission({
+        status: "WAITING_FOR_OWNER",
+        pendingOwnerInput: { requestId: "input-3", question: "Vraag?", requestedAt: "2026-09-10T10:00:00.000Z" },
+      });
+
+      const response = await POST(
+        buildJsonRequest({ action: "answer-owner-input", missionId: "mission-123", response: "   " }),
+      );
+
+      expect(response.status).toBe(400);
+      const engine = createMissionEngineV2();
+      expect(engine.recordOwnerInput).not.toHaveBeenCalled();
+    });
   });
 });
