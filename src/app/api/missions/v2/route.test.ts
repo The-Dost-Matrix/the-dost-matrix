@@ -191,7 +191,7 @@ describe("POST /api/missions/v2", () => {
       expect(json.mission).toEqual(updated);
     });
 
-    it("laat criterionOutcome weg wanneer niet meegegeven, zonder engine.recordOwnerInput te laten falen", async () => {
+    it("geeft criterionOutcome: null door wanneer niet meegegeven, zonder engine.recordOwnerInput te laten falen", async () => {
       mockActiveMission({
         status: "WAITING_FOR_OWNER",
         pendingOwnerInput: { requestId: "input-2", question: "Vraag?", requestedAt: "2026-09-10T10:00:00.000Z" },
@@ -205,7 +205,7 @@ describe("POST /api/missions/v2", () => {
 
       expect(engine.recordOwnerInput).toHaveBeenCalledWith(
         expect.objectContaining({
-          payload: { requestId: "input-2", response: "Oké." },
+          payload: { requestId: "input-2", response: "Oké.", criterionOutcome: null },
         }),
       );
     });

@@ -36,10 +36,13 @@ export interface RecordOwnerInputPayload extends Record<string, JsonValue> {
    * succescriterium ging (PendingOwnerInput.relatedCriterionId, zie
    * mission.ts), mag de eigenaar dat criterium hiermee direct op
    * GEHAALD/NIET GEHAALD zetten — zie recordOwnerInput in engine.ts.
-   * Optioneel, en zonder effect bij een generiek inputverzoek zonder
-   * relatedCriterionId.
+   * `null` bij een generiek inputverzoek (zonder relatedCriterionId) of
+   * wanneer de eigenaar geen keuze meegaf — dan verandert er niets aan de
+   * succescriteria. Geen optioneel veld (`?:`): dit payload-type breidt
+   * Record<string, JsonValue> uit, en JsonValue kent geen `undefined` — zie
+   * ook `reason: string | null` in RecordApprovalPayload hieronder.
    */
-  criterionOutcome?: "PASSED" | "FAILED";
+  criterionOutcome: "PASSED" | "FAILED" | null;
 }
 
 export interface RecordApprovalPayload extends Record<string, JsonValue> {

@@ -451,7 +451,7 @@ async function handleAnswerOwnerInput(body: AnswerOwnerInputBody, ownerId: strin
   const criterionOutcome =
     body.criterionOutcome === "PASSED" || body.criterionOutcome === "FAILED"
       ? body.criterionOutcome
-      : undefined;
+      : null;
 
   const updated = await engine.recordOwnerInput({
     actor: { type: "owner", id: ownerId },
@@ -465,7 +465,7 @@ async function handleAnswerOwnerInput(body: AnswerOwnerInputBody, ownerId: strin
     payload: {
       requestId: mission.pendingOwnerInput.requestId,
       response: body.response.trim(),
-      ...(criterionOutcome ? { criterionOutcome } : {}),
+      criterionOutcome,
     },
   });
 
