@@ -254,6 +254,30 @@ grote pull requests kan dat onvolledig zijn. Ook is er geen automatische
 herbeoordeling wanneer je een afgekeurde pull request later aanpast; de
 Director moet dan zelf opnieuw de builder-rol inzetten.
 
+## Wat betekent NIET VAST TE STELLEN?
+
+Soms kan QA een succescriterium niet eerlijk nakijken. Dat gebeurt als het
+antwoord niet objectief uit de code, de bestanden of de pull request te halen
+is — de pull request is het voorstel met wijzigingen dat jij zelf bekijkt en
+goedkeurt. Denk aan criteria over smaak, over of een tekst lekker leest, of
+over de vraag of iets "goed genoeg voelt" voor jou. Dat kan alleen jij
+beoordelen.
+
+In zo'n geval gebeurt dit:
+
+1. QA zet dat criterium op **NIET VAST TE STELLEN**. Het criterium krijgt dus
+   géén PASSED (gehaald) en géén FAILED (niet gehaald).
+2. De Director rondt de missie dan niet af. In plaats daarvan stelt hij jou
+   (Elroy) een concrete vraag en wacht op je beslissing.
+3. Jij geeft het oordeel. Je hebt drie keuzes: goedkeuren, afkeuren met een
+   korte toelichting over wat er anders moet, of het criterium aanpassen of
+   helemaal laten vervallen.
+4. Daarna gaat de Director verder met de missie, op basis van wat jij hebt
+   besloten.
+
+Zo blijft een smaakvraag altijd bij jou liggen, en doet QA nooit alsof ze iets
+heeft gecontroleerd wat ze niet kan controleren.
+
 ## Volgende sprint
 
 - server-side sessiebeveiliging;
