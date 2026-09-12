@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 import { useAuth } from "@/domains/auth/auth-provider";
-import { sendChatMessage, subscribeToChatMessages } from "@/domains/chat/chat-service";
+import { askCouncil, sendChatMessage, subscribeToChatMessages } from "@/domains/chat/chat-service";
 
 import type { ChatMessage } from "@/core/domain/chat/chat-message";
 
@@ -32,14 +32,29 @@ import "@/components/workspace/director-chat.css";
  * paperclip zou dus wel een bestandsnaam kunnen tonen, maar de Director zou
  * er niets van zien — precies het soort schijnfunctie dat bij de UI-basis is
  * weggehaald. Komt terug zodra de modelverbinding beeld aankan.
+ *
+ * Stap 13 — The Dost Council V1 (dun): naast de ronde verstuurknop (naar de
+ * Director, één model) staat "Vraag de Raad" — dezelfde vraag, maar naar
+ * runCouncilSession (zie core/application/council/council-service.ts): twee
+ * onafhankelijke modellen die blind analyseren, elkaar geanonimiseerd
+ * bekritiseren, en het expliciet oneens mogen zijn. Bewust een aparte knop
+ * en geen automatische keuze: een fout besluit van de raad raakt hier de
+ * merge-route niet (dit is puur een chatmodus), en Elroy kiest zelf wanneer
+ * een vraag zwaar genoeg is om twee meningen te rechtvaardigen — de raad kost
+ * meetbaar meer dan een gewoon bericht (zie de kostenregel onderaan het
+ * raadsantwoord). Het antwoord van de raad komt, net als een gewoon
+ * Director-antwoord, gewoon in dezelfde geschiedenis terecht; het
+ * modelveld begint met "council/" zodat de avatar hieronder "⬡" toont in
+ * plaats van "D".
  */
 
 /**
  * Startsuggesties: ze VULLEN alleen het invoerveld, ze versturen niets, en
  * ze verdwijnen zodra het gesprek loopt. Alle vier verwijzen naar iets dat
  * de Director daadwerkelijk kan (missies aanmaken vanuit de chat, de eigen
- * codebase en docs lezen). Een suggestie voor de Dost Council staat er
- * bewust niet bij: die bestaat pas na stap 13.
+ * codebase en docs lezen). Geen suggestie stuurt automatisch naar de raad:
+ * een suggestie vult alleen het veld, en welke knop je daarna gebruikt
+ * (Verstuur of Vraag de Raad) blijft altijd een eigen keuze.
  */
 const SUGGESTIONS = [
   "Plan een nieuwe missie",
@@ -56,7 +71,11 @@ export function DirectorChat() {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
+  // "chat" = normaal bericht aan de Director, "council" = "Vraag de Raad"
+  // (stap 13). Eén gedeelde staat in plaats van twee losse booleans, zodat
+  // nooit allebei tegelijk actief kunnen zijn en de typ-indicator weet welke
+  // tekst te tonen.
+  const [busy, setBusy] = useState<"chat" | "council" | null>(null);
   const [error, setError] = useState("");
 
   const listEnd = useRef<HTMLDivElement>(null);
@@ -87,12 +106,12 @@ export function DirectorChat() {
   const firstName = user?.displayName?.trim().split(" ")[0] ?? "";
 
   async function sendCurrentDraft() {
-    if (!user || !draft.trim() || busy) return;
+    if (!user || !draft.trim() || busy !== null) return;
 
     const content = draft.trim();
 
     setDraft("");
-    setBusy(true);
+    setBusy("chat");
     setError("");
 
     try {
@@ -103,7 +122,26 @@ export function DirectorChat() {
       setDraft(content);
       setError(caught instanceof Error ? caught.message : "Bericht versturen is mislukt.");
     } finally {
-      setBusy(false);
+      setBusy(null);
+    }
+  }
+
+  async function askCouncilWithCurrentDraft() {
+    if (!user || !draft.trim() || busy !== null) return;
+
+    const content = draft.trim();
+
+    setDraft("");
+    setBusy("council");
+    setError("");
+
+    try {
+      await askCouncil(user, content);
+    } catch (caught) {
+      setDraft(content);
+      setError(caught instanceof Error ? caught.message : "De raad kon niet worden geraadpleegd.");
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -164,7 +202,7 @@ export function DirectorChat() {
           <div className={`dm-chat-row dm-chat-row--${message.role}`} key={message.id}>
             {message.role === "assistant" && (
               <span aria-hidden="true" className="dm-chat-avatar">
-                D
+                {message.model?.startsWith("council/") ? "⬡" : "D"}
               </span>
             )}
 
@@ -181,14 +219,14 @@ export function DirectorChat() {
           </div>
         ))}
 
-        {busy && (
+        {busy !== null && (
           <div className="dm-chat-row dm-chat-row--assistant">
             <span aria-hidden="true" className="dm-chat-avatar">
-              D
+              {busy === "council" ? "⬡" : "D"}
             </span>
 
             <div
-              aria-label="Director is aan het typen"
+              aria-label={busy === "council" ? "De raad beraadslaagt" : "Director is aan het typen"}
               className="chat-bubble chat-bubble--assistant dm-chat-typing"
               role="status"
             >
@@ -236,9 +274,21 @@ export function DirectorChat() {
         />
 
         <button
+          aria-label="Vraag de Raad — twee onafhankelijke modellen, mogen het oneens zijn"
+          className="dm-chat-council"
+          disabled={busy !== null || !draft.trim()}
+          onClick={() => void askCouncilWithCurrentDraft()}
+          title="Vraag de Raad: twee modellen, onafhankelijk — kost meer dan een gewoon bericht"
+          type="button"
+        >
+          <span aria-hidden="true">⬡</span>
+          Vraag de Raad
+        </button>
+
+        <button
           aria-label="Verstuur bericht"
           className="dm-chat-send"
-          disabled={busy || !draft.trim()}
+          disabled={busy !== null || !draft.trim()}
           title="Verstuur (Enter)"
         >
           <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">

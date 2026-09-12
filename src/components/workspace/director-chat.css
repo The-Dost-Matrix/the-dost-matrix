@@ -216,3 +216,38 @@
   width: 18px;
   height: 18px;
 }
+
+/* --------------------------------------------------------------------------
+   "Vraag de Raad" (stap 13): een tweede, bewust ANDERS ogende knop naast de
+   ronde verstuurknop — outline in plaats van gevuld, met het ⬡-icoon dat ook
+   in de zijbalk bij "Dost Council" staat (sidebar.tsx). Dat visuele verschil
+   is expres: dit is een zwaardere, duurdere actie (twee modellen, vier
+   aanroepen — zie council-service.ts), geen gelijkwaardig alternatief voor
+   de gewone verstuurknop.
+   -------------------------------------------------------------------------- */
+
+.dm-chat-council {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .02);
+  color: var(--muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dm-chat-council:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--cyan);
+}
+
+.dm-chat-council:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

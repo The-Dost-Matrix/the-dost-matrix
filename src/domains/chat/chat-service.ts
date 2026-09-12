@@ -34,6 +34,40 @@ export async function sendChatMessage(
   return data;
 }
 
+/**
+ * Stap 13 — The Dost Council V1 (dun): "Vraag de Raad" vanuit de
+ * Director-chat (zie director-chat.tsx). Aparte route (/api/council/ask,
+ * niet /api/chat) — zie de toelichting bovenaan die route voor waarom.
+ *
+ * Het resultaat komt hier terug voor foutafhandeling, maar de UI leest de
+ * daadwerkelijke raadstekst niet uit deze returnwaarde: die staat, net als
+ * bij sendChatMessage hierboven, al als chatbericht in Firestore en komt via
+ * subscribeToChatMessages vanzelf in beeld.
+ */
+export async function askCouncil(
+  user: User,
+  question: string,
+): Promise<{ agreement: boolean; estimatedCostUsd: number }> {
+  const idToken = await user.getIdToken();
+
+  const response = await fetch("/api/council/ask", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ question }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error ?? "De raad kon niet worden geraadpleegd.");
+  }
+
+  return { agreement: data.result.agreement, estimatedCostUsd: data.result.estimatedCostUsd };
+}
+
 export function subscribeToChatMessages(
   ownerId: string,
   onChange: (messages: ChatMessage[]) => void,

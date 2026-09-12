@@ -66,3 +66,41 @@ export function getEmbeddingProvider(): EmbeddingProvider | null {
   const openAiKey = process.env.OPENAI_API_KEY;
   return openAiKey ? createOpenAiEmbeddingProvider(openAiKey) : null;
 }
+
+export interface CouncilProviders {
+  anthropic: LlmProvider;
+  openai: LlmProvider;
+}
+
+/**
+ * Stap 13 (The Dost Council V1): de raad heeft bewust BEIDE providers
+ * tegelijk nodig, ongeacht welke `getChatProvider()` hierboven als "actieve"
+ * Director-provider zou kiezen — die geeft er maar één terug (Anthropic vóór
+ * OpenAI). Zonder deze eigen selectie zou een raad van twee onopgemerkt
+ * kunnen verworden tot twee aanroepen naar hetzelfde model, wat het hele punt
+ * van onafhankelijke, oneens-mogen-zijn meningen ondermijnt (zie
+ * council-service.ts). Gooit een duidelijke fout wanneer een van de twee
+ * sleutels ontbreekt, in plaats van stilzwijgend met één model verder te
+ * gaan — een "raad" van één lid is geen raad.
+ */
+export function getCouncilProviders(): CouncilProviders {
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const openAiKey = process.env.OPENAI_API_KEY;
+
+  const missing: string[] = [];
+  if (!anthropicKey) missing.push("ANTHROPIC_API_KEY");
+  if (!openAiKey) missing.push("OPENAI_API_KEY");
+
+  if (missing.length > 0) {
+    throw new Error(
+      `De Dost Council heeft beide providers nodig, maar ${missing.join(" en ")} ${
+        missing.length > 1 ? "ontbreken" : "ontbreekt"
+      } in .env.local.`,
+    );
+  }
+
+  return {
+    anthropic: createAnthropicProvider(anthropicKey as string),
+    openai: createOpenAiProvider(openAiKey as string),
+  };
+}
