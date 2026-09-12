@@ -866,33 +866,111 @@ volledigheid. Reden: er is geen team dat dit bouwt, en de rol die het zou
 moeten bouwen (de Builder) is precies de kapotte rol — elke stap wordt met
 de hand geschreven en door Elroy gecommit.
 
-### Stap 14 — Council V1.5: Claim Ledger, validatie en uitbreiding
-Pas nadat stap 13 zich bewezen heeft: het Claim Ledger waarin elke
-technische claim bewijsverwijzingen, steun/tegenspraak en een status
-(SUPPORTED / DISPUTED / UNKNOWN / REFUTED) krijgt, met runtime-validatie dat
-een bewijsverwijzing daadwerkelijk bestaat — een verzonnen verwijzing wordt
-geweigerd in plaats van geloofd. Bewijsverwijzingen zijn gepind aan de
-commit-SHA van het bewijspakket; na een herstelpoging vervalt eerder bewijs.
+### Herziening: prioriteit naar onbewaakt doorbouwen (12 september 2026)
+
+Aanleiding: bij het navragen hoe lang het nog duurt voordat er iets werkt,
+werd duidelijk dat stap 14 t/m 23 hierboven stuk voor stuk over de
+bouwmachine zelf gaan (betrouwbaarheid, overzicht, uitbreidbaarheid) en geen
+van alle over de vier kernen waarvoor Elroy The Dost Matrix bouwt (apps en
+games, muziek, daytraden, zelfstandige uitvoering) — en dat geen van die
+stappen ooit tot "'s avonds missies klaarzetten, 's ochtends resultaat zien"
+zou leiden, ook niet als ze allemaal af waren.
+
+Drie concrete blokkades bleken in de weg te staan, onafhankelijk van hoe
+goed een individuele stap gebouwd is:
+
+1. **Geen hosting.** The Dost Matrix draait uitsluitend via `npm run dev` op
+   Elroy's eigen laptop; zodra die dichtgaat, bestaat de Matrix even niet
+   meer. Onbewaakt doorbouwen is dus sowieso onmogelijk, ongeacht welke
+   andere stap er staat.
+2. **Geen autonome missie-triggers.** Stap 21 (hieronder verplaatst naar
+   stap 15) bestond al als voorstel, maar ging ervan uit dat elke volgende
+   missie nog steeds door Elroy zelf gestart wordt.
+3. **Elke needs-signoff-missie wachtte op Elroy's eigen goedkeuringsklik.**
+   Bij architectuurwijzigingen (vrijwel alles in stap 14-23 hierboven) is dat
+   de norm, niet de uitzondering — dus zonder wijziging zou zo goed als elke
+   nachtelijke missie stilstaan tot de ochtend, zelfs mét de eerste twee
+   punten opgelost.
+
+Elroy heeft naar aanleiding hiervan expliciet besloten: de needs-signoff-
+beoordeling wordt overgedragen aan de Director/Claude zelf, in plaats van
+bij hem te blijven liggen — hij wil niet zelf per wijziging hoeven
+beoordelen of iets veilig is. Dat vervangt puntje 3 hierboven, zonder de
+bestaande harde invarianten los te laten: COMPLETED blijft alleen mogelijk
+als de pull request echt gemerged is, CI moet groen zijn, en alle criteria
+moeten PASSED zijn (zie Stap 3, 4 en 7 hierboven) — de menselijke klik
+verdwijnt, de vangnetten niet.
+
+Eén uitzondering blijft bewust bestaan, als eigen technische keuze bij deze
+overdracht: wijzigingen in een herkenbaar gevaarlijke categorie (secrets/
+tokens, `.github/workflows/`, authenticatie, of het verwijderen van
+bestanden) worden nooit automatisch gemergd, ongeacht CI-status — die
+escaleren naar Elroy via hetzelfde WAITING_FOR_OWNER-patroon dat stap 12b al
+gebruikt voor oprechte twijfel, in plaats van een nieuw mechanisme. Voor
+alles daarbuiten beslist de Director zelfstandig, op basis van dezelfde
+bewijslaag die vandaag al bestaat (CI-uitkomst, QA-criteria, PR-diff) — geen
+extra LLM-oordeel er los bovenop geplakt.
+
+Consequentie die hier eerlijk bij hoort: voor de meeste wijzigingen valt de
+menselijke blik vóór merge nu grotendeels weg. Dat maakt de kwaliteit van
+CI/testdekking belangrijker dan hij tot nu toe was — geen reden om dit niet
+te doen, wel een reden om testdekking niet verder te laten verslappen.
+
+Nieuwe volgorde: stap 14 en 15 hieronder gaan vóór alles wat al stond
+(oorspronkelijke stap 14 t/m 20, 22 en 23 schuiven door naar stap 16 t/m 25;
+oorspronkelijke stap 21 is hierin opgegaan als herziene stap 15).
+
+### Stap 14 — Productie-hosting
+The Dost Matrix online zetten (meest waarschijnlijke kandidaat: Vercel, al
+eerder als voorkeur genoemd) zodat het systeem blijft draaien wanneer
+Elroy's eigen laptop uit staat — de harde randvoorwaarde voor alles wat
+hieronder "onbewaakt" of "'s nachts" heet. Vereist dat de huidige
+omgevingsvariabelen (API-sleutels, GitHub-token) als secrets in de
+hostingomgeving komen te staan in plaats van alleen in `.env.local`, en een
+korte controle dat Firestore en de GitHub-koppeling ook vanaf die omgeving
+bereikbaar zijn. Verdere technische invulling volgt bij het bouwen zelf.
+
+### Stap 15 — Autonome missie-triggers met geautomatiseerde signoff
+(voorheen stap 21; herzien op 12 september 2026 — zie de herziening
+hierboven) De Director mag zelf, op basis van een vooraf goedgekeurde regel,
+een missie voorstellen of starten, én de needs-signoff-beoordeling
+zelfstandig afhandelen in plaats van op Elroy's klik te wachten — met
+dezelfde harde vangnetten als elke andere missie (alle criteria PASSED, CI
+groen, COMPLETED betekent echt gemerged), en met de vaste uitzondering voor
+herkenbaar gevaarlijke wijzigingen die hierboven staat beschreven. Eerste
+concrete stap richting het Jarvis-achtige eindbeeld, en de stap die
+daadwerkelijk mogelijk maakt dat Elroy 's avonds een missie klaarzet en
+'s ochtends een afgerond resultaat aantreft.
+
+### Stap 16 — Council V1.5: Claim Ledger, validatie en uitbreiding
+(voorheen stap 14) Pas nadat stap 13 zich bewezen heeft: het Claim Ledger
+waarin elke technische claim bewijsverwijzingen, steun/tegenspraak en een
+status (SUPPORTED / DISPUTED / UNKNOWN / REFUTED) krijgt, met
+runtime-validatie dat een bewijsverwijzing daadwerkelijk bestaat — een
+verzonnen verwijzing wordt geweigerd in plaats van geloofd.
+Bewijsverwijzingen zijn gepind aan de commit-SHA van het bewijspakket; na
+een herstelpoging vervalt eerder bewijs.
 
 Daarna pas: extra providers via een Model Registry (de OpenAI-compatibele
 aanbieders vragen alleen configuratie, Google vraagt een eigen adapter),
 en automatische triggers bij herhaald falen, hoog risico of tegenstrijdige
 QA.
 
-### Stap 15 — Director Evidence Upgrade
-De Director ziet nu alleen rol, status en opdrachttekst van eerdere
-toewijzingen — niet de roleOutput, niet de inhoud van de pull request, niet
-de CI-uitkomst. Zolang de Builder faalde was dat niet de knellendste
-beperking; zodra stap 9 t/m 12 staan, wordt dit de volgende bovengrens aan
-wat de missielus zelfstandig kan. Compacte, gepinde resultaten van vorige
-stappen beschikbaar maken voor de volgende beslissing.
+### Stap 17 — Director Evidence Upgrade
+(voorheen stap 15) De Director ziet nu alleen rol, status en opdrachttekst
+van eerdere toewijzingen — niet de roleOutput, niet de inhoud van de pull
+request, niet de CI-uitkomst. Zolang de Builder faalde was dat niet de
+knellendste beperking; zodra stap 9 t/m 12 staan, wordt dit de volgende
+bovengrens aan wat de missielus zelfstandig kan. Compacte, gepinde
+resultaten van vorige stappen beschikbaar maken voor de volgende beslissing.
 
-### Stap 16 — Geavanceerde context en tools voor de Builder
-Pas na bewezen behoefte: alias-, barrel- en typeresolutie in de Context
-Resolver, begrensde lees-/zoektools voor de Builder (vereist uitbreiding van
-de `LlmProvider`-interface met function calling, per aanbieder verschillend),
-patch-gebaseerd schrijven in plaats van hele bestanden herschrijven, en een
-deterministische signatuurcontrole als extra verdediging.
+### Stap 18 — Geavanceerde context en tools voor de Builder
+(voorheen stap 16) Pas na bewezen behoefte: alias-, barrel- en
+typeresolutie in de Context Resolver, begrensde lees-/zoektools voor de
+Builder (vereist uitbreiding van de `LlmProvider`-interface met function
+calling, per aanbieder verschillend), patch-gebaseerd schrijven in plaats
+van hele bestanden herschrijven, en een deterministische signatuurcontrole
+als extra verdediging.
 
 **Overweging: MCP als vorm voor die tools (7 september 2026).** MCP (Model
 Context Protocol) is de open standaard voor de koppeling tussen een model en
@@ -929,53 +1007,50 @@ Dit verandert niets aan het principe dat rollen via GitHub werken en nooit bij
 de schijf van de eigenaar komen: de gereedschapskist blijft tot de repository
 beperkt.
 
-### Stap 17 — In-app CI/PR-zichtbaarheid
-(voorheen stap 10) Toon PR-status (open/gemerged, CI groen/rood, welke
-checks) direct in de missie-kaart, zodat Elroy nooit naar GitHub.com hoeft om
-te zien waar een missie op vastloopt. Sluit aan op de verificatiestatus uit
-stap 11.
+### Stap 19 — In-app CI/PR-zichtbaarheid
+(voorheen stap 17, oorspronkelijk stap 10) Toon PR-status (open/gemerged, CI
+groen/rood, welke checks) direct in de missie-kaart, zodat Elroy nooit naar
+GitHub.com hoeft om te zien waar een missie op vastloopt. Sluit aan op de
+verificatiestatus uit stap 11.
 
-### Stap 18 — Doorzoekbare Second Brain-UI
-(voorheen stap 11) Een eenvoudig zoek-/filterscherm (op onderwerp, missie,
-datum) binnen Command Center, zodat kennis terugvindbaar is zonder dat Elroy
-weet welke missie 'm oorspronkelijk voorstelde.
+### Stap 20 — Doorzoekbare Second Brain-UI
+(voorheen stap 18, oorspronkelijk stap 11) Een eenvoudig zoek-/filterscherm
+(op onderwerp, missie, datum) binnen Command Center, zodat kennis
+terugvindbaar is zonder dat Elroy weet welke missie 'm oorspronkelijk
+voorstelde.
 
-### Stap 19 — Missie-sjablonen
-(voorheen stap 12) Voor terugkerende soorten missies een herbruikbaar
-sjabloon met vooraf ingevulde objective/succescriteria.
+### Stap 21 — Missie-sjablonen
+(voorheen stap 19, oorspronkelijk stap 12) Voor terugkerende soorten missies
+een herbruikbaar sjabloon met vooraf ingevulde objective/succescriteria.
 
-### Stap 20 — Claude zichtbaar ingebed in de app
-(voorheen stap 13) Een paneel in Command Center dat live meekijkt met een
-externe Claude Code/Cowork-sessie (logs/activiteit). Nog geen
-twee-richtingen besturing — puur zichtbaarheid als eerste stap.
+### Stap 22 — Claude zichtbaar ingebed in de app
+(voorheen stap 20, oorspronkelijk stap 13) Een paneel in Command Center dat
+live meekijkt met een externe Claude Code/Cowork-sessie (logs/activiteit).
+Nog geen twee-richtingen besturing — puur zichtbaarheid als eerste stap.
 
-### Stap 21 — Autonome missie-triggers
-(voorheen stap 14) De Director mag zelf, op basis van een vooraf goedgekeurde
-regel, een missie voorstellen of starten — met dezelfde risicoclassificatie
-en approve-and-merge-veiligheidsnetten als elke andere missie. Eerste
-concrete stap richting het Jarvis-achtige eindbeeld.
+### Stap 23 — Visualisatie van wat er achter de schermen gebeurt
+(voorheen stap 22, oorspronkelijk stap 15, door Elroy zelf toegevoegd) Een
+visuele weergave van de live activiteit binnen The Dost Matrix (missies,
+rollen, Second Brain-updates, verificatiestatus, raadssessies) zodat Elroy
+in één oogopslag ziet wat het systeem doet. De precieze vorm wordt later
+samen ontworpen — dit is bewust nog niet ingevuld.
 
-### Stap 22 — Visualisatie van wat er achter de schermen gebeurt
-(voorheen stap 15, door Elroy zelf toegevoegd) Een visuele weergave van de
-live activiteit binnen The Dost Matrix (missies, rollen, Second
-Brain-updates, verificatiestatus, raadssessies) zodat Elroy in één oogopslag
-ziet wat het systeem doet. De precieze vorm wordt later samen ontworpen —
-dit is bewust nog niet ingevuld.
-
-### Stap 23 — LLM-provider request-scoped maken, écht in-app wisselbaar
-(voortgekomen uit een gecorrigeerd restpunt, 7 september 2026) Welke
-provider/model actief is, is al zichtbaar in het Systeemstatus-paneel
-(`describeActiveChatModel` in model-router.ts) — dat deel van het oorspronkelijke
-restpunt bleek bij nader onderzoek al opgelost. Wat overblijft: wisselen kan
-nog steeds alleen door een sleutel in `.env.local` aan te passen en de
-dev-server te herstarten, omdat `getChatProvider()` een module-level singleton
-is die zijn keuze rechtstreeks uit `process.env` leest bij het laden van de
-module. Écht in-app wisselen (bijvoorbeeld een instelling per eigenaar,
-opgeslagen in Firestore) betekent dat `getChatProvider()` die keuze per
-aanroep moet kunnen lezen in plaats van eenmalig bij het opstarten — en dus
-dat elke aanroeper (builder-runtime.ts, director-runtime.ts, qa-runtime.ts,
-reviewer.ts) een eigenaar/context moet doorgeven. Geen "Klein" restpunt meer,
-vandaar hier als eigen stap in plaats van in het Restpunten-hoofdstuk.
+### Stap 24 — LLM-provider request-scoped maken, écht in-app wisselbaar
+(voorheen stap 23; voortgekomen uit een gecorrigeerd restpunt, 7 september
+2026) Welke provider/model actief is, is al zichtbaar in het
+Systeemstatus-paneel (`describeActiveChatModel` in model-router.ts) — dat
+deel van het oorspronkelijke restpunt bleek bij nader onderzoek al opgelost.
+Wat overblijft: wisselen kan nog steeds alleen door een sleutel in
+`.env.local` aan te passen en de dev-server te herstarten, omdat
+`getChatProvider()` een module-level singleton is die zijn keuze
+rechtstreeks uit `process.env` leest bij het laden van de module. Écht
+in-app wisselen (bijvoorbeeld een instelling per eigenaar, opgeslagen in
+Firestore) betekent dat `getChatProvider()` die keuze per aanroep moet
+kunnen lezen in plaats van eenmalig bij het opstarten — en dus dat elke
+aanroeper (builder-runtime.ts, director-runtime.ts, qa-runtime.ts,
+reviewer.ts) een eigenaar/context moet doorgeven. Geen "Klein" restpunt
+meer, vandaar hier als eigen stap in plaats van in het
+Restpunten-hoofdstuk.
 
 ## Acceptatiecriteria voor stap 9 t/m 12
 
