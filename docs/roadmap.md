@@ -797,6 +797,27 @@ eerste sessie hierboven), oplopend zodra er volledige bronbestanden in
 zitten. Kosten blokkeren nooit, maar worden wel getoond (zie de kostenregel
 onderaan elk raadsantwoord).
 
+### Stap 14 — Productie-hosting
+The Dost Matrix staat online op Vercel (project "the-dost-matrix" onder
+Elroy's eigen Vercel-team), gekoppeld aan de GitHub-repository met scoped
+toegang (alleen deze repository geautoriseerd, zelfde principe als het
+fine-grained GitHub-token). Alle omgevingsvariabelen zijn overgezet van
+`.env.local` naar Vercel's project-instellingen (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`,
+`GITHUB_APP_PRIVATE_KEY`, de zes `NEXT_PUBLIC_FIREBASE_*`-variabelen); waar
+lokaal `FIREBASE_SERVICE_ACCOUNT_FILE` (een bestandspad) werd gebruikt, staat
+in Vercel in plaats daarvan `FIREBASE_SERVICE_ACCOUNT_KEY` met de volledige
+JSON-inhoud, omdat een bestandspad in de hostingomgeving niet bestaat.
+
+Bevestigd via Elroy's eigen test: inloggen op de gehoste omgeving toont
+Command Center met de volledige bestaande geschiedenis (480 berichten,
+inclusief eerdere raadsessies), en het Systeemstatus-paneel toont
+LLM-provider, GitHub App en Firestore alle drie als OK vanuit de gehoste
+omgeving zelf — niet alleen lokaal. Dit is de harde randvoorwaarde voor stap
+15 hieronder: zonder hosting bestaat de Matrix niet meer zodra Elroy's eigen
+laptop uit staat, ongeacht hoe goed autonome triggers of signoff gebouwd
+zijn.
+
 ## Restpunten
 
 Kleine dingen die bij een grotere stap zijn gesignaleerd en bewust zijn
@@ -919,16 +940,6 @@ te doen, wel een reden om testdekking niet verder te laten verslappen.
 Nieuwe volgorde: stap 14 en 15 hieronder gaan vóór alles wat al stond
 (oorspronkelijke stap 14 t/m 20, 22 en 23 schuiven door naar stap 16 t/m 25;
 oorspronkelijke stap 21 is hierin opgegaan als herziene stap 15).
-
-### Stap 14 — Productie-hosting
-The Dost Matrix online zetten (meest waarschijnlijke kandidaat: Vercel, al
-eerder als voorkeur genoemd) zodat het systeem blijft draaien wanneer
-Elroy's eigen laptop uit staat — de harde randvoorwaarde voor alles wat
-hieronder "onbewaakt" of "'s nachts" heet. Vereist dat de huidige
-omgevingsvariabelen (API-sleutels, GitHub-token) als secrets in de
-hostingomgeving komen te staan in plaats van alleen in `.env.local`, en een
-korte controle dat Firestore en de GitHub-koppeling ook vanaf die omgeving
-bereikbaar zijn. Verdere technische invulling volgt bij het bouwen zelf.
 
 ### Stap 15 — Autonome missie-triggers met geautomatiseerde signoff
 (voorheen stap 21; herzien op 12 september 2026 — zie de herziening
