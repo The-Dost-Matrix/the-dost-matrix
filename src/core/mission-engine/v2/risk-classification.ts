@@ -134,3 +134,55 @@ export function classifyPullRequestRiskForMission(
     reason: `Missie-risiconiveau is ${missionRiskLevel} — dat vereist altijd jouw eigen goedkeuring vóór het mergen, ongeacht de bestandsgebaseerde classificatie (die zou hier op zichzelf "auto-approve" zijn geweest: ${fileRisk.reason})`,
   };
 }
+
+/**
+ * Stap 15 — Autonome missie-triggers met geautomatiseerde signoff.
+ *
+ * Vóór deze stap betekende "needs-signoff" hierboven altijd hetzelfde: Elroy
+ * beoordeelt en mergt zelf. Sinds deze stap mag een needs-signoff pull
+ * request in plaats daarvan ook automatisch gemerged worden na een tweede,
+ * onafhankelijke modelbeoordeling (zie automated-signoff.ts) — MAAR niet
+ * voor elke soort wijziging. Deze functie is de grens: een categorie
+ * wijzigingen die altijd naar Elroy escaleert, ongeacht wat die
+ * geautomatiseerde beoordeling zou concluderen.
+ *
+ * Bewust een eigen, striktere lijst in plaats van hergebruik van
+ * CRITICAL_PATH_PATTERNS hierboven: die lijst bepaalt "is dit gedeeld/
+ * kritiek genoeg om zelfs een geïsoleerde wijziging als needs-signoff te
+ * behandelen" (een vraag over reikwijdte), dit hier bepaalt "mag zelfs onze
+ * eigen AI hier ooit over beslissen" (een vraag over onomkeerbaarheid en
+ * vertrouwelijkheid). Een wijziging kan dus needs-signoff zijn zonder hard
+ * te escaleren (bijvoorbeeld: drie bestanden tegelijk, verder overal
+ * onschuldig) — die krijgt wél een geautomatiseerde beoordeling.
+ *
+ * Bestandsverwijderingen vallen hier altijd onder: dat is de meest
+ * onomkeerbare categorie, en risk-classification hierboven merkte dit al apart
+ * aan als needs-signoff.
+ */
+const HARD_ESCALATION_PATTERNS: RegExp[] = [
+  /^\.github\//i,
+  /(^|\/)\.env(\..+)?$/i,
+  /secret/i,
+  /credential/i,
+  /service-?account/i,
+  /private-?key/i,
+  /^src\/core\/firebase\//i,
+  /(^|\/)firestore\.rules$/i,
+  /auth/i,
+];
+
+export function findHardEscalationReason(files: PullRequestFileChange[]): string | null {
+  const removed = files.find((file) => file.status === "removed");
+
+  if (removed) {
+    return `Bestand "${removed.filename}" wordt verwijderd — verwijderingen escaleren altijd naar jou, ongeacht CI-status of geautomatiseerde beoordeling.`;
+  }
+
+  const hit = files.find((file) => HARD_ESCALATION_PATTERNS.some((pattern) => pattern.test(file.filename)));
+
+  if (hit) {
+    return `Bestand "${hit.filename}" valt in een categorie die altijd naar jou escaleert (secrets/tokens, GitHub-workflows, authenticatie of Firebase-configuratie) — geautomatiseerde signoff mag dit soort wijzigingen nooit zelf goedkeuren.`;
+  }
+
+  return null;
+}

@@ -35,7 +35,8 @@ import {
 } from "./semantic-repair";
 import { proposeMissionKnowledge } from "./mission-knowledge";
 import { findMissionPullRequest } from "./qa-runtime";
-import { classifyPullRequestRiskForMission } from "./risk-classification";
+import { classifyPullRequestRiskForMission, findHardEscalationReason } from "./risk-classification";
+import { reviewPullRequestForAutomatedSignoff } from "./automated-signoff";
 import {
   buildOwnerClarificationQuestion,
   collectUndeterminedCriteria,
@@ -92,10 +93,25 @@ import {
  *
  * Is de risicoclassificatie in plaats daarvan "needs-signoff" (de pull
  * request wijzigt meerdere bestanden tegelijk, verwijdert een bestand, of
- * raakt een gedeelde/kritieke bestandslocatie), dan mergt de Director NIET
- * zelf: hij gooit een duidelijke foutmelding met de reden en de PR-link, en
- * de missie blijft ACTIEF totdat de eigenaar de wijziging zelf heeft bekeken
- * en op GitHub gemerged — pas daarna kan de Director de missie afronden.
+ * raakt een gedeelde/kritieke bestandslocatie), dan mergt de Director sinds
+ * Stap 15 niet noodzakelijk zelf mét, maar ook niet noodzakelijk NIET: eerst
+ * een harde grens (findHardEscalationReason in risk-classification.ts) die
+ * altijd naar de eigenaar escaleert, ongeacht wat een modelbeoordeling zou
+ * zeggen (secrets/tokens, GitHub-workflows, authenticatie, Firebase-
+ * configuratie, of elke bestandsverwijdering). Valt de wijziging daar niet
+ * onder, dan krijgt hij een TWEEDE, onafhankelijke modelbeoordeling die de
+ * daadwerkelijke diff leest (automated-signoff.ts) — keurt die oprecht goed,
+ * dan mergt de Director alsnog zelf. Bij twijfel of afwijzing (inclusief een
+ * onleesbaar oordeel — dezelfde "eerlijke twijfel"-discipline als QA's
+ * UNDETERMINED en de Raad's ONDUIDELIJK) gooit hij een duidelijke
+ * foutmelding met de reden en de PR-link, en de missie blijft ACTIEF totdat
+ * de eigenaar de wijziging zelf heeft bekeken en op GitHub — of via de
+ * "Goedkeuring & Mergen"-knop — gemerged.
+ *
+ * Vóór Stap 15 betekende needs-signoff onvoorwaardelijk "wacht op de
+ * eigenaar". Elroy heeft die beoordeling expliciet overgedragen zodat een
+ * missie ook onbewaakt (bijvoorbeeld 's nachts) kan doorlopen zonder op zijn
+ * eigen klik te wachten — zie de roadmap-herziening van 12 september 2026.
  *
  * Sinds Stap 5 (gestructureerde foutcodes i.p.v. string-matching) is deze
  * needs-signoff-situatie niet meer alleen aan de bewoording van de
@@ -788,24 +804,52 @@ export async function ensureMissionPullRequestMerged(mission: MissionV2): Promis
   const files = await getPullRequestFiles(target, pr.number);
   const risk = classifyPullRequestRiskForMission(files, mission.riskLevel);
 
+  // Stap 15: needs-signoff betekent niet meer automatisch "wacht op Elroy".
+  // Eerst de harde grens (nooit geautomatiseerd, ongeacht wat een
+  // modelbeoordeling zou zeggen — zie findHardEscalationReason). Pas
+  // daarna, voor alles wat needs-signoff is zonder hard te escaleren, een
+  // tweede, onafhankelijke modelbeoordeling die de daadwerkelijke diff leest
+  // (automated-signoff.ts). Bij twijfel of afwijzing: exact hetzelfde
+  // NEEDS_SIGNOFF-pad als vóór deze stap, inclusief de "Goedkeuring &
+  // Mergen"-knop — er is dus geen nieuw foutpad nodig, alleen een nieuwe weg
+  // ERNAARTOE.
+  let commitMessage: string;
+
   if (risk.level === "needs-signoff") {
-    throw new DirectorRuntimeError(
-      "NEEDS_SIGNOFF",
-      `Alle succescriteria van deze missie zijn al gehaald, maar pull request #${pr.number} ("${pr.title}") vereist eerst jouw eigen goedkeuring voordat de Director hem mag mergen (risicoclassificatie: needs-signoff). Reden: ${risk.reason} Bekijk de wijziging zelf op GitHub en merge hem daar wanneer je tevreden bent — laat de Director daarna opnieuw een stap zetten om de missie af te ronden: ${pr.url}`,
-    );
+    const hardEscalationReason = findHardEscalationReason(files);
+
+    if (hardEscalationReason) {
+      throw new DirectorRuntimeError(
+        "NEEDS_SIGNOFF",
+        `Alle succescriteria van deze missie zijn al gehaald, maar pull request #${pr.number} ("${pr.title}") vereist eerst jouw eigen goedkeuring voordat er gemerged wordt — dit soort wijziging escaleert altijd, ook met geautomatiseerde signoff aan. Reden: ${hardEscalationReason} Bekijk de wijziging zelf op GitHub en merge hem daar wanneer je tevreden bent — laat de Director daarna opnieuw een stap zetten om de missie af te ronden: ${pr.url}`,
+      );
+    }
+
+    const signoff = await reviewPullRequestForAutomatedSignoff(mission, files);
+
+    if (!signoff.approved) {
+      throw new DirectorRuntimeError(
+        "NEEDS_SIGNOFF",
+        `Alle succescriteria van deze missie zijn al gehaald, maar pull request #${pr.number} ("${pr.title}") vereist eerst jouw eigen goedkeuring voordat de Director hem mag mergen (risicoclassificatie: needs-signoff — ${risk.reason}). De geautomatiseerde beoordeling durfde dit niet zelfstandig goed te keuren: ${signoff.reason} Bekijk de wijziging zelf op GitHub en merge hem daar wanneer je tevreden bent — laat de Director daarna opnieuw een stap zetten om de missie af te ronden: ${pr.url}`,
+      );
+    }
+
+    commitMessage = `Automatisch gemerged door de Director na geautomatiseerde signoff-beoordeling (risicoclassificatie: needs-signoff — ${risk.reason}) nadat de qa-rol alle succescriteria van missie "${mission.title}" heeft goedgekeurd. Beoordeling: ${signoff.reason}`;
+  } else {
+    commitMessage = `Automatisch gemerged door de Director (risicoclassificatie: auto-approve — ${risk.reason}) nadat de qa-rol alle succescriteria van missie "${mission.title}" heeft goedgekeurd.`;
   }
 
   try {
     await mergePullRequest(target, pr.number, {
       mergeMethod: "merge",
       commitTitle: `Director: ${mission.title} (#${pr.number})`.slice(0, 200),
-      commitMessage: `Automatisch gemerged door de Director (risicoclassificatie: auto-approve — ${risk.reason}) nadat de qa-rol alle succescriteria van missie "${mission.title}" heeft goedgekeurd.`,
+      commitMessage,
     });
   } catch (error) {
     const detail = error instanceof GithubApiError ? error.message : String(error);
     throw new DirectorRuntimeError(
       "MERGE_FAILED",
-      `Alle succescriteria van deze missie zijn al gehaald, en de risicoclassificatie liet automatisch mergen toe (auto-approve — ${risk.reason}), maar het mergen van pull request #${pr.number} ("${pr.title}") is mislukt: ${detail}. Bekijk en merge de pull request zelf op GitHub, en laat de Director daarna opnieuw een stap zetten om de missie af te ronden: ${pr.url}`,
+      `Alle succescriteria van deze missie zijn al gehaald, en de wijziging is goedgekeurd om automatisch te mergen (${risk.level === "auto-approve" ? `auto-approve — ${risk.reason}` : "needs-signoff, na geautomatiseerde signoff-beoordeling"}), maar het mergen van pull request #${pr.number} ("${pr.title}") is mislukt: ${detail}. Bekijk en merge de pull request zelf op GitHub, en laat de Director daarna opnieuw een stap zetten om de missie af te ronden: ${pr.url}`,
     );
   }
 }

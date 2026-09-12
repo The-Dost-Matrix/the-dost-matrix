@@ -62,6 +62,20 @@ vi.mock("./qa-runtime", () => ({
 
 vi.mock("./risk-classification", () => ({
   classifyPullRequestRiskForMission: vi.fn(),
+  findHardEscalationReason: vi.fn(),
+}));
+
+/**
+ * Stap 15: needs-signoff loopt sinds deze stap via een tweede,
+ * onafhankelijke modelbeoordeling (automated-signoff.ts) vóórdat er alsnog
+ * NEEDS_SIGNOFF gegooid wordt. Gemockt om dezelfde reden als
+ * risk-classification.ts hierboven — deze tests gaan over wanneer
+ * ensureMissionPullRequestMerged wél en niet mergt, niet over hoe die
+ * modelbeoordeling zelf tot een oordeel komt (zie automated-signoff.test.ts
+ * daarvoor).
+ */
+vi.mock("./automated-signoff", () => ({
+  reviewPullRequestForAutomatedSignoff: vi.fn(),
 }));
 
 import { ensureMissionPullRequestMerged, DirectorRuntimeError } from "./director-runtime";
@@ -74,7 +88,8 @@ import {
   type PullRequestSummary,
 } from "./github/github-client";
 import { findMissionPullRequest } from "./qa-runtime";
-import { classifyPullRequestRiskForMission } from "./risk-classification";
+import { classifyPullRequestRiskForMission, findHardEscalationReason } from "./risk-classification";
+import { reviewPullRequestForAutomatedSignoff } from "./automated-signoff";
 import type { MissionV2 } from "./mission";
 
 const TARGET = { owner: "The-Dost-Matrix", repo: "the-dost-matrix" };
@@ -201,7 +216,7 @@ describe("ensureMissionPullRequestMerged", () => {
     );
   });
 
-  it("gooit NEEDS_SIGNOFF en mergt niet wanneer de risicoclassificatie needs-signoff is, ook al is de CI geslaagd", async () => {
+  it("gooit NEEDS_SIGNOFF en mergt niet wanneer de wijziging hard escaleert (secrets/auth/workflows/verwijdering), zonder de geautomatiseerde beoordeling zelfs aan te roepen", async () => {
     const pr = buildPullRequest();
     vi.mocked(findMissionPullRequest).mockReturnValue(pr);
     vi.mocked(getCombinedCheckStatus).mockResolvedValue({
@@ -215,6 +230,84 @@ describe("ensureMissionPullRequestMerged", () => {
     vi.mocked(classifyPullRequestRiskForMission).mockReturnValue({
       level: "needs-signoff",
       reason: "Wijziging raakt een kritiek pad.",
+    });
+    vi.mocked(findHardEscalationReason).mockReturnValue(
+      "Bestand valt in een categorie die altijd escaleert.",
+    );
+
+    let caughtError: unknown;
+    try {
+      await ensureMissionPullRequestMerged(buildMission());
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(DirectorRuntimeError);
+    expect((caughtError as DirectorRuntimeError).code).toBe("NEEDS_SIGNOFF");
+    expect(reviewPullRequestForAutomatedSignoff).not.toHaveBeenCalled();
+    expect(mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it("mergt de pull request automatisch wanneer needs-signoff niet hard escaleert en de geautomatiseerde beoordeling AKKOORD geeft", async () => {
+    const pr = buildPullRequest();
+    vi.mocked(findMissionPullRequest).mockReturnValue(pr);
+    vi.mocked(getCombinedCheckStatus).mockResolvedValue({
+      state: "success",
+      failingCheckNames: [],
+      pendingCheckNames: [],
+    });
+    vi.mocked(getPullRequestFiles).mockResolvedValue([
+      { filename: "src/utils/format.ts", status: "modified" },
+      { filename: "src/utils/parse.ts", status: "modified" },
+    ]);
+    vi.mocked(classifyPullRequestRiskForMission).mockReturnValue({
+      level: "needs-signoff",
+      reason: "Twee bestanden tegelijk gewijzigd.",
+    });
+    vi.mocked(findHardEscalationReason).mockReturnValue(null);
+    vi.mocked(reviewPullRequestForAutomatedSignoff).mockResolvedValue({
+      approved: true,
+      reason: "Beide wijzigingen zijn kleine, geïsoleerde utility-aanpassingen.",
+    });
+    vi.mocked(mergePullRequest).mockResolvedValue({
+      merged: true,
+      sha: "def789",
+      message: "Pull Request successfully merged",
+    });
+
+    await expect(ensureMissionPullRequestMerged(buildMission())).resolves.toBeUndefined();
+
+    expect(mergePullRequest).toHaveBeenCalledTimes(1);
+    expect(mergePullRequest).toHaveBeenCalledWith(
+      TARGET,
+      pr.number,
+      expect.objectContaining({
+        mergeMethod: "merge",
+        commitMessage: expect.stringContaining("geautomatiseerde signoff-beoordeling"),
+      }),
+    );
+  });
+
+  it("gooit NEEDS_SIGNOFF en mergt niet wanneer needs-signoff niet hard escaleert maar de geautomatiseerde beoordeling twijfelt/afwijst", async () => {
+    const pr = buildPullRequest();
+    vi.mocked(findMissionPullRequest).mockReturnValue(pr);
+    vi.mocked(getCombinedCheckStatus).mockResolvedValue({
+      state: "success",
+      failingCheckNames: [],
+      pendingCheckNames: [],
+    });
+    vi.mocked(getPullRequestFiles).mockResolvedValue([
+      { filename: "src/utils/format.ts", status: "modified" },
+      { filename: "src/utils/parse.ts", status: "modified" },
+    ]);
+    vi.mocked(classifyPullRequestRiskForMission).mockReturnValue({
+      level: "needs-signoff",
+      reason: "Twee bestanden tegelijk gewijzigd.",
+    });
+    vi.mocked(findHardEscalationReason).mockReturnValue(null);
+    vi.mocked(reviewPullRequestForAutomatedSignoff).mockResolvedValue({
+      approved: false,
+      reason: "Twijfel over een van de twee aanpassingen.",
     });
 
     let caughtError: unknown;
