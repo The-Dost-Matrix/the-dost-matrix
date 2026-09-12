@@ -745,6 +745,58 @@ tekstopbouw voor de vraag, apart van de GitHub- en LLM-aanroepen in
 `semantic-repair.ts`, en om dezelfde reden: zo blijft dit zonder netwerk
 testbaar.
 
+### Stap 13 — The Dost Council V1 (dun)
+Een nieuwe knop "Vraag de Raad" naast de gewone verstuurknop in de
+Director-chat — precies de "eerste plek" die bij het voorstel voor deze stap
+al was vastgelegd, en verder niets: geen eigen pagina (de "Dost Council" in
+de zijbalk toont nog steeds "GEPLAND — stap 13", bewust ongewijzigd), geen
+wijziging aan de Builder- of QA-rol.
+
+**Het protocol precies zoals vastgelegd.** Ronde 1: beide providers
+(Anthropic en OpenAI, via een nieuwe `getCouncilProviders()` in
+model-router.ts die — anders dan `getChatProvider()` — altijd allebei
+tegelijk teruggeeft, met een duidelijke fout wanneer een sleutel ontbreekt in
+plaats van stilzwijgend met één model verder te gaan) krijgen dezelfde vraag
+onafhankelijk en parallel, zonder zicht op elkaar. Ronde 2: elk lid krijgt
+uitsluitend de ronde-1-analyse van het ANDERE lid te lezen — nooit welke
+provider erachter zit — en moet zich afsluiten met een expliciete
+`<oordeel>EENS</oordeel>` of `<oordeel>ONEENS</oordeel>`-tag. Ronde 3 is
+bewust GEEN derde LLM-aanroep: de code telt simpelweg op of BEIDE leden EENS
+zeiden (`council-service.ts`); een ontbrekende of onleesbare tag telt als
+ONDUIDELIJK en dus nooit als instemming, dezelfde eerlijke-twijfel-discipline
+als QA's UNDETERMINED uit stap 12b. Bij onenigheid toont de chat beide volle
+standpunten en de kritiek erop naast elkaar — geen samengevoegd advies dat de
+onenigheid zou wegpoetsen.
+
+**Eigen, dunnere bewijslaag, met opzet.** De raad hergebruikt niet de
+volledige `sendChatMessage`-pijplijn van de Director-chat (geen semantisch
+Second Brain-geheugen, geen `<workspace-read>`-lus, geen
+`<create-mission>`-afhandeling) — wel dezelfde "projectstand" die de
+Director als eerste blok ziet (roadmap, recente missies, de zelf-bijwerkende
+signalen uit project-signals.ts). Genoeg gegronde context voor een
+strategische vraag, zonder de zwaardere onderdelen van de Director-chat te
+dupliceren.
+
+**Eerste echte sessie, dezelfde dag als opgeleverd.** Gevraagd of stap 14 of
+stap 17 als volgende voorrang moest krijgen, kwamen beide leden in ronde 1
+onafhankelijk tot een tegenovergestelde volgorde, en bleven het in ronde 2 —
+na elkaars argumenten gelezen te hebben — inhoudelijk oneens over hoe hard
+die volgorde staat (`agreement: false`). Geen synthetisch advies dus, maar
+precies het bedoelde resultaat: twee onderbouwde, tegengestelde standpunten
+in plaats van een gegokt gemiddelde. Terzijde signaleerde één lid daarbij
+zelf dat deze roadmap op dat moment nog achterliep op de code (deze
+paragraaf lost dat op) en dat er kennisitems wachten op beoordeling en
+meerdere testmissies zijn geannuleerd — geen geverifieerde diagnose, wel het
+soort signaal dat de raad juist moet opleveren.
+
+Stopcriterium, ongewijzigd vastgelegd bij het voorstel voor deze stap: als de
+raad na tien sessies geen enkele keer een besluit heeft veranderd of een fout
+heeft gevangen die één model miste, gaat de raad er weer uit. Geschatte
+kosten per sessie: rond de $0,15 bij de bewijsomvang van deze V1 (zie de
+eerste sessie hierboven), oplopend zodra er volledige bronbestanden in
+zitten. Kosten blokkeren nooit, maar worden wel getoond (zie de kostenregel
+onderaan elk raadsantwoord).
+
 ## Restpunten
 
 Kleine dingen die bij een grotere stap zijn gesignaleerd en bewust zijn
@@ -813,36 +865,6 @@ snelst uit de handmatige correctielus haalt, gaat vóór architectonische
 volledigheid. Reden: er is geen team dat dit bouwt, en de rol die het zou
 moeten bouwen (de Builder) is precies de kapotte rol — elke stap wordt met
 de hand geschreven en door Elroy gecommit.
-
-### Stap 13 — The Dost Council V1 (dun)
-Een raadslaag naast de Mission Engine: meerdere modellen die onafhankelijk
-analyseren, elkaars voorstel bekritiseren, en expliciet oneens mogen zijn.
-Het waardevolste product is niet de consensus maar de bewijsgebonden
-onenigheid.
-
-V1 draait op de twee API-sleutels die al werken (Anthropic en OpenAI) en op
-de bestaande `chatCompletion`-interface — function calling is hiervoor niet
-nodig. Protocol: ronde 1 blind en parallel (voorkomt anchoring), ronde 2
-geanonimiseerde wederzijdse kritiek, ronde 3 synthese die waar mogelijk
-deterministisch door code gebeurt. Geen meerderheidsstem als waarheid; bij
-QA-inzet geldt alleen unanimiteit als goedkeuring en gaat elke onenigheid
-met beide argumenten naar Elroy.
-
-Eerste plek: een expliciete raadsmodus in de Director-chat ("Ask the
-Council"), omdat een fout besluit daar de merge-route niet raakt. De Builder
-blijft één model — daar is het probleem context, niet gebrek aan meningen.
-
-Bewust NIET in V1, om te voorkomen dat we opnieuw een groot bouwwerk
-neerzetten voordat het idee zich bewezen heeft: het volledige Claim Ledger
-met gevalideerde bewijsverwijzingen, persistente datamodellen, automatische
-triggers en extra providers.
-
-Stopcriterium, vooraf vastgelegd: als de raad na tien sessies geen enkele
-keer een besluit heeft veranderd of een fout heeft gevangen die één model
-miste, gaat de raad er weer uit. Verwachte kosten: grofweg een halve dollar
-per sessie bij een bewijspakket van zo'n 10.000 tokens, meer zodra er
-volledige bronbestanden in zitten. Kosten blokkeren nooit — maar ze worden
-wel gemeten.
 
 ### Stap 14 — Council V1.5: Claim Ledger, validatie en uitbreiding
 Pas nadat stap 13 zich bewezen heeft: het Claim Ledger waarin elke
