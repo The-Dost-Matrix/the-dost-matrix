@@ -12,6 +12,7 @@
  * @example
  * truncateText('Hello world', 20); // 'Hello world'
  * truncateText('Hello world', 8);  // 'Hello w…'
+ * truncateText('Hello world', 0);  // ''
  */
 export function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) {
