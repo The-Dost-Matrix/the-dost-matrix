@@ -1122,6 +1122,15 @@ input:focus, textarea:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px r
   text-transform: uppercase;
 }
 
+/* Stap 15 (deel 2): het Firebase-UID hier moet makkelijk te selecteren en te
+   kopiëren zijn (geen lopende tekst) — user-select expliciet zetten omdat
+   dit paneel verder nergens tekstselectie nodig had. */
+.matrix-status-uid {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  user-select: all;
+  cursor: text;
+}
+
 .matrix-status-timestamp {
   margin: 0;
   padding: 0 16px 14px;
