@@ -11,6 +11,22 @@ vi.mock("@/core/mission-engine/v2/autonomous-advance", () => ({
   advanceMissionsForOwner: vi.fn(),
 }));
 
+/**
+ * Sinds stap 24 haalt deze route eerst de providerkeuze van de eigenaar op
+ * (withOwnerLlmSettings) en voert hij zijn werk daarbinnen uit. Die functie
+ * leest Firestore via @/core/firebase/admin, dat op moduleniveau meteen de
+ * Firebase Admin SDK initialiseert — zonder deze mock crashte dit hele
+ * testbestand al bij het laden, nog vóór de eerste test.
+ *
+ * Gemockt als pure doorgeeflaag: `fn()` wordt gewoon uitgevoerd. Zo blijven de
+ * bestaande verwachtingen over advanceMissionsForOwner precies gelden, en
+ * blijft deze test over wat hij hoort te testen — autorisatie, deadline en
+ * doorgeven — in plaats van over Firestore.
+ */
+vi.mock("@/core/repositories/llm-settings-repository", () => ({
+  withOwnerLlmSettings: <T,>(ownerId: string, fn: () => Promise<T>) => fn(),
+}));
+
 import { advanceMissionsForOwner } from "@/core/mission-engine/v2/autonomous-advance";
 import { POST } from "./route";
 

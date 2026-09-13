@@ -10,6 +10,7 @@ import {
   getEmbeddingProvider,
 } from "@/core/llm/model-router";
 import { createKnowledgeEntry } from "@/core/repositories/knowledge-repository";
+import { withOwnerLlmSettings } from "@/core/repositories/llm-settings-repository";
 import type { KnowledgeType } from "@/core/domain/knowledge/knowledge-entry";
 
 export const runtime = "nodejs";
@@ -284,16 +285,14 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const provider = getChatProvider();
-
-    const result = await provider.chatCompletion(
-      createExtractionPrompt(filename),
-      [
+    // Stap 24: de kennisextractie volgt dezelfde providerkeuze als de rest.
+    const result = await withOwnerLlmSettings(ownerId, async () =>
+      getChatProvider().chatCompletion(createExtractionPrompt(filename), [
         {
           role: "user",
           content: `Bronbestand: ${filename}\n\n${content}`,
         },
-      ],
+      ]),
     );
     const extractedItems = validateItems(
       extractJson(result.content),

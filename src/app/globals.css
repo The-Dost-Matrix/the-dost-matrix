@@ -1186,6 +1186,45 @@ input:focus, textarea:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px r
   cursor: text;
 }
 
+/* Stap 24: de providerkeuze in het Systeemstatus-paneel. Drie knoppen naast
+   elkaar die op een smal scherm gewoon doorlopen naar de volgende regel —
+   geen eigen breakpoint nodig, flex-wrap doet hier het werk. */
+.matrix-provider-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 16px 6px;
+}
+
+.matrix-provider-option {
+  flex: 1 1 auto;
+  min-width: 86px;
+  padding: 6px 10px;
+  border: 1px solid var(--border, rgba(255, 255, 255, .14));
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.matrix-provider-option:hover:not(:disabled) {
+  border-color: var(--accent, #37d67a);
+}
+
+.matrix-provider-option--active {
+  border-color: var(--accent, #37d67a);
+  color: var(--accent, #37d67a);
+}
+
+.matrix-provider-option:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
 .matrix-status-timestamp {
   margin: 0;
   padding: 0 16px 14px;

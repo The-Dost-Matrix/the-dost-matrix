@@ -10,6 +10,7 @@ import {
 } from "@/core/repositories/knowledge-repository";
 import { reviewKnowledgeEntry } from "@/core/application/knowledge/reviewer";
 import { getEmbeddingProvider } from "@/core/llm/model-router";
+import { withOwnerLlmSettings } from "@/core/repositories/llm-settings-repository";
 
 import type {
   KnowledgeStatus,
@@ -123,7 +124,10 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const aiReview = await reviewKnowledgeEntry(entry);
+      // Stap 24: de Knowledge Review Agent volgt dezelfde providerkeuze.
+      const aiReview = await withOwnerLlmSettings(ownerId, () =>
+        reviewKnowledgeEntry(entry),
+      );
       await updateKnowledgeReview(ownerId, body.id, aiReview);
 
       return NextResponse.json({

@@ -28,6 +28,22 @@ describe("buildLlmStatus", () => {
     expect(status.level).toBe("NOT_CONFIGURED");
     expect(status.detail).toContain("ANTHROPIC_API_KEY");
   });
+
+  /**
+   * Stap 24. Zonder deze vermelding is niet te zien of een opgeslagen
+   * providerkeuze werkelijk aankomt: draait de code buiten een
+   * withOwnerLlmSettings-wrapper, dan gebruikt hij stilletjes de omgeving en
+   * toont dit paneel iets anders dan er draait.
+   */
+  it("vermeldt waar de actieve keuze vandaan komt wanneer dat bekend is", () => {
+    expect(
+      buildLlmStatus({ provider: "openai", model: "gpt-5", source: "instelling" }).detail,
+    ).toBe("openai/gpt-5 (via instelling)");
+
+    expect(
+      buildLlmStatus({ provider: "openai", model: "gpt-5", source: "omgeving" }).detail,
+    ).toBe("openai/gpt-5 (via omgeving)");
+  });
 });
 
 describe("buildFirestoreStatus", () => {

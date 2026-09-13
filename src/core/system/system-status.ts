@@ -39,6 +39,13 @@ export interface SystemStatusReport {
 export interface ActiveChatModel {
   provider: string;
   model: string;
+  /**
+   * Stap 24: "instelling" wanneer deze keuze uit de opgeslagen
+   * providerinstelling komt, "omgeving" wanneer hij uit de
+   * omgevingsvariabelen valt. Optioneel gehouden zodat een aanroeper die dit
+   * niet meegeeft blijft werken.
+   */
+  source?: "instelling" | "omgeving";
 }
 
 /**
@@ -57,11 +64,16 @@ export function buildLlmStatus(activeModel: ActiveChatModel | null): SystemCompo
     };
   }
 
+  // De herkomst staat erbij sinds stap 24. Zonder dat is niet te zien of een
+  // opgeslagen keuze werkelijk aankomt: draait de code buiten een
+  // withOwnerLlmSettings-wrapper, dan gebruikt hij stilletjes de omgeving.
   return {
     id: "llm",
     label: "LLM-provider",
     level: "OK",
-    detail: `${activeModel.provider}/${activeModel.model}`,
+    detail: activeModel.source
+      ? `${activeModel.provider}/${activeModel.model} (via ${activeModel.source})`
+      : `${activeModel.provider}/${activeModel.model}`,
     checkedVia: "configuratie",
   };
 }

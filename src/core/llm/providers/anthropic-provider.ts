@@ -7,7 +7,41 @@ import type { ChatCompletionResult, LlmMessage, LlmProvider } from "@/core/llm/t
  */
 export const ANTHROPIC_DEFAULT_CHAT_MODEL = "claude-sonnet-5";
 
+/**
+ * Fallback voor aanroepers die geen modelnaam meegeven (bijvoorbeeld
+ * `getCouncilProviders`). Sinds stap 24 bepaalt de model-router de naam per
+ * aanroep en geeft hij hem door; tot die stap werd deze constante één keer bij
+ * het laden van de module ingelezen, waardoor een gewijzigde
+ * `ANTHROPIC_CHAT_MODEL` pas na een herstart aankwam.
+ */
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_CHAT_MODEL || ANTHROPIC_DEFAULT_CHAT_MODEL;
+
+/**
+ * Vertaalt een mislukte aanroep naar een melding waar je iets aan hebt.
+ *
+ * Aanleiding: op 13 september 2026 stond er negen uur lang niets anders dan
+ * "Anthropic-aanroep mislukt met status 400." Dat die 400 betekende dat de
+ * credits op waren, stond wél in het antwoord van Anthropic zelf, maar werd
+ * weggegooid. De missie bleef al die tijd hangen zonder dat iemand kon zien
+ * waarom.
+ */
+function describeAnthropicFailure(status: number, body: string): string {
+  const lowered = body.toLowerCase();
+
+  if (lowered.includes("credit balance") || lowered.includes("billing")) {
+    return `Anthropic weigert de aanroep: het tegoed van je Anthropic-account is op (status ${status}). Vul credits bij, of zet de provider in het Systeemstatus-paneel op OpenAI.`;
+  }
+
+  if (status === 401 || status === 403) {
+    return `Anthropic accepteert de API-sleutel niet (status ${status}). Controleer ANTHROPIC_API_KEY.`;
+  }
+
+  if (status === 429) {
+    return "Anthropic limiteert het aantal aanroepen op dit moment (status 429). Probeer het zo opnieuw, of schakel tijdelijk over op OpenAI.";
+  }
+
+  return `Anthropic-aanroep mislukt met status ${status}.`;
+}
 // Ruim genoeg om een volledig, groot bestand te laten genereren (zie
 // MAX_OUTPUT_TOKENS hieronder) — 60s en later 180s bleken in de praktijk nog
 // te krap zodra een bestaand bestand (zoals globals.css, ~38KB) helemaal
@@ -32,7 +66,10 @@ const REQUEST_TIMEOUT_MS = 300_000;
 // plafond kost niets extra bij kortere antwoorden.
 const MAX_OUTPUT_TOKENS = 64_000;
 
-export function createAnthropicProvider(apiKey: string): LlmProvider {
+export function createAnthropicProvider(
+  apiKey: string,
+  model: string = ANTHROPIC_MODEL,
+): LlmProvider {
   return {
     id: "anthropic",
     async chatCompletion(
@@ -49,7 +86,7 @@ export function createAnthropicProvider(apiKey: string): LlmProvider {
             "anthropic-version": "2023-06-01",
           },
           body: JSON.stringify({
-            model: ANTHROPIC_MODEL,
+            model,
             max_tokens: MAX_OUTPUT_TOKENS,
             system: systemPrompt,
             messages: messages
@@ -67,8 +104,18 @@ export function createAnthropicProvider(apiKey: string): LlmProvider {
       }
 
       if (!response.ok) {
-        console.error("Anthropic chat request failed", response.status);
-        throw new Error(`Anthropic-aanroep mislukt met status ${response.status}.`);
+        // Het antwoord van Anthropic zelf meelezen: daar staat het verschil
+        // tussen "je tegoed is op" en "je sleutel klopt niet" in, en zonder
+        // dat is elke fout hier dezelfde nietszeggende statuscode.
+        const body = await response.text().catch(() => "");
+
+        console.error("Anthropic chat request failed", {
+          status: response.status,
+          model,
+          body,
+        });
+
+        throw new Error(describeAnthropicFailure(response.status, body));
       }
 
       const data = (await response.json()) as {
@@ -97,7 +144,7 @@ export function createAnthropicProvider(apiKey: string): LlmProvider {
 
       return {
         content: text,
-        model: `anthropic/${ANTHROPIC_MODEL}`,
+        model: `anthropic/${model}`,
         stopReason: data.stop_reason,
         usage:
           typeof data.usage?.input_tokens === "number" &&

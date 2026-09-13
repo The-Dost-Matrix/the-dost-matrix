@@ -13,6 +13,34 @@ const OPENAI_EMBEDDING_MODEL =
   process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small";
 const REQUEST_TIMEOUT_MS = 60_000;
 
+/**
+ * Zelfde bedoeling als `describeAnthropicFailure`: een melding waar je iets
+ * aan hebt in plaats van een kale statuscode met een stuk ruwe JSON erachter.
+ * Het onderscheid dat er in de praktijk toe doet is "tegoed op" versus
+ * "sleutel klopt niet" versus "even te snel".
+ */
+function describeOpenAiFailure(status: number, body: string): string {
+  const lowered = body.toLowerCase();
+
+  if (
+    lowered.includes("insufficient_quota") ||
+    lowered.includes("exceeded your current quota") ||
+    lowered.includes("billing")
+  ) {
+    return `OpenAI weigert de aanroep: het tegoed van je OpenAI-account is op (status ${status}). Vul credits bij, of zet de provider in het Systeemstatus-paneel op Anthropic.`;
+  }
+
+  if (status === 401 || status === 403) {
+    return `OpenAI accepteert de API-sleutel niet (status ${status}). Controleer OPENAI_API_KEY.`;
+  }
+
+  if (status === 429) {
+    return "OpenAI limiteert het aantal aanroepen op dit moment (status 429). Probeer het zo opnieuw, of schakel tijdelijk over op Anthropic.";
+  }
+
+  return `OpenAI-aanroep mislukt met status ${status}: ${body.slice(0, 300)}`;
+}
+
 async function providerFetch(url: string, init: RequestInit): Promise<Response> {
   try {
     return await fetch(url, {
@@ -28,7 +56,16 @@ async function providerFetch(url: string, init: RequestInit): Promise<Response> 
   }
 }
 
-export function createOpenAiProvider(apiKey: string): LlmProvider {
+/**
+ * `model` is sinds stap 24 een parameter: de model-router bepaalt de naam per
+ * aanroep (uit de instelling van de eigenaar), in plaats van dat hij hier één
+ * keer bij het laden van de module wordt ingelezen. De constante blijft de
+ * fallback voor aanroepers die niets meegeven, zoals `getCouncilProviders`.
+ */
+export function createOpenAiProvider(
+  apiKey: string,
+  model: string = OPENAI_CHAT_MODEL,
+): LlmProvider {
   return {
     id: "openai",
     async chatCompletion(
@@ -42,22 +79,21 @@ export function createOpenAiProvider(apiKey: string): LlmProvider {
           authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: OPENAI_CHAT_MODEL,
+          model,
           messages: [{ role: "system", content: systemPrompt }, ...messages],
         }),
       });
 
       if (!response.ok) {
         const errorText = await response.text();
-      
+
         console.error("OpenAI chat request failed", {
           status: response.status,
+          model,
           body: errorText,
         });
-      
-        throw new Error(
-          `OpenAI ${response.status}: ${errorText}`,
-        );
+
+        throw new Error(describeOpenAiFailure(response.status, errorText));
       }
 
       const data = (await response.json()) as {
@@ -81,7 +117,7 @@ export function createOpenAiProvider(apiKey: string): LlmProvider {
 
       return {
         content: text,
-        model: `openai/${OPENAI_CHAT_MODEL}`,
+        model: `openai/${model}`,
         ...(typeof finishReason === "string" ? { stopReason: finishReason } : {}),
         usage:
           typeof data.usage?.prompt_tokens === "number" &&

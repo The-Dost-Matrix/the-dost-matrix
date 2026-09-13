@@ -12,6 +12,7 @@ import { listMissionsForOwner } from "@/core/mission-engine/v2/firestore-store";
 import type { MissionRiskLevel, MissionV2 } from "@/core/mission-engine/v2/mission";
 import { proposeMissionKnowledge } from "@/core/mission-engine/v2/mission-knowledge";
 import { executeRoleAssignment } from "@/core/mission-engine/v2/role-runtime";
+import { withOwnerLlmSettings } from "@/core/repositories/llm-settings-repository";
 import type { DirectorDecision, JsonValue } from "@/core/contracts/v2";
 
 export const runtime = "nodejs";
@@ -684,24 +685,31 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    switch (body.action) {
-      case "create":
-        return await handleCreate(body as CreateBody, ownerId);
-      case "dispatch":
-        return await handleDispatch(body as DispatchBody, ownerId);
-      case "run-role":
-        return await handleRunRole(body as RunRoleBody, ownerId);
-      case "auto-step":
-        return await handleAutoStep(body as AutoStepBody, ownerId);
-      case "cancel":
-        return await handleCancel(body as CancelBody, ownerId);
-      case "approve-and-merge":
-        return await handleApproveAndMerge(body as ApproveAndMergeBody, ownerId);
-      case "answer-owner-input":
-        return await handleAnswerOwnerInput(body as AnswerOwnerInputBody, ownerId);
-      default:
-        return NextResponse.json({ error: "Onbekende actie." }, { status: 400 });
-    }
+    // Stap 24: één wrapper om alle acties heen in plaats van per handler.
+    // Alles wat hierbinnen een LLM-provider opvraagt — de Director, de
+    // rollen, de geautomatiseerde signoff, het kennisvoorstel na afloop —
+    // gebruikt de providerkeuze van de eigenaar. Eén Firestore-leesactie per
+    // verzoek, ongeacht hoeveel modelaanroepen die actie doet.
+    return await withOwnerLlmSettings(ownerId, async () => {
+      switch (body.action) {
+        case "create":
+          return await handleCreate(body as CreateBody, ownerId);
+        case "dispatch":
+          return await handleDispatch(body as DispatchBody, ownerId);
+        case "run-role":
+          return await handleRunRole(body as RunRoleBody, ownerId);
+        case "auto-step":
+          return await handleAutoStep(body as AutoStepBody, ownerId);
+        case "cancel":
+          return await handleCancel(body as CancelBody, ownerId);
+        case "approve-and-merge":
+          return await handleApproveAndMerge(body as ApproveAndMergeBody, ownerId);
+        case "answer-owner-input":
+          return await handleAnswerOwnerInput(body as AnswerOwnerInputBody, ownerId);
+        default:
+          return NextResponse.json({ error: "Onbekende actie." }, { status: 400 });
+      }
+    });
   } catch (error) {
     console.error("Mission Engine V2 request failed", {
       ownerId,

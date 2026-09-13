@@ -4,6 +4,7 @@ import {
   MAX_CHAT_CONTENT_LENGTH,
   sendChatMessage,
 } from "@/core/application/chat/chat-service";
+import { withOwnerLlmSettings } from "@/core/repositories/llm-settings-repository";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,7 +56,11 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await sendChatMessage(ownerId, body.content);
+    // Stap 24: alles binnen deze wrapper gebruikt de providerkeuze van de
+    // eigenaar in plaats van alleen de omgevingsvariabelen.
+    const result = await withOwnerLlmSettings(ownerId, () =>
+      sendChatMessage(ownerId, body.content as string),
+    );
     return NextResponse.json(result, {
       headers: { "cache-control": "no-store" },
     });

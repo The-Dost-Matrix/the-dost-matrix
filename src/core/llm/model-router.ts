@@ -7,22 +7,87 @@ import {
   createOpenAiEmbeddingProvider,
   createOpenAiProvider,
 } from "@/core/llm/providers/openai-provider";
+import { getActiveLlmSettings } from "@/core/llm/provider-settings";
 import type { EmbeddingProvider, LlmProvider } from "@/core/llm/types";
 
 /**
  * v0 Model Router.
  *
- * Today this only *selects* a provider based on configured API keys
- * (Anthropic preferred, OpenAI as fallback). The mockup's richer router —
- * per-task routing, cost tracking, standby models — is intentionally
- * v1+ scope; this is the seam it will plug into.
+ * Selecteert een provider. De rijkere router uit de mockup — routeren per
+ * taaksoort, kostenbewaking, standby-modellen — is bewust v1+ scope; dit is de
+ * naad waar dat later in past.
+ *
+ * Sinds stap 24 leest de selectie eerst de instelling van de eigenaar (zie
+ * provider-settings.ts) en pas daarna de omgevingsvariabelen. Vóór die stap
+ * was de omgeving de enige bron, en kwam een lege Anthropic-creditbalans dus
+ * neer op: sleutel weghalen in Vercel en opnieuw deployen — waarmee meteen de
+ * Dost Council omviel, die beide sleutels tegelijk nodig heeft.
  */
+
+/** Waar de actieve keuze vandaan komt. Zie `describeActiveChatModel`. */
+export type ChatProviderSource = "instelling" | "omgeving";
+
+function resolveModelName(
+  provider: "anthropic" | "openai",
+  override: string | undefined,
+): string {
+  if (override?.trim()) {
+    return override.trim();
+  }
+
+  return provider === "anthropic"
+    ? process.env.ANTHROPIC_CHAT_MODEL?.trim() || ANTHROPIC_DEFAULT_CHAT_MODEL
+    : process.env.OPENAI_CHAT_MODEL?.trim() || OPENAI_DEFAULT_CHAT_MODEL;
+}
+
 export function getChatProvider(): LlmProvider {
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   const openAiKey = process.env.OPENAI_API_KEY;
+  const settings = getActiveLlmSettings();
+  const preference = settings?.chatProvider ?? "auto";
 
-  if (anthropicKey) return createAnthropicProvider(anthropicKey);
-  if (openAiKey) return createOpenAiProvider(openAiKey);
+  if (preference === "anthropic") {
+    if (!anthropicKey) {
+      throw new Error(
+        "De providerinstelling staat op Anthropic, maar ANTHROPIC_API_KEY ontbreekt. Kies een andere provider in het Systeemstatus-paneel, of zet de sleutel alsnog.",
+      );
+    }
+
+    return createAnthropicProvider(
+      anthropicKey,
+      resolveModelName("anthropic", settings?.chatModel),
+    );
+  }
+
+  if (preference === "openai") {
+    if (!openAiKey) {
+      throw new Error(
+        "De providerinstelling staat op OpenAI, maar OPENAI_API_KEY ontbreekt. Kies een andere provider in het Systeemstatus-paneel, of zet de sleutel alsnog.",
+      );
+    }
+
+    return createOpenAiProvider(
+      openAiKey,
+      resolveModelName("openai", settings?.chatModel),
+    );
+  }
+
+  // "auto": exact het gedrag van vóór stap 24 — Anthropic wint zodra die
+  // sleutel bestaat. Bewust ongewijzigd: een Matrix zonder opgeslagen
+  // instelling hoort zich te gedragen zoals hij deed.
+  if (anthropicKey) {
+    return createAnthropicProvider(
+      anthropicKey,
+      resolveModelName("anthropic", settings?.chatModel),
+    );
+  }
+
+  if (openAiKey) {
+    return createOpenAiProvider(
+      openAiKey,
+      resolveModelName("openai", settings?.chatModel),
+    );
+  }
 
   throw new Error(
     "Geen LLM-provider geconfigureerd. Zet ANTHROPIC_API_KEY of OPENAI_API_KEY in .env.local.",
@@ -31,27 +96,56 @@ export function getChatProvider(): LlmProvider {
 
 /**
  * Welke provider en welk model `getChatProvider()` op dit moment zou kiezen,
- * of null wanneer er geen enkele sleutel is gezet. Volgt exact dezelfde
- * volgorde als hierboven (Anthropic vóór OpenAI) en gebruikt dezelfde
- * standaardmodellen, zodat het Command Center niet iets anders kan tonen dan
- * er werkelijk draait.
+ * en WAAR die keuze vandaan komt. Null wanneer er geen enkele sleutel is
+ * gezet.
  *
- * Let op: de providers lezen hun modelnaam bij het laden van de module, dus
- * na een wijziging in .env.local is een herstart van de dev-server nodig
- * voordat zowel de uitvoering als deze weergave de nieuwe waarde gebruikt.
+ * Dat `source`-veld is sinds stap 24 het vangnet onder de AsyncLocalStorage:
+ * draait deze code buiten een `withOwnerLlmSettings`-wrapper, dan staat er
+ * "omgeving" in plaats van "instelling". Zie je dat terwijl je wél een keuze
+ * hebt opgeslagen, dan mist er ergens een wrapper — zichtbaar, in plaats van
+ * dat je je afvraagt waarom je instelling niet aankomt.
+ *
+ * Let op: de providers lazen hun modelnaam tot deze stap in bij het laden van
+ * de module, waardoor een wijziging pas na een herstart aankwam. Dat is nu
+ * niet meer zo — de naam wordt per aanroep bepaald.
  */
-export function describeActiveChatModel(): { provider: string; model: string } | null {
+export function describeActiveChatModel(): {
+  provider: string;
+  model: string;
+  source: ChatProviderSource;
+} | null {
+  const settings = getActiveLlmSettings();
+  const preference = settings?.chatProvider ?? "auto";
+
+  if (preference === "anthropic" && process.env.ANTHROPIC_API_KEY) {
+    return {
+      provider: "anthropic",
+      model: resolveModelName("anthropic", settings?.chatModel),
+      source: "instelling",
+    };
+  }
+
+  if (preference === "openai" && process.env.OPENAI_API_KEY) {
+    return {
+      provider: "openai",
+      model: resolveModelName("openai", settings?.chatModel),
+      source: "instelling",
+    };
+  }
+
   if (process.env.ANTHROPIC_API_KEY) {
     return {
       provider: "anthropic",
-      model: process.env.ANTHROPIC_CHAT_MODEL?.trim() || ANTHROPIC_DEFAULT_CHAT_MODEL,
+      model: resolveModelName("anthropic", settings?.chatModel),
+      source: "omgeving",
     };
   }
 
   if (process.env.OPENAI_API_KEY) {
     return {
       provider: "openai",
-      model: process.env.OPENAI_CHAT_MODEL?.trim() || OPENAI_DEFAULT_CHAT_MODEL,
+      model: resolveModelName("openai", settings?.chatModel),
+      source: "omgeving",
     };
   }
 
@@ -61,6 +155,11 @@ export function describeActiveChatModel(): { provider: string; model: string } |
 /**
  * Embeddings currently only via OpenAI (Anthropic has no embeddings API).
  * Returns null when unavailable — callers fall back to keyword retrieval.
+ *
+ * Bewust NIET gekoppeld aan de providerinstelling hierboven: die gaat over
+ * welk model redeneert, niet over hoe kennis doorzoekbaar wordt gemaakt. Zou
+ * de keuze "anthropic" ook embeddings uitschakelen, dan stopte semantisch
+ * zoeken stilletjes door een keuze die daar niets mee te maken heeft.
  */
 export function getEmbeddingProvider(): EmbeddingProvider | null {
   const openAiKey = process.env.OPENAI_API_KEY;
@@ -82,6 +181,12 @@ export interface CouncilProviders {
  * council-service.ts). Gooit een duidelijke fout wanneer een van de twee
  * sleutels ontbreekt, in plaats van stilzwijgend met één model verder te
  * gaan — een "raad" van één lid is geen raad.
+ *
+ * Sinds stap 24 is dat geen reden meer om vast te lopen zodra één provider
+ * geen krediet meer heeft. De Director wisselen gaat nu via de instelling, en
+ * beide sleutels mogen gewoon blijven staan. Vóór die stap was het weghalen
+ * van een sleutel de enige manier om de Director te laten wisselen — en
+ * precies dat legde deze raad plat.
  */
 export function getCouncilProviders(): CouncilProviders {
   const anthropicKey = process.env.ANTHROPIC_API_KEY;

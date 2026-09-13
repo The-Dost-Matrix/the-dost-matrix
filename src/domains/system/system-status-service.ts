@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { summarizeStatusLevel, type SystemStatusReport } from "@/core/system/system-status";
 import { useAuth } from "@/domains/auth/auth-provider";
@@ -24,19 +24,40 @@ export interface SystemStatusState {
   error: string | null;
 }
 
+export interface SystemStatusHookResult extends SystemStatusState {
+  /**
+   * Haalt de status opnieuw op. Toegevoegd bij stap 24: nadat je in het
+   * Systeemstatus-paneel van provider wisselt, moet datzelfde paneel de nieuwe
+   * keuze kunnen tonen zonder dat je de pagina herlaadt — anders staat er nog
+   * seconden lang de oude provider, en dat is precies het soort scherm dat je
+   * niet meer vertrouwt.
+   */
+  refresh: () => void;
+}
+
 /**
  * Eén gedeelde bron voor de zijbalk en het monitorpaneel. Bewust geen
  * automatische verversing per seconde: de status verandert alleen wanneer de
  * configuratie of GitHub-bereikbaarheid verandert, en een live GitHub-aanroep
  * per seconde zou onnodig quota kosten.
  */
-export function useSystemStatus(): SystemStatusState {
+export function useSystemStatus(): SystemStatusHookResult {
   const { user } = useAuth();
   const [state, setState] = useState<SystemStatusState>({
     report: null,
     loading: true,
     error: null,
   });
+
+  // Een teller in plaats van de ophaalfunctie zelf als effect-dependency: zo
+  // blijft het opruimen van een lopende aanvraag (de `cancelled`-vlag
+  // hieronder) op één plek staan, en kan `refresh` niets anders doen dan het
+  // effect opnieuw laten lopen.
+  const [reloadToken, setReloadToken] = useState(0);
+
+  const refresh = useCallback(() => {
+    setReloadToken((current) => current + 1);
+  }, []);
 
   useEffect(() => {
     if (!user) {
@@ -65,9 +86,9 @@ export function useSystemStatus(): SystemStatusState {
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [user, reloadToken]);
 
-  return state;
+  return { ...state, refresh };
 }
 
 /**

@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 
 import { advanceMissionsForOwner } from "@/core/mission-engine/v2/autonomous-advance";
+import { withOwnerLlmSettings } from "@/core/repositories/llm-settings-repository";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -103,7 +104,13 @@ export async function POST(request: NextRequest) {
   const deadlineAt = Date.now() + 260_000;
 
   try {
-    const result = await advanceMissionsForOwner(ownerId, { deadlineAt });
+    // Stap 24: juist dit pad moet de opgeslagen providerkeuze volgen. Toen de
+    // Anthropic-credits op waren, faalde precies deze route elke tien minuten
+    // stilletjes — en er was geen manier om hem op een andere provider te
+    // zetten zonder een omgevingsvariabele te wijzigen en opnieuw te deployen.
+    const result = await withOwnerLlmSettings(ownerId, () =>
+      advanceMissionsForOwner(ownerId, { deadlineAt }),
+    );
 
     return NextResponse.json(result);
   } catch (error) {

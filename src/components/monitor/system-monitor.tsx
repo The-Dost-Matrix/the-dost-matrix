@@ -7,6 +7,7 @@ import {
   useSystemStatus,
 } from "@/domains/system/system-status-service";
 import { useAuth } from "@/domains/auth/auth-provider";
+import { LlmProviderSwitch } from "@/components/monitor/llm-provider-switch";
 
 /**
  * Toonde tot nu toe vier hardgecodeerde regels ("Firebase ONLINE", "OpenAI
@@ -26,7 +27,7 @@ import { useAuth } from "@/domains/auth/auth-provider";
  * kost geen extra netwerkaanroep of backend-wijziging.
  */
 export function SystemMonitorPanel() {
-  const { report, loading, error } = useSystemStatus();
+  const { report, loading, error, refresh } = useSystemStatus();
   const { user } = useAuth();
 
   return (
@@ -72,6 +73,14 @@ export function SystemMonitorPanel() {
           </p>
         </>
       )}
+
+      {/*
+        Stap 24: pal onder de regel "LLM-provider" hierboven, zodat kiezen en
+        het resultaat zien bij elkaar staan. `refresh` zorgt dat die regel
+        meteen de nieuwe keuze toont in plaats van pas bij het opnieuw openen
+        van dit paneel.
+      */}
+      <LlmProviderSwitch onChanged={refresh} />
 
       {user && (
         <article className="matrix-status-row">

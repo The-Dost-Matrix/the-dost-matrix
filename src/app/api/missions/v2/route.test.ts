@@ -15,6 +15,19 @@ vi.mock("@/core/firebase/admin", () => ({
 }));
 
 /**
+ * Sinds stap 24 wikkelt deze route al zijn acties in withOwnerLlmSettings, dat
+ * de providerkeuze uit Firestore leest. Met de lege `adminDb`-mock hierboven
+ * viel die leesactie netjes terug op de standaardinstelling (fail-open, zoals
+ * bedoeld) — maar logde hij bij élke test een Firestore-fout naar stderr. Een
+ * testuitvoer vol foutmeldingen die géén fout zijn, maakt een echte fout
+ * onzichtbaar. Vandaar hier een pure doorgeeflaag: `fn()` wordt gewoon
+ * uitgevoerd, en deze test blijft over het doorgeven van acties gaan.
+ */
+vi.mock("@/core/repositories/llm-settings-repository", () => ({
+  withOwnerLlmSettings: <T,>(ownerId: string, fn: () => Promise<T>) => fn(),
+}));
+
+/**
  * createMissionEngineV2() geeft normaal een echte, Firestore-backed engine
  * terug (zie engine-factory.ts) — die vervangen we hier door een engine met
  * een controleerbare, gemockte getMission(), zodat handleAutoStep/
