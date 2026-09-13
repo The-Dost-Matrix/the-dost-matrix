@@ -870,6 +870,124 @@ de tweede beoordeling mag hem zelfstandig mergen. Hij komt alleen bij Elroy
 terecht wanneer die beoordeling zelf twijfelt, of wanneer de wijziging in de
 harde escalatiecategorie valt.
 
+### Stap 17 — Director Evidence Upgrade
+(voorheen stap 15) Live bewezen op 13 september 2026 met de missie "Voeg
+utility truncateMiddle toe" (PR #59).
+
+Tot deze stap zag de Director van elke eerdere toewijzing drie dingen: welke
+rol, welke status, en de opdrachttekst die hij er zélf ooit aan had
+meegegeven. Niet wat die rol had opgeleverd, niet of er een pull request uit
+was gekomen, niet of de CI groen was. Hij besliste dus over de volgende stap
+op grond van zijn eigen vorige opdracht plus een statuswoord.
+
+Sinds deze stap krijgt hij er drie dingen bij (zie director-evidence.ts): de
+resultaatsamenvatting van elke toewijzing, de soort toewijzing (zodat een
+herstelpoging herkenbaar is), en de stand van de pull request — welke
+bestanden geraakt zijn en wat de CI zegt, gepind aan de exacte commit-SHA.
+
+Drie grenzen eromheen, alle drie bewust. Geen diff in de prompt: beoordelen of
+code klopt is het werk van QA en de geautomatiseerde signoff, en een volledige
+diff zou de beslissing verdrinken én bij elke stap opnieuw betaald worden.
+Maximaal de zes recentste toewijzingen, met een regel erbij hoeveel er zijn
+weggelaten — anders groeit de prompt juist bij een vastgelopen herstellus het
+hardst. En fail-open bij een onbereikbare GitHub: dan beslist de Director met
+minder bewijs in plaats van dat de missie stilvalt, dezelfde afweging als bij
+budget dat nooit een missie mag blokkeren.
+
+Het goedkoopste deel bleek al te bestaan: `resultSummary` stond sinds stap 12b
+op elke toewijzing opgeslagen, maar werd nooit aan de Director doorgegeven.
+
+**Bewijs uit de live test.** Bij de eerste beslissing schreef de Director: "Er
+zijn nog geen toewijzingen geweest en er bestaat nog geen pull request. De
+eerste stap is dus dat de builder de utility en de bijbehorende tests
+daadwerkelijk aanmaakt in een PR. QA heeft pas zin zodra die PR er is en de CI
+groen is." Dat hij wéét dat er nog geen pull request is, en QA daarvan laat
+afhangen, kon hij vóór deze stap niet.
+
+### Stap 18 (deel 1) — Doorkijken door doorverwijzingen
+Live meegetest in dezelfde missie als stap 17 hierboven.
+
+De bewijsbundel voor de Builder gaat één laag diep, en die grens blijft staan:
+twee volle lagen worden al snel tientallen bestanden, en dan verdringt de
+omvang de bruikbaarheid. Maar bij PR #54 lag het type dat je nodig hebt om een
+mock-signatuur te beoordelen twee stappen verderop, met een bestand ertussen
+dat zelf niets zei. De bundel was niet te klein — er zat een leeg doorgeefluik
+in.
+
+Twee gerichte ingrepen (zie `isBarrelModule` en `refineEvidenceImports` in
+context-resolver.ts). Een barrel — een bestand dat vrijwel alleen doorverwijst
+— wordt vervangen door waar het naar verwijst. Dat is geen extra laag maar een
+ruil: bij gelijk budget strikt beter bewijs. En alleen voor type-imports komt
+er één hop bij, begrensd op drie bestanden en achteraan in de volgorde, zodat
+ze alleen meegaan als er ruimte over is. Gewone imports krijgen die hop niet:
+types dragen de vorm die de Builder nodig heeft, gewone imports meestal niet.
+
+Bij twijfel gebeurt er niets: staat er in een bestand behalve doorverwijzingen
+ook iets inhoudelijks, dan blijft het gewoon bewijs. Het contextmanifest noemt
+bij een vervangen barrel beide paden, want de Builder ziet de inhoud van het
+doelbestand terwijl de rest van de codebase via de barrel importeert.
+
+Nog niet gebouwd, in deze volgorde: patch-gebaseerd schrijven, daarna function
+calling. Zie stap 18 onder "Voorgestelde volgende stappen".
+
+### Stap 24 — LLM-provider request-scoped, wisselbaar vanuit de app
+Live bevestigd op 13 september 2026.
+
+De aanleiding was diezelfde dag: de Anthropic-credits raakten op, en
+omschakelen naar OpenAI kostte inloggen op Vercel, een omgevingsvariabele
+weghalen, en opnieuw deployen. Dat weghalen brak meteen de Dost Council, die
+beide sleutels tegelijk eist. Er was dus geen manier om alleen de Director te
+laten wisselen.
+
+Sinds deze stap staat de keuze per eigenaar in Firestore (`ownerSettings`) en
+leest `getChatProvider()` hem per aanroep. Kies je OpenAI, dan mag de
+Anthropic-sleutel gewoon blijven staan — en blijft de Council werken. Drie
+keuzes: "auto" (het gedrag van vóór deze stap, Anthropic zolang die sleutel
+bestaat), "anthropic" en "openai". Een provider waarvan de sleutel ontbreekt
+staat uitgeschakeld in het scherm én wordt door de route geweigerd.
+
+**Waarom een AsyncLocalStorage en geen extra parameter.** `getChatProvider()`
+wordt op achttien plekken aangeroepen. De keuze als parameter doorgeven zou
+achttien aanroepplekken plus alles eromheen laten veranderen zonder dat er
+gedrag wijzigt. De routehandler zet de keuze nu één keer neer
+(`withOwnerLlmSettings`), en alles daarbinnen leest dezelfde waarde.
+
+De faalstand daarvan is zichtbaar gemaakt in plaats van verstopt: het
+Systeemstatus-paneel toont nu "via instelling" of "via omgeving". Staat er
+"omgeving" terwijl je een keuze hebt opgeslagen, dan mist ergens de wrapper.
+
+Bewust NIET gebouwd: automatisch terugvallen op de andere provider bij een
+fout. Dan gaat een missie halverwege stilletjes op een ander model verder en
+legt het bewijs achteraf niet meer uit waarom een stap anders uitpakte. In
+plaats daarvan zijn de foutmeldingen leesbaar gemaakt: "Anthropic-aanroep
+mislukt met status 400" was negen uur lang het enige dat er stond, terwijl in
+het antwoord van Anthropic zelf stond dat het tegoed op was. Dat wordt nu
+meegelezen en doorgegeven.
+
+### Wat de live test van 13 september bovendien opleverde
+
+De testmissie (PR #59) liet drie dingen zien die het vastleggen waard zijn.
+
+QA rekende na in plaats van af te vinken: hij zette alle vijf de criteria op
+GEHAALD en vond daarbovenop een fout die niemand had opgemerkt — het
+JSDoc-voorbeeld beloofde negen tekens waar de functie er tien teruggeeft.
+
+De geautomatiseerde signoff escaleerde, met twee punten die allebei klopten:
+datzelfde JSDoc-voorbeeld, en een gat in het invoercontract (`maxLength` is een
+`number`, dus 5.5 kwam ongehinderd door de controle en leverde zes tekens op
+terwijl de functie exact `maxLength` belooft). Beide zijn daarna in een gewone
+commit rechtgezet. Let op de herkomst: dat gat zat in de missieopdracht, niet
+in de Builder — de opdracht legde `maxLength < 5` vast maar niet dat het een
+geheel getal moet zijn. Dezelfde soort omissie als bij PR #58, één laag dieper.
+
+**Ontbrekend pad, gesignaleerd maar niet gebouwd.** Zijn alle succescriteria
+GEHAALD en escaleert de signoff, dan kan de eigenaar alleen nog zelf mergen of
+de missie annuleren. Er is geen weg terug naar de Builder om de gesignaleerde
+punten te laten repareren: `ensureMissionPullRequestMerged` gooit NEEDS_SIGNOFF
+vóórdat de Director een nieuw besluit mag nemen. Bij een klein punt is
+zelf-mergen prima, maar bij een terecht bezwaar dat wél gerepareerd moet
+worden, bestaat die route nu niet.
+
 ## Restpunten
 
 Kleine dingen die bij een grotere stap zijn gesignaleerd en bewust zijn
@@ -1010,21 +1128,22 @@ aanbieders vragen alleen configuratie, Google vraagt een eigen adapter),
 en automatische triggers bij herhaald falen, hoog risico of tegenstrijdige
 QA.
 
-### Stap 17 — Director Evidence Upgrade
-(voorheen stap 15) De Director ziet nu alleen rol, status en opdrachttekst
-van eerdere toewijzingen — niet de roleOutput, niet de inhoud van de pull
-request, niet de CI-uitkomst. Zolang de Builder faalde was dat niet de
-knellendste beperking; zodra stap 9 t/m 12 staan, wordt dit de volgende
-bovengrens aan wat de missielus zelfstandig kan. Compacte, gepinde
-resultaten van vorige stappen beschikbaar maken voor de volgende beslissing.
+(Stap 17 stond hier. Voltooid en live bewezen op 13 september 2026 —
+verplaatst naar "Voltooid" hierboven. Het eerste deel van stap 18 is
+in dezelfde missie meegetest en staat daar ook.)
 
 ### Stap 18 — Geavanceerde context en tools voor de Builder
-(voorheen stap 16) Pas na bewezen behoefte: alias-, barrel- en
-typeresolutie in de Context Resolver, begrensde lees-/zoektools voor de
-Builder (vereist uitbreiding van de `LlmProvider`-interface met function
+(voorheen stap 16) Pas na bewezen behoefte: begrensde lees-/zoektools voor
+de Builder (vereist uitbreiding van de `LlmProvider`-interface met function
 calling, per aanbieder verschillend), patch-gebaseerd schrijven in plaats
 van hele bestanden herschrijven, en een deterministische signatuurcontrole
 als extra verdediging.
+
+**Deel 1 (barrel- en typeresolutie) is af** — 13 september 2026, zie
+"Voltooid" hierboven. Wat hier nog staat zijn de twee zwaardere delen. Elroy
+heeft op 13 september gekozen voor deze volgorde: eerst de context slimmer
+maken (geen providerwijziging, laagste risico), daarna pas patch-gebaseerd
+schrijven, en function calling als laatste.
 
 **Overweging: MCP als vorm voor die tools (7 september 2026).** MCP (Model
 Context Protocol) is de open standaard voor de koppeling tussen een model en
@@ -1089,31 +1208,8 @@ rollen, Second Brain-updates, verificatiestatus, raadssessies) zodat Elroy
 in één oogopslag ziet wat het systeem doet. De precieze vorm wordt later
 samen ontworpen — dit is bewust nog niet ingevuld.
 
-### Stap 24 — LLM-provider request-scoped maken, écht in-app wisselbaar
-(voorheen stap 23; voortgekomen uit een gecorrigeerd restpunt, 7 september
-2026) Welke provider/model actief is, is al zichtbaar in het
-Systeemstatus-paneel (`describeActiveChatModel` in model-router.ts) — dat
-deel van het oorspronkelijke restpunt bleek bij nader onderzoek al opgelost.
-Wat overblijft: wisselen kan nog steeds alleen door een sleutel in
-`.env.local` aan te passen en de dev-server te herstarten, omdat
-`getChatProvider()` een module-level singleton is die zijn keuze
-rechtstreeks uit `process.env` leest bij het laden van de module. Écht
-in-app wisselen (bijvoorbeeld een instelling per eigenaar, opgeslagen in
-Firestore) betekent dat `getChatProvider()` die keuze per aanroep moet
-kunnen lezen in plaats van eenmalig bij het opstarten — en dus dat elke
-aanroeper (builder-runtime.ts, director-runtime.ts, qa-runtime.ts,
-reviewer.ts) een eigenaar/context moet doorgeven. Geen "Klein" restpunt
-meer, vandaar hier als eigen stap in plaats van in het
-Restpunten-hoofdstuk.
-
-Toegevoegde urgentie sinds 13 september 2026: toen de Anthropic-credits op
-raakten, kostte overschakelen naar OpenAI een handmatige ingreep in Vercel's
-omgevingsvariabelen plus een redeploy — en `getChatProvider()` kiest Anthropic
-zodra die sleutel maar bestáát, ongeacht of er nog krediet op zit. Bovendien
-eist de Council beide sleutels tegelijk (`getCouncilProviders`), dus de
-Anthropic-sleutel weghalen om de Director aan de praat te krijgen legt de
-Council stil. Dat is geen los ongemak meer maar een structureel probleem met
-één oorzaak, en deze stap is de plek waar het hoort te worden opgelost.
+(Stap 24 stond hier. Voltooid en live bevestigd op 13 september 2026 —
+verplaatst naar "Voltooid" hierboven.)
 
 ### Stap 25 — Echte documentverwerking voor de Knowledge Foundation
 Volgt uit de externe code-audit van 13 september 2026 (zie
