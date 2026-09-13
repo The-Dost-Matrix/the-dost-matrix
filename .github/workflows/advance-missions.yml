@@ -1,0 +1,35 @@
+name: Autonome missie-voortgang
+
+# Roadmap-stap 15 (deel 2): roept periodiek de /api/missions/v2/advance-route
+# aan op de gehoste Matrix (Vercel), zodat ACTIVE/WAITING_FOR_ROLE-missies
+# ook zonder dat Elroy is ingelogd doorlopen — bijvoorbeeld 's nachts.
+#
+# Gekozen boven Vercel's ingebouwde cron omdat die op het gratis Hobby-plan
+# maar één keer per dag draait (met tot 59 minuten afwijking) — veel te grof
+# om een missie in meerdere stappen te laten voortgaan. GitHub Actions'
+# schedule-trigger is een "best effort"-timer: GitHub geeft zelf aan dat een
+# geplande run bij drukte vertraagd kan worden, en schakelt een schedule
+# automatisch uit als de repository 60 dagen zonder enige activiteit blijft
+# (een gewone commit of push zet 'm dan weer aan) — voor deze use-case
+# (elke ~10 minuten, actief project) is dat geen praktisch probleem.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  # Handmatig te starten via de "Run workflow"-knop op GitHub, handig om de
+  # koppeling na het instellen meteen te testen zonder tot de volgende
+  # geplande run te hoeven wachten.
+  workflow_dispatch:
+
+jobs:
+  advance-missions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Roep de advance-route van de Matrix aan
+        run: |
+          curl \
+            --fail-with-body \
+            --max-time 290 \
+            --request POST \
+            --header "Authorization: Bearer ${{ secrets.MISSION_ADVANCE_SECRET }}" \
+            --header "Content-Type: application/json" \
+            "https://the-dost-matrix.vercel.app/api/missions/v2/advance"
