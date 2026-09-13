@@ -48,6 +48,15 @@ function makeEntry(overrides: Partial<KnowledgeEntry> = {}): KnowledgeEntry {
     source: "chat",
     sourceDocument: "architectuurnotitie-model-router.md",
     sourceSection: "Providerselectie",
+    // Toegevoegd bij de code-audit van 13 september 2026: een kennisitem
+    // bewaart sindsdien ál zijn bronnen in plaats van alleen de eerste, zodat
+    // dezelfde claim uit twee documenten zijn bewijskracht behoudt.
+    sourceReferences: [
+      {
+        filename: "architectuurnotitie-model-router.md",
+        section: "Providerselectie",
+      },
+    ],
     status: "pending",
     confidence: 0.82,
     tags: ["architectuur", "llm", "model-router"],

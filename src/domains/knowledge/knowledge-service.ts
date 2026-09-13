@@ -15,9 +15,68 @@ import type {
   KnowledgeEntry,
   KnowledgeReviewRecommendation,
   KnowledgeSource,
+  KnowledgeSourceReference,
   KnowledgeStatus,
   KnowledgeType,
 } from "@/core/domain/knowledge/knowledge-entry";
+
+/**
+ * Leest de bronnenlijst van een kennisitem aan de clientkant, met terugval op
+ * het oude enkelvoudige `sourceReference`-veld.
+ *
+ * Bewust een eigen, kleine kopie van `readStoredSourceReferences` uit
+ * knowledge-repository.ts in plaats van een gedeelde import: die module leest
+ * `firebase-admin` in, en dat pakket hoort niet in een clientbundel terecht te
+ * komen. De vorm die beide lezen is hetzelfde en ligt vast in
+ * knowledge-entry.ts; verandert die, dan verandert hij hier mee.
+ */
+function readSourceReferences(data: DocumentData): KnowledgeSourceReference[] {
+  const normalize = (value: unknown): KnowledgeSourceReference | null => {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+
+    const candidate = value as Record<string, unknown>;
+    const reference: KnowledgeSourceReference = {};
+
+    if (typeof candidate.documentId === "string" && candidate.documentId.trim()) {
+      reference.documentId = candidate.documentId.trim();
+    }
+
+    if (typeof candidate.filename === "string" && candidate.filename.trim()) {
+      reference.filename = candidate.filename.trim();
+    }
+
+    if (typeof candidate.section === "string" && candidate.section.trim()) {
+      reference.section = candidate.section.trim();
+    }
+
+    if (
+      typeof candidate.chunkIndex === "number" &&
+      Number.isFinite(candidate.chunkIndex)
+    ) {
+      reference.chunkIndex = candidate.chunkIndex;
+    }
+
+    return Object.keys(reference).length > 0 ? reference : null;
+  };
+
+  if (Array.isArray(data.sourceReferences)) {
+    const references = data.sourceReferences
+      .map(normalize)
+      .filter((reference): reference is KnowledgeSourceReference =>
+        Boolean(reference),
+      );
+
+    if (references.length > 0) {
+      return references;
+    }
+  }
+
+  const legacy = normalize(data.sourceReference);
+
+  return legacy ? [legacy] : [];
+}
 
 /** Zet één Firestore-snapshot van de "knowledge"-collectie om naar KnowledgeEntry[]. */
 function mapKnowledgeSnapshot(
@@ -41,6 +100,8 @@ function mapKnowledgeSnapshot(
         typeof data.sourceDocument === "string" ? data.sourceDocument : undefined,
       sourceSection:
         typeof data.sourceSection === "string" ? data.sourceSection : undefined,
+
+      sourceReferences: readSourceReferences(data),
 
       status: data.status as KnowledgeStatus | undefined,
       confidence: typeof data.confidence === "number" ? data.confidence : undefined,

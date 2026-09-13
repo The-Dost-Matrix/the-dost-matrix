@@ -198,7 +198,18 @@ const [bulkProgress, setBulkProgress] = useState({
   
       let totalImported = 0;
       let registeredDocuments = 0;
-  
+      // Apart geteld sinds de code-audit van 13 september 2026. Dit scherm
+      // meldde "N bestanden zijn verwerkt" voor ELK bestand dat de
+      // uploadroute accepteerde — ook voor PDF, DOCX, XLSX en afbeeldingen,
+      // waarvan uitsluitend de metadata wordt vastgelegd en de inhoud nooit
+      // gelezen wordt (zie `if (!isMarkdown) continue` hieronder). "Verwerkt"
+      // wekte daarmee de indruk dat er kennis uit was gehaald, terwijl er van
+      // die inhoud niets in de Second Brain terechtkwam. Voor een systeem dat
+      // beslissingen op zijn eigen kennis baseert is dat het duurste soort
+      // onwaarheid: de eigenaar denkt iets te weten wat er nooit in is gezet.
+      const registeredOnly: string[] = [];
+      let deduplicatedItems = 0;
+
       for (
         let index = 0;
         index < files.length;
@@ -268,6 +279,7 @@ const [bulkProgress, setBulkProgress] = useState({
         registeredDocuments += 1;
   
         if (!isMarkdown) {
+          registeredOnly.push(currentFile.name);
           continue;
         }
   
@@ -314,11 +326,32 @@ const [bulkProgress, setBulkProgress] = useState({
           
           totalImported +=
             knowledgeResult.imported ?? 0;
+
+          deduplicatedItems +=
+            knowledgeResult.deduplicated ?? 0;
       }
-  
-      setMessage(
-        `${registeredDocuments} bestanden zijn verwerkt. ${totalImported} kennisitems staan klaar voor beoordeling.`,
-      );
+
+      const parsedDocuments =
+        registeredDocuments - registeredOnly.length;
+
+      const parts: string[] = [
+        `${registeredDocuments} bestand${registeredDocuments === 1 ? "" : "en"} geregistreerd, waarvan ${parsedDocuments} inhoudelijk gelezen.`,
+        `${totalImported} nieuw kennisitem${totalImported === 1 ? "" : "s"} staat klaar voor beoordeling.`,
+      ];
+
+      if (deduplicatedItems > 0) {
+        parts.push(
+          `${deduplicatedItems} item${deduplicatedItems === 1 ? " stond" : "s stonden"} er al in; de nieuwe bron is aan het bestaande item toegevoegd.`,
+        );
+      }
+
+      if (registeredOnly.length > 0) {
+        parts.push(
+          `Nog niet gelezen (alleen vastgelegd): ${registeredOnly.join(", ")}. De Second Brain kan de inhoud van deze bestanden dus nog niet gebruiken.`,
+        );
+      }
+
+      setMessage(parts.join(" "));
   
       setFiles([]);
     } catch (caught) {
@@ -386,18 +419,26 @@ const [bulkProgress, setBulkProgress] = useState({
       const result = (await response.json()) as {
         id?: string;
         archived?: boolean;
+        duplicate?: boolean;
+        chunks?: number;
         error?: string;
       };
-  
+
       if (!response.ok) {
         throw new Error(
           result.error ??
             "Conversatie archiveren is mislukt.",
         );
       }
-  
+
+      // Meldde hiervoor altijd "volledig opgeslagen", ook wanneer exact
+      // dezelfde conversatie er al in stond — wat tot de audit van 13
+      // september 2026 bovendien betekende dat hij er een tweede keer
+      // helemaal in werd geschreven. Zie archive-service.ts.
       setMessage(
-        `Conversatie "${currentFile.name}" is volledig opgeslagen zonder analyse.`,
+        result.duplicate
+          ? `Conversatie "${currentFile.name}" stond al woordelijk in het archief; er is niets opnieuw opgeslagen.`
+          : `Conversatie "${currentFile.name}" is volledig opgeslagen zonder analyse (${result.chunks ?? 0} delen).`,
       );
   
       setFiles([]);

@@ -310,8 +310,18 @@ if (items.length === 0) {
 }
 
     const embeddingProvider = getEmbeddingProvider();
-    const createdIds: string[] = [];
 
+    // Alle aangeraakte kennisitems, nieuw én bestaand. Tot de code-audit van
+    // 13 september 2026 heette deze lijst `createdIds` en werd zijn lengte
+    // gerapporteerd als `imported` — maar `createKnowledgeEntry` geeft bij een
+    // duplicaat het BESTAANDE id terug, dus dat getal telde ook items die al
+    // lang in de Second Brain stonden. Twee keer hetzelfde document importeren
+    // meldde dan opnieuw "8 kennisitems staan klaar voor beoordeling" terwijl
+    // er nul waren bijgekomen. De drie tellers hieronder houden dat uit elkaar.
+    const touchedIds: string[] = [];
+    let created = 0;
+    let deduplicated = 0;
+    let evidenceAdded = 0;
 
     for (const item of items) {
       const embedding = embeddingProvider
@@ -320,38 +330,52 @@ if (items.length === 0) {
           )
         : [];
 
-      createdIds.push(
-        await createKnowledgeEntry({
-          ownerId,
-          title: item.title,
-          content: item.content,
-          source: "document",
-          sourceDocument: filename,
-          sourceReference: {
-            ...(documentId ? { documentId } : {}),
-            filename,
-          },
-          sourceSection: item.section,
-          type: item.type,
-lifecycle: item.lifecycle,
-status: "pending",
-tags: item.tags,
-embedding,
-        }),
-      );
+      const outcome = await createKnowledgeEntry({
+        ownerId,
+        title: item.title,
+        content: item.content,
+        source: "document",
+        sourceDocument: filename,
+        sourceReference: {
+          ...(documentId ? { documentId } : {}),
+          filename,
+          ...(item.section ? { section: item.section } : {}),
+        },
+        sourceSection: item.section,
+        type: item.type,
+        lifecycle: item.lifecycle,
+        status: "pending",
+        tags: item.tags,
+        embedding,
+      });
+
+      touchedIds.push(outcome.id);
+
+      if (outcome.created) {
+        created += 1;
+      } else {
+        deduplicated += 1;
+      }
+
+      if (outcome.evidenceAdded) {
+        evidenceAdded += 1;
+      }
     }
 
     if (documentId) {
       await updateDocument(documentId, {
         status: "review",
-        knowledgeItems: createdIds.length,
+        knowledgeItems: created,
         processedAt: new Date(),
       });
     }
 
     return NextResponse.json({
-      imported: createdIds.length,
-      ids: createdIds,
+      imported: created,
+      created,
+      deduplicated,
+      evidenceAdded,
+      ids: touchedIds,
       model: result.model,
     });
   } catch (error) {

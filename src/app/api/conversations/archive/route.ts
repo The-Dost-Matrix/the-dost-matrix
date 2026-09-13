@@ -84,7 +84,13 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       id: result.conversationId,
-      archived: true,
+      // `archived` betekent nu "er is dit keer werkelijk iets weggeschreven",
+      // niet "het gesprek zit in het archief". Bij een herkend duplicaat stond
+      // het er al, maar is er niets nieuws opgeslagen — en dat verschil hoort
+      // het scherm te kunnen zien, anders meldt het opnieuw een geslaagde
+      // archivering terwijl er niets gebeurd is.
+      archived: !result.duplicate,
+      duplicate: result.duplicate,
       chunks: result.chunks,
       embedded: result.embedded,
     });

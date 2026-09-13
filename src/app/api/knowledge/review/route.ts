@@ -6,8 +6,10 @@ import {
   updateKnowledgeEntry,
   updateKnowledgeReview,
   updateKnowledgeStatus,
+  type UpdateKnowledgeEntryInput,
 } from "@/core/repositories/knowledge-repository";
 import { reviewKnowledgeEntry } from "@/core/application/knowledge/reviewer";
+import { getEmbeddingProvider } from "@/core/llm/model-router";
 
 import type {
   KnowledgeStatus,
@@ -152,15 +154,11 @@ export async function POST(request: NextRequest) {
     }
 
     if (hasEditableFields) {
-      const updates: {
-        title?: string;
-        summary?: string;
-        content?: string;
-        project?: string;
-        type?: KnowledgeType;
-        confidence?: number;
-        tags?: string[];
-      } = {};
+      // Gebruikt sinds de code-audit het gedeelde repository-type in plaats
+      // van een eigen, handgeschreven kopie: die kopie kende het veld
+      // `embedding` niet, en een lokaal type dat achterloopt op de opslaglaag
+      // is precies hoe een veld stilletjes niet meegeschreven wordt.
+      const updates: UpdateKnowledgeEntryInput = {};
 
       if (body.title !== undefined) {
         if (typeof body.title !== "string" || !body.title.trim()) {
@@ -252,6 +250,36 @@ export async function POST(request: NextRequest) {
           .map((tag) => tag.trim())
           .filter(Boolean)
           .slice(0, 12);
+      }
+
+      // Wijzigt de tekst, dan moet de embedding mee veranderen. De
+      // repository herberekent zelf de fingerprint (pure hash), maar een
+      // embedding vraagt een providercall en hoort dus hier thuis — zie de
+      // toelichting bij updateKnowledgeEntry. Lukt de call niet, of is er
+      // geen provider geconfigureerd, dan gaat de bewerking gewoon door: de
+      // repository wist de verouderde embedding dan, waarna het item nog op
+      // trefwoorden vindbaar blijft. Een mislukte embedding mag nooit de
+      // bewerking van de eigenaar tegenhouden.
+      const textChanged =
+        updates.title !== undefined || updates.content !== undefined;
+
+      if (textChanged) {
+        const current = await getKnowledgeEntryById(ownerId, body.id);
+
+        const nextTitle = updates.title ?? current.title ?? "";
+        const nextContent = updates.content ?? current.content;
+
+        const embeddingProvider = getEmbeddingProvider();
+
+        if (embeddingProvider) {
+          try {
+            updates.embedding = await embeddingProvider.embed(
+              `${nextTitle}\n${nextContent}`,
+            );
+          } catch (error) {
+            console.error("Embedding na kennisbewerking mislukt", error);
+          }
+        }
       }
 
       await updateKnowledgeEntry(ownerId, body.id, updates);
