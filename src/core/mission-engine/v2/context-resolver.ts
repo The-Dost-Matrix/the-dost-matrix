@@ -311,6 +311,178 @@ export function findExampleTestFile(
   }
 }
 
+/**
+ * Stap 18 (eerste deel) — doorkijken door doorverwijzingen.
+ *
+ * `resolveDirectImports` hierboven gaat bewust één laag diep, en die grens
+ * blijft staan: bij twee volle lagen groeit het bewijs tot tientallen
+ * bestanden en verdringt de omvang de bruikbaarheid.
+ *
+ * Maar één laag is soms één laag te weinig, en dat is live gebleken. Bij PR
+ * #54 ("Tests voor de Knowledge Review Agent") lag het type dat je nodig hebt
+ * om een mock-signatuur te beoordelen twee stappen verderop, en viel het dus
+ * buiten de bundel. Niet omdat de bundel te klein was, maar omdat er een
+ * bestand tussen zat dat zelf niets zei.
+ *
+ * Dit blok lost dat gericht op, zonder de grens op te rekken:
+ *
+ * - Een **barrel** — een bestand dat vrijwel alleen maar doorverwijst — wordt
+ *   VERVANGEN door waar het naar doorverwijst. Dat is geen extra laag maar een
+ *   ruil: een bestand zonder inhoud eruit, het bestand met de echte vorm erin.
+ *   Bij gelijk budget strikt beter bewijs.
+ * - Alleen voor **type-imports** komt er één extra hop bij. Types zijn precies
+ *   de vorminformatie die de Builder nodig heeft om een aanroep of een mock
+ *   goed te krijgen; gewone imports zijn dat meestal niet. Begrensd op een
+ *   handvol, en pas achteraan in de volgorde, zodat ze alleen meegaan als er
+ *   ruimte over is.
+ *
+ * De harde bovengrens blijft ongemoeid: `selectEvidenceWithinBudget` kapt nog
+ * steeds af op MAX_EVIDENCE_FILES en MAX_EVIDENCE_TOTAL_LENGTH. Wat hier
+ * gebeurt, verandert alleen WELKE bestanden de eerste plekken krijgen.
+ */
+
+/** Hoeveel extra type-dragende bestanden er hooguit bijkomen. */
+export const MAX_TYPE_HOP_FILES = 3;
+
+/**
+ * Verwijdert commentaar, zodat een voorbeeldregel in een toelichting niet als
+ * echte code wordt geteld. Bewust simpel: dit hoeft geen parser te zijn, het
+ * hoeft alleen te voorkomen dat commentaar meetelt bij de vraag "staat hier
+ * nog iets anders dan doorverwijzingen?".
+ */
+function stripComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|\s)\/\/[^\n]*/g, "$1");
+}
+
+/**
+ * Een barrel is een bestand dat alleen maar doorverwijst: minstens één
+ * `export … from …`, en verder niets van betekenis. De inhoud van zo'n
+ * bestand vertelt de Builder niets over vorm of gedrag — het bestand
+ * waarnaar het verwijst wél.
+ *
+ * Bij twijfel `false`: staat er behalve doorverwijzingen ook maar iets
+ * inhoudelijks, dan is het een gewoon bestand en blijft het gewoon bewijs.
+ * Liever een nutteloos bestand te veel dan een nuttig bestand vervangen door
+ * iets anders.
+ */
+export function isBarrelModule(source: string): boolean {
+  const cleaned = stripComments(source);
+
+  const reExportPattern = /(?:^|\n)\s*export\s+(?:type\s+)?(?:\*|\{[^}]*\})\s+from\s+["'][^"']+["'];?/g;
+
+  const reExports = cleaned.match(reExportPattern) ?? [];
+  if (reExports.length === 0) return false;
+
+  const remainder = cleaned.replace(reExportPattern, "").trim();
+
+  return remainder === "";
+}
+
+/**
+ * De importpaden die uitsluitend een type binnenhalen: `import type …` en
+ * `export type … from …`. Een gewone import die toevallig ook een type
+ * meeneemt telt hier niet mee — die staat al in de eerste laag.
+ */
+export function extractTypeOnlyImportSpecifiers(source: string): string[] {
+  const pattern =
+    /(?:import|export)\s+type\s+(?:[\w*{}\s,]+\s+from\s+)?["']([^"']+)["']/g;
+
+  const found: string[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(stripComments(source))) !== null) {
+    if (!found.includes(match[1])) found.push(match[1]);
+  }
+
+  return found;
+}
+
+export interface RefineEvidenceInput {
+  modulePath: string;
+  moduleSource: string;
+  /** De uitkomst van resolveDirectImports voor deze module. */
+  directImports: readonly string[];
+  /** Inhoud van die directe imports, zoals opgehaald door de aanroeper. */
+  sources: ReadonlyMap<string, string>;
+  treePaths: readonly string[];
+  maxTypeHopFiles?: number;
+}
+
+export interface RefinedEvidence {
+  /** Barrels die plaatsmaken voor de bestanden waar ze naar doorverwijzen. */
+  replacements: Array<{ barrelPath: string; targets: string[] }>;
+  /** Extra bestanden die de vorm dragen, één type-hop verderop. */
+  additional: string[];
+}
+
+/**
+ * Bepaalt, op grond van de al opgehaalde inhoud van de directe imports, welk
+ * bewijs beter is dan wat er nu ligt.
+ *
+ * Blijft net als de rest van dit bestand volledig deterministisch en
+ * netwerkloos: de aanroeper levert de inhoud aan, deze functie beslist alleen.
+ */
+export function refineEvidenceImports({
+  modulePath,
+  moduleSource,
+  directImports,
+  sources,
+  treePaths,
+  maxTypeHopFiles = MAX_TYPE_HOP_FILES,
+}: RefineEvidenceInput): RefinedEvidence {
+  const replacements: Array<{ barrelPath: string; targets: string[] }> = [];
+  const seen = new Set<string>([modulePath, ...directImports]);
+
+  for (const importPath of directImports) {
+    const source = sources.get(importPath);
+    if (!source || !isBarrelModule(source)) continue;
+
+    const targets: string[] = [];
+
+    for (const specifier of extractImportSpecifiers(source)) {
+      const target = resolveImportSpecifier(importPath, specifier, treePaths);
+
+      if (target && target !== modulePath && !targets.includes(target)) {
+        targets.push(target);
+      }
+    }
+
+    if (targets.length > 0) {
+      replacements.push({ barrelPath: importPath, targets: targets.sort() });
+      for (const target of targets) seen.add(target);
+    }
+  }
+
+  // Eén extra hop, uitsluitend via type-imports van de module onder test, en
+  // alleen naar bestanden die we nog niet hebben.
+  const additional: string[] = [];
+
+  for (const specifier of extractTypeOnlyImportSpecifiers(moduleSource)) {
+    if (additional.length >= maxTypeHopFiles) break;
+
+    const first = resolveImportSpecifier(modulePath, specifier, treePaths);
+    if (!first) continue;
+
+    const firstSource = sources.get(first);
+    if (!firstSource) continue;
+
+    for (const nested of extractTypeOnlyImportSpecifiers(firstSource)) {
+      if (additional.length >= maxTypeHopFiles) break;
+
+      const target = resolveImportSpecifier(first, nested, treePaths);
+
+      if (target && !seen.has(target)) {
+        seen.add(target);
+        additional.push(target);
+      }
+    }
+  }
+
+  return { replacements, additional: additional.sort() };
+}
+
 export interface EvidenceFile {
   path: string;
   content: string;
@@ -374,6 +546,14 @@ export interface ContextManifestInput {
   evidence: EvidenceSelection;
   /** Het meegestuurde stijlvoorbeeld, indien aanwezig. */
   examplePath?: string | null;
+  /**
+   * Stap 18: barrels die zijn vervangen door waar ze naar doorverwijzen.
+   * Staat in het manifest omdat de Builder anders een importpad zou kunnen
+   * gebruiken dat hij nergens heeft zien staan: hij ziet de inhoud van het
+   * doelbestand, maar de rest van de codebase importeert via de barrel. Door
+   * beide te noemen weet hij dat allebei de paden echt bestaan.
+   */
+  followedThrough?: ReadonlyArray<{ barrelPath: string; targets: readonly string[] }>;
 }
 
 /**
@@ -389,6 +569,7 @@ export function buildContextManifest({
   writablePaths,
   evidence,
   examplePath = null,
+  followedThrough = [],
 }: ContextManifestInput): string {
   const lines: string[] = ["CONTEXTMANIFEST — dit is alles wat je hebt gezien:"];
 
@@ -404,6 +585,16 @@ export function buildContextManifest({
     );
     for (const file of evidence.included) {
       lines.push(`- ${file.path}`);
+    }
+  }
+
+  if (followedThrough.length > 0) {
+    lines.push(
+      "",
+      "Doorverwijzende bestanden (barrels) zijn vervangen door waar ze naar verwijzen. Beide paden bestaan echt, dus beide mag je gebruiken in een import:",
+    );
+    for (const entry of followedThrough) {
+      lines.push(`- ${entry.barrelPath} verwijst door naar ${entry.targets.join(", ")}`);
     }
   }
 

@@ -4,10 +4,13 @@ import {
   buildContextManifest,
   directoryOf,
   extractImportSpecifiers,
+  extractTypeOnlyImportSpecifiers,
   findExampleTestFile,
   findModuleUnderTest,
+  isBarrelModule,
   moduleUnderTestCandidates,
   normalizeRepoPath,
+  refineEvidenceImports,
   resolveDirectImports,
   resolveImportSpecifier,
   selectEvidenceWithinBudget,
@@ -39,6 +42,15 @@ function exportLine(clause: string, specifier: string): string {
 
 function sideEffectImportLine(specifier: string): string {
   return ["import", `"${specifier}";`].join(" ");
+}
+
+/** Zelfde reden als hierboven: nooit een letterlijke importregel in dit bestand. */
+function typeImportLine(clause: string, specifier: string): string {
+  return ["import", "type", clause, "from", `"${specifier}";`].join(" ");
+}
+
+function typeExportLine(clause: string, specifier: string): string {
+  return ["export", "type", clause, "from", `"${specifier}";`].join(" ");
 }
 
 const TREE = [
@@ -312,5 +324,235 @@ describe("buildContextManifest", () => {
     expect(manifest).toContain("src/core/x.ts");
     expect(manifest).not.toContain("NIET meegestuurd");
     expect(manifest).not.toContain("stijlvoorbeeld");
+  });
+});
+
+/**
+ * Stap 18 — doorkijken door doorverwijzingen.
+ *
+ * De aanleiding is concreet: bij PR #54 lag het type dat je nodig hebt om een
+ * mock-signatuur te beoordelen twee stappen verderop, met een bestand ertussen
+ * dat zelf niets zei. De één-laag-grens blijft, maar een bestand dat alleen
+ * doorverwijst hoort geen plek in de bundel op te eten.
+ */
+const BARREL_TREE = [
+  "src/core/contracts/v2/index.ts",
+  "src/core/contracts/v2/role-result.ts",
+  "src/core/contracts/v2/mission-decision.ts",
+  "src/core/domain/shapes.ts",
+  "src/core/domain/primitives.ts",
+  "src/core/werk/module.ts",
+  "src/core/werk/module.test.ts",
+  "src/core/werk/helper.ts",
+];
+
+describe("isBarrelModule", () => {
+  it("herkent een bestand dat uitsluitend doorverwijst", () => {
+    const source = [
+      exportLine("{ RoleResult }", "./role-result"),
+      exportLine("{ MissionDecision }", "./mission-decision"),
+    ].join("\n");
+
+    expect(isBarrelModule(source)).toBe(true);
+  });
+
+  it("laat zich niet misleiden door commentaar rondom de doorverwijzingen", () => {
+    const source = [
+      "/** Verzamelpunt voor de contracten. */",
+      exportLine("{ RoleResult }", "./role-result"),
+      "// en de rest",
+      exportLine("*", "./mission-decision"),
+    ].join("\n");
+
+    expect(isBarrelModule(source)).toBe(true);
+  });
+
+  it("beschouwt een bestand met eigen code niet als doorverwijzing", () => {
+    // Bij twijfel false: liever een nutteloos bestand te veel in de bundel dan
+    // een nuttig bestand vervangen door iets anders.
+    const source = [
+      exportLine("{ RoleResult }", "./role-result"),
+      "export function helper() { return 1; }",
+    ].join("\n");
+
+    expect(isBarrelModule(source)).toBe(false);
+  });
+
+  it("beschouwt een bestand zonder doorverwijzingen niet als barrel", () => {
+    expect(isBarrelModule("export const x = 1;")).toBe(false);
+    expect(isBarrelModule("")).toBe(false);
+  });
+});
+
+describe("extractTypeOnlyImportSpecifiers", () => {
+  it("vindt alleen de imports die uitsluitend een type binnenhalen", () => {
+    const source = [
+      importLine("{ iets }", "./gewoon"),
+      typeImportLine("{ Vorm }", "./vorm"),
+      typeExportLine("{ Andere }", "./andere"),
+      sideEffectImportLine("./neveneffect"),
+    ].join("\n");
+
+    expect(extractTypeOnlyImportSpecifiers(source)).toEqual(["./vorm", "./andere"]);
+  });
+
+  it("geeft een lege lijst wanneer er geen type-imports zijn", () => {
+    expect(extractTypeOnlyImportSpecifiers(importLine("{ x }", "./y"))).toEqual([]);
+  });
+});
+
+describe("refineEvidenceImports", () => {
+  it("vervangt een barrel door de bestanden waar hij naar doorverwijst", () => {
+    const barrelSource = [
+      exportLine("{ RoleResult }", "./role-result"),
+      exportLine("{ MissionDecision }", "./mission-decision"),
+    ].join("\n");
+
+    const result = refineEvidenceImports({
+      modulePath: "src/core/werk/module.ts",
+      moduleSource: importLine("{ RoleResult }", "@/core/contracts/v2"),
+      directImports: ["src/core/contracts/v2/index.ts"],
+      sources: new Map([["src/core/contracts/v2/index.ts", barrelSource]]),
+      treePaths: BARREL_TREE,
+    });
+
+    expect(result.replacements).toEqual([
+      {
+        barrelPath: "src/core/contracts/v2/index.ts",
+        targets: [
+          "src/core/contracts/v2/mission-decision.ts",
+          "src/core/contracts/v2/role-result.ts",
+        ],
+      },
+    ]);
+  });
+
+  it("laat een gewoon bestand met eigen inhoud staan", () => {
+    const result = refineEvidenceImports({
+      modulePath: "src/core/werk/module.ts",
+      moduleSource: importLine("{ helper }", "./helper"),
+      directImports: ["src/core/werk/helper.ts"],
+      sources: new Map([["src/core/werk/helper.ts", "export function helper() { return 1; }"]]),
+      treePaths: BARREL_TREE,
+    });
+
+    expect(result.replacements).toEqual([]);
+    expect(result.additional).toEqual([]);
+  });
+
+  it("volgt één extra hop via type-imports naar het bestand dat de vorm draagt", () => {
+    // Precies het geval van PR #54: de module praat tegen shapes.ts, maar de
+    // vorm die je nodig hebt staat in primitives.ts, een stap verderop.
+    const result = refineEvidenceImports({
+      modulePath: "src/core/werk/module.ts",
+      moduleSource: typeImportLine("{ Vorm }", "@/core/domain/shapes"),
+      directImports: ["src/core/domain/shapes.ts"],
+      sources: new Map([
+        ["src/core/domain/shapes.ts", typeImportLine("{ Basis }", "./primitives")],
+      ]),
+      treePaths: BARREL_TREE,
+    });
+
+    expect(result.additional).toEqual(["src/core/domain/primitives.ts"]);
+  });
+
+  it("volgt géén extra hop via een gewone import", () => {
+    // De grens blijft één laag. Alleen types dragen de vorm die de Builder
+    // nodig heeft; gewone imports zouden de bundel laten groeien zonder dat
+    // het bewijs beter wordt.
+    const result = refineEvidenceImports({
+      modulePath: "src/core/werk/module.ts",
+      moduleSource: importLine("{ vorm }", "@/core/domain/shapes"),
+      directImports: ["src/core/domain/shapes.ts"],
+      sources: new Map([
+        ["src/core/domain/shapes.ts", importLine("{ basis }", "./primitives")],
+      ]),
+      treePaths: BARREL_TREE,
+    });
+
+    expect(result.additional).toEqual([]);
+  });
+
+  it("begrenst het aantal extra bestanden", () => {
+    const result = refineEvidenceImports({
+      modulePath: "src/core/werk/module.ts",
+      moduleSource: typeImportLine("{ Vorm }", "@/core/domain/shapes"),
+      directImports: ["src/core/domain/shapes.ts"],
+      sources: new Map([
+        [
+          "src/core/domain/shapes.ts",
+          [
+            typeImportLine("{ A }", "./primitives"),
+            typeImportLine("{ B }", "@/core/werk/helper"),
+          ].join("\n"),
+        ],
+      ]),
+      treePaths: BARREL_TREE,
+      maxTypeHopFiles: 1,
+    });
+
+    expect(result.additional).toHaveLength(1);
+  });
+
+  it("voegt niets toe wat al in de bundel zit", () => {
+    const result = refineEvidenceImports({
+      modulePath: "src/core/werk/module.ts",
+      moduleSource: typeImportLine("{ Vorm }", "@/core/domain/shapes"),
+      directImports: ["src/core/domain/shapes.ts", "src/core/domain/primitives.ts"],
+      sources: new Map([
+        ["src/core/domain/shapes.ts", typeImportLine("{ Basis }", "./primitives")],
+        ["src/core/domain/primitives.ts", "export type Basis = string;"],
+      ]),
+      treePaths: BARREL_TREE,
+    });
+
+    expect(result.additional).toEqual([]);
+  });
+
+  it("doet niets wanneer de inhoud van een import niet is opgehaald", () => {
+    const result = refineEvidenceImports({
+      modulePath: "src/core/werk/module.ts",
+      moduleSource: importLine("{ RoleResult }", "@/core/contracts/v2"),
+      directImports: ["src/core/contracts/v2/index.ts"],
+      sources: new Map(),
+      treePaths: BARREL_TREE,
+    });
+
+    expect(result.replacements).toEqual([]);
+    expect(result.additional).toEqual([]);
+  });
+});
+
+describe("buildContextManifest met doorverwijzingen", () => {
+  it("noemt zowel de barrel als het bestand waarnaar hij verwijst", () => {
+    // De Builder ziet de inhoud van het doelbestand, maar de rest van de
+    // codebase importeert via de barrel. Zonder deze regel zou hij kunnen
+    // denken dat het ene pad niet bestaat.
+    const manifest = buildContextManifest({
+      writablePaths: ["src/core/werk/module.test.ts"],
+      evidence: {
+        included: [{ path: "src/core/contracts/v2/role-result.ts", content: "x" }],
+        omitted: [],
+      },
+      followedThrough: [
+        {
+          barrelPath: "src/core/contracts/v2/index.ts",
+          targets: ["src/core/contracts/v2/role-result.ts"],
+        },
+      ],
+    });
+
+    expect(manifest).toContain("src/core/contracts/v2/index.ts");
+    expect(manifest).toContain("verwijst door naar");
+    expect(manifest).toContain("src/core/contracts/v2/role-result.ts");
+  });
+
+  it("laat het kopje weg wanneer er niets is doorverwezen", () => {
+    const manifest = buildContextManifest({
+      writablePaths: ["src/core/werk/module.ts"],
+      evidence: { included: [], omitted: [] },
+    });
+
+    expect(manifest).not.toContain("verwijst door naar");
   });
 });
