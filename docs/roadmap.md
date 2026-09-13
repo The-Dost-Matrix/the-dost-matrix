@@ -818,6 +818,58 @@ omgeving zelf — niet alleen lokaal. Dit is de harde randvoorwaarde voor stap
 laptop uit staat, ongeacht hoe goed autonome triggers of signoff gebouwd
 zijn.
 
+### Stap 15 — Autonome missie-triggers met geautomatiseerde signoff
+(voorheen stap 21; herzien op 12 september 2026) Twee delen, allebei live
+bewezen op 13 september 2026 met de missie "Testmissie autonome voortgang"
+(PR #58, `formatCents`).
+
+**Deel 1 — geautomatiseerde signoff.** Een needs-signoff pull request wacht
+niet meer automatisch op Elroy. Hij krijgt eerst een tweede, onafhankelijke
+modelbeoordeling die de daadwerkelijke diff leest
+(`reviewPullRequestForAutomatedSignoff` in automated-signoff.ts). Keurt die
+oprecht goed, dan mergt de Director zelf. Daaromheen liggen de bestaande
+vangnetten ongemoeid: alle succescriteria PASSED, CI groen, en een harde
+categorie die altijd naar Elroy escaleert ongeacht wat de beoordeling zegt
+(`findHardEscalationReason`: secrets/tokens, GitHub-workflows, authenticatie,
+Firebase-configuratie, en elke bestandsverwijdering).
+
+**Deel 2 — autonome triggers.** `advanceMissionsForOwner`
+(autonomous-advance.ts) loopt elke voort-te-zetten missie langs via herhaalde
+`runDirectorStep`/`executeRoleAssignment`-aanroepen, begrensd door een
+wandklok-deadline en een stappenplafond per missie, met per missie een eigen
+try/catch zodat één vastgelopen missie de rest niet blokkeert. De route
+`/api/missions/v2/advance` stelt dat beschikbaar achter een gedeeld geheim
+(`MISSION_ADVANCE_SECRET`, vergeleken met `timingSafeEqual`), omdat GitHub
+Actions geen Firebase ID-token kan produceren. Een GitHub Actions-workflow
+roept die route elke tien minuten aan — bewust GitHub Actions en niet Vercel
+Cron, omdat Vercel's Hobby-plan maar één keer per dag toestaat met tot 59
+minuten afwijking.
+
+**Wat de live test heeft opgeleverd, inclusief wat er misging.** De missie
+bleef eerst negen uur hangen zonder zichtbare reden. Twee oorzaken, gestapeld.
+De eerste was banaal maar leerzaam: de Anthropic-credits waren op, waardoor
+elke LLM-aanroep faalde met status 400 — en `advanceMissionsForOwner`'s
+per-missie try/catch slikte die fout elke cyclus stil in. Zichtbaar werd het
+pas toen Elroy zelf handmatig op "volgende stap" klikte. Dat is een reëel gat:
+een providerfout tijdens een automatische run is nu nergens te zien behalve in
+de GitHub Actions-logs. Bewust nog niet gerepareerd — eerst vaststellen of het
+in de praktijk vaker gebeurt dan deze ene keer.
+
+De tweede oorzaak was géén fout maar het systeem dat deed wat het moest doen:
+PR #58 raakte twee bestanden (de functie plus zijn test), wat per definitie
+needs-signoff is. De geautomatiseerde beoordeling hééft gedraaid, heeft de
+diff gelezen, en koos ESCALEREN — niet omdat de wijziging fout was, maar omdat
+ze twee onbesproken gedragskeuzes zag (ongeldige invoer die stil als "€ 0,00"
+wordt getoond, en asymmetrische afronding bij halve centen). Precies de
+"eerlijke twijfel"-discipline waarvoor deel 1 is gebouwd. Elroy heeft daarna
+zelf beoordeeld en gemergd.
+
+Belangrijk voor de verwachting bij toekomstige nachtelijke runs: een
+meer-dan-één-bestand pull request blijft NIET structureel op Elroy wachten —
+de tweede beoordeling mag hem zelfstandig mergen. Hij komt alleen bij Elroy
+terecht wanneer die beoordeling zelf twijfelt, of wanneer de wijziging in de
+harde escalatiecategorie valt.
+
 ## Restpunten
 
 Kleine dingen die bij een grotere stap zijn gesignaleerd en bewust zijn
@@ -941,17 +993,8 @@ Nieuwe volgorde: stap 14 en 15 hieronder gaan vóór alles wat al stond
 (oorspronkelijke stap 14 t/m 20, 22 en 23 schuiven door naar stap 16 t/m 25;
 oorspronkelijke stap 21 is hierin opgegaan als herziene stap 15).
 
-### Stap 15 — Autonome missie-triggers met geautomatiseerde signoff
-(voorheen stap 21; herzien op 12 september 2026 — zie de herziening
-hierboven) De Director mag zelf, op basis van een vooraf goedgekeurde regel,
-een missie voorstellen of starten, én de needs-signoff-beoordeling
-zelfstandig afhandelen in plaats van op Elroy's klik te wachten — met
-dezelfde harde vangnetten als elke andere missie (alle criteria PASSED, CI
-groen, COMPLETED betekent echt gemerged), en met de vaste uitzondering voor
-herkenbaar gevaarlijke wijzigingen die hierboven staat beschreven. Eerste
-concrete stap richting het Jarvis-achtige eindbeeld, en de stap die
-daadwerkelijk mogelijk maakt dat Elroy 's avonds een missie klaarzet en
-'s ochtends een afgerond resultaat aantreft.
+(Stap 15 stond hier. Voltooid en live bewezen op 13 september 2026 —
+verplaatst naar "Voltooid" hierboven.)
 
 ### Stap 16 — Council V1.5: Claim Ledger, validatie en uitbreiding
 (voorheen stap 14) Pas nadat stap 13 zich bewezen heeft: het Claim Ledger
@@ -1062,6 +1105,45 @@ aanroeper (builder-runtime.ts, director-runtime.ts, qa-runtime.ts,
 reviewer.ts) een eigenaar/context moet doorgeven. Geen "Klein" restpunt
 meer, vandaar hier als eigen stap in plaats van in het
 Restpunten-hoofdstuk.
+
+Toegevoegde urgentie sinds 13 september 2026: toen de Anthropic-credits op
+raakten, kostte overschakelen naar OpenAI een handmatige ingreep in Vercel's
+omgevingsvariabelen plus een redeploy — en `getChatProvider()` kiest Anthropic
+zodra die sleutel maar bestáát, ongeacht of er nog krediet op zit. Bovendien
+eist de Council beide sleutels tegelijk (`getCouncilProviders`), dus de
+Anthropic-sleutel weghalen om de Director aan de praat te krijgen legt de
+Council stil. Dat is geen los ongemak meer maar een structureel probleem met
+één oorzaak, en deze stap is de plek waar het hoort te worden opgelost.
+
+### Stap 25 — Echte documentverwerking voor de Knowledge Foundation
+Volgt uit de externe code-audit van 13 september 2026 (zie
+`docs/reviews/code-audit-13-september-2026.md` voor het volledige oordeel per
+bevinding). De Knowledge-pagina accepteert PDF, DOCX, XLSX en afbeeldingen,
+maar alleen Markdown wordt inhoudelijk gelezen; van de rest wordt uitsluitend
+metadata vastgelegd. Er is geen server-side opslag van de originele bytes, dus
+een bestand kan later ook niet alsnog verwerkt worden. `package.json` bevat
+geen enkele parserbibliotheek.
+
+Dit is geen defect maar ontbrekende capaciteit — er gaat niets kapot, er is
+iets niet gebouwd. De volgorde die daaruit volgt: (1) echte binaire upload met
+server-side hash, MIME-detectie op de werkelijke bytes en immutable
+bronversies; (2) parser-adapters per formaat die naar één canoniek model
+schrijven; (3) kennisextractie die een geparseerde bron verwerkt in plaats van
+naar een bestandsextensie te kijken; (4) structurele chunking met provenance
+die naar een concreet fragment verwijst. Pas daarna hebben parser- en
+extractieversies in provenance betekenis.
+
+Harde regel voor deze stap, overgenomen uit de audit en onderschreven: de UI
+biedt een bestandstype pas aan zodra de backend het werkelijk leest. Tot die
+tijd doet de eerlijke melding die op 13 september is ingebouwd het werk — die
+zegt per bestand of het alleen is vastgelegd of ook gelezen.
+
+Bewust NIET meegenomen uit die audit: de voorgestelde migratie van het hele
+kennismodel naar Claims/Evidence/Entities/Relationships. De onderbouwing staat
+in hoofdstuk 4 van het oordeelsdocument; kort: die "reeds ontworpen
+V2-architectuur" is een schets van ruim één pagina met `Status: Review
+required`, en de concrete schade die ermee werd verdedigd (een verdwijnende
+tweede bron) is op 13 september al gerepareerd zonder re-architectuur.
 
 ## Acceptatiecriteria voor stap 9 t/m 12
 
