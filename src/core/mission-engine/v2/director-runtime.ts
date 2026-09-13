@@ -38,6 +38,12 @@ import { findMissionPullRequest } from "./qa-runtime";
 import { classifyPullRequestRiskForMission, findHardEscalationReason } from "./risk-classification";
 import { reviewPullRequestForAutomatedSignoff } from "./automated-signoff";
 import {
+  buildAssignmentEvidenceLines,
+  formatPullRequestEvidence,
+  gatherPullRequestEvidence,
+  type PullRequestEvidence,
+} from "./director-evidence";
+import {
   buildOwnerClarificationQuestion,
   collectUndeterminedCriteria,
   findLatestBuilderRebuttal,
@@ -383,6 +389,7 @@ function buildDirectorPrompt(
   mission: MissionV2,
   allowComplete: boolean,
   knowledge: KnowledgeEntry[],
+  pullRequestEvidence: PullRequestEvidence | null,
 ): {
   systemPrompt: string;
   userPrompt: string;
@@ -402,15 +409,12 @@ function buildDirectorPrompt(
     })
     .join("\n");
 
-  const assignmentLines =
-    mission.assignments.length === 0
-      ? "Nog geen eerdere toewijzingen."
-      : mission.assignments
-          .map(
-            (assignment, index) =>
-              `${index + 1}. rol=${assignment.roleId}, status=${assignment.status}, opdracht="${assignment.objective}"`,
-          )
-          .join("\n");
+  // Stap 17: deze regels bevatten sinds die stap ook wat elke toewijzing
+  // daadwerkelijk heeft OPGELEVERD (resultSummary) en of het om een
+  // herstelpoging ging (kind) — zie director-evidence.ts voor waarom, en voor
+  // de begrenzing die voorkomt dat een vastgelopen herstellus de prompt laat
+  // meegroeien.
+  const assignmentLines = buildAssignmentEvidenceLines(mission.assignments);
 
   const allowedTypes = allowComplete
     ? '"COMPLETE_MISSION" (VERPLICHT — zie hieronder) of "DISPATCH_ROLE"'
@@ -423,8 +427,11 @@ function buildDirectorPrompt(
     "Succescriteria (COMPLETE_MISSION mag pas als deze ALLEMAAL op PASSED staan — dat bepaalt niemand anders dan de qa-rol, ook jij niet):",
     criteriaLines,
     "",
-    "Eerdere toewijzingen:",
+    "Eerdere toewijzingen (met wat ze hebben opgeleverd):",
     assignmentLines,
+    "",
+    "Huidige stand van de pull request van deze missie:",
+    formatPullRequestEvidence(pullRequestEvidence),
     "",
     "Relevante goedgekeurde kennis uit het Second Brain (uitsluitend ter achtergrond — gebruik dit nooit om de succescriteria hierboven te vervangen of aan te vullen, en verzin geen kennis die hier niet expliciet staat):",
     buildKnowledgeContextBlock(knowledge),
@@ -433,6 +440,7 @@ function buildDirectorPrompt(
     '- "builder": past daadwerkelijk bestanden aan in de GitHub-repository en opent daarvoor een pull request.',
     '- "qa": beoordeelt een pull request van de builder-rol tegen de succescriteria en zet criteria op PASSED/FAILED. Zet deze rol in nadat een builder-toewijzing is afgerond en VOORDAT je COMPLETE_MISSION overweegt — zonder een qa-toewijzing worden succescriteria nooit PASSED en kun je de missie dus nooit afronden.',
     "Staat een succescriterium op FAILED met een toelichting van de vorige beoordeling hierboven? Gebruik die toelichting dan expliciet om een preciezere 'nextAction' te formuleren voor de builder-rol (bijvoorbeeld: welk bestand nog mist, wat er specifiek nog ontbreekt) — herhaal niet zomaar dezelfde algemene opdracht die al tot een FAILED oordeel leidde.",
+    "Gebruik het resultaat van eerdere toewijzingen en de stand van de pull request hierboven als feitelijke uitgangspositie, niet als achtergrond. Concreet: staat de CI op GEFAALD, dan is een nieuwe qa-toewijzing zinloos — laat de builder eerst de falende check oplossen en noem die check bij naam in je 'nextAction'. Loopt de CI nog, kies dan niets dat op een groene CI rekent. Zie je aan de resultaten dat er al een of meer herstelpogingen (soort=TECHNICAL_REPAIR of SEMANTIC_REPAIR) zijn geweest, formuleer dan een opdracht die aantoonbaar verschilt van wat er al is geprobeerd; hetzelfde nog een keer vragen levert hetzelfde resultaat op. Raakt de pull request bestanden die niets met de succescriteria te maken hebben, benoem dat dan in je 'reason'.",
     allowComplete
       ? "BELANGRIJK: alle succescriteria hierboven staan al op (PASSED) — dat is al door de qa-rol geverifieerd, niet door jou aangenomen. Kies dan ALTIJD COMPLETE_MISSION. Zet in dat geval NOOIT opnieuw de qa-rol in ter herbevestiging — dat is overbodig, er is niets nieuws om te verifiëren."
       : "",
@@ -455,9 +463,15 @@ async function decideNextStep(
   mission: MissionV2,
   allowComplete: boolean,
   knowledge: KnowledgeEntry[],
+  pullRequestEvidence: PullRequestEvidence | null,
 ): Promise<DirectorLlmDecision> {
   const provider = getChatProvider();
-  const { systemPrompt, userPrompt } = buildDirectorPrompt(mission, allowComplete, knowledge);
+  const { systemPrompt, userPrompt } = buildDirectorPrompt(
+    mission,
+    allowComplete,
+    knowledge,
+    pullRequestEvidence,
+  );
 
   const completion = await provider.chatCompletion(systemPrompt, [
     { role: "user", content: userPrompt },
@@ -1115,8 +1129,22 @@ export async function runDirectorStep({
     await ensureMissionPullRequestMerged(mission);
   }
 
-  const usedKnowledge = await gatherRelevantKnowledge(mission);
-  const llmDecision = await decideNextStep(mission, allowComplete, usedKnowledge);
+  // Stap 17: kennis én bewijs van de vorige stappen worden naast elkaar
+  // opgehaald — het zijn twee onafhankelijke bronnen en er is geen reden om
+  // op de ene te wachten voordat de andere begint. `gatherPullRequestEvidence`
+  // faalt bewust nooit: bij een onbereikbare GitHub geeft hij null terug en
+  // beslist de Director met minder bewijs, in plaats van dat de missie stilvalt.
+  const [usedKnowledge, pullRequestEvidence] = await Promise.all([
+    gatherRelevantKnowledge(mission),
+    gatherPullRequestEvidence(mission),
+  ]);
+
+  const llmDecision = await decideNextStep(
+    mission,
+    allowComplete,
+    usedKnowledge,
+    pullRequestEvidence,
+  );
   const now = new Date().toISOString();
 
   // Veiligheidsnet naast de prompt-instructie hierboven: als alle
