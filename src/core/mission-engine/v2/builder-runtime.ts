@@ -25,6 +25,7 @@ import {
   buildContextManifest,
   findExampleTestFile,
   findModuleUnderTest,
+  refineEvidenceImports,
   resolveDirectImports,
   selectEvidenceWithinBudget,
   type EvidenceFile,
@@ -55,11 +56,13 @@ import {
  * - geen automatische QA-beoordeling van de wijziging (successCriteriaResults
  *   blijft leeg, net als bij de oude Role Runtime — dat is werk voor een
  *   toekomstige QA-rol);
- * - de Director ziet op dit moment de inhoud van dit resultaat (dus ook niet
- *   of de pull request al gemerged is) nog niet terug bij een volgende
- *   beslissing — hij ziet alleen dat de toewijzing is afgerond. Tot de
- *   QA-rol er is, blijft handmatig controleren van de pull request op
- *   GitHub dus nodig, ongeacht wat de missiestatus zegt.
+ * NIET MEER WAAR sinds stap 17: hier stond dat de Director de inhoud van dit
+ * resultaat niet terugziet bij een volgende beslissing, en dat handmatig
+ * controleren op GitHub daarom altijd nodig bleef. Sinds de Director Evidence
+ * Upgrade krijgt hij wél de samenvatting van elke eerdere toewijzing te zien,
+ * plus de stand van de pull request inclusief CI-uitkomst (zie
+ * director-evidence.ts). Een toelichting die achterloopt liegt in twee
+ * richtingen, vandaar deze correctie in plaats van stille verwijdering.
  */
 
 const MAX_FILES_PER_ASSIGNMENT = 8;
@@ -467,6 +470,13 @@ export function buildTestContextBlock(
 export interface BuilderTestContext {
   evidence: EvidenceSelection;
   exampleTestFile: { path: string; content: string } | null;
+  /**
+   * Stap 18: barrels die zijn vervangen door waar ze naar doorverwijzen. Gaat
+   * mee naar het contextmanifest, zodat de Builder weet dat beide paden echt
+   * bestaan — hij ziet de inhoud van het doelbestand, terwijl de rest van de
+   * codebase via de barrel importeert.
+   */
+  followedThrough: Array<{ barrelPath: string; targets: string[] }>;
 }
 
 /**
@@ -504,6 +514,7 @@ export async function resolveTestContext(
   }
 
   const candidates: EvidenceFile[] = [];
+  let followedThrough: Array<{ barrelPath: string; targets: string[] }> = [];
 
   if (modulePath) {
     const module = await getFileContent(target, modulePath, ref);
@@ -520,12 +531,66 @@ export async function resolveTestContext(
     // Eén laag diep: de bestanden waar de module zelf tegenaan praat.
     // Bestanden die deze toewijzing al schrijft blijven eruit — die komen
     // langs siblingFiles binnen, met hun NIEUWE inhoud in plaats van de oude.
-    for (const importPath of resolveDirectImports(modulePath, module.content, treePaths)) {
-      if (plannedPaths.includes(importPath)) continue;
+    const directImports = resolveDirectImports(modulePath, module.content, treePaths).filter(
+      (importPath) => !plannedPaths.includes(importPath),
+    );
 
+    const fetched = new Map<string, string>();
+
+    for (const importPath of directImports) {
       const imported = await getFileContent(target, importPath, ref);
-      if (imported) candidates.push({ path: importPath, content: imported.content });
+      if (imported) fetched.set(importPath, imported.content);
     }
+
+    // Stap 18: nu de inhoud er is, kan pas blijken dat een van die bestanden
+    // alleen maar doorverwijst. Die wordt vervangen door waar hij naar wijst
+    // (geen extra laag, een ruil), en voor type-imports komt er één hop bij.
+    // Zie de toelichting bij refineEvidenceImports in context-resolver.ts.
+    const refined = refineEvidenceImports({
+      modulePath,
+      moduleSource: module.content,
+      directImports,
+      sources: fetched,
+      treePaths,
+    });
+
+    const replacedBarrels = new Set(
+      refined.replacements.map((replacement) => replacement.barrelPath),
+    );
+
+    const extraPaths = [
+      ...refined.replacements.flatMap((replacement) => replacement.targets),
+      ...refined.additional,
+    ].filter((path) => !plannedPaths.includes(path) && !fetched.has(path));
+
+    for (const path of extraPaths) {
+      const extra = await getFileContent(target, path, ref);
+      if (extra) fetched.set(path, extra.content);
+    }
+
+    // Volgorde is belangrijkheid: waar een barrel naar doorverwijst eerst
+    // (dat is de vorm die de Builder nodig heeft), dan de gewone directe
+    // imports, en de type-hop achteraan — die gaat dus alleen mee als er
+    // binnen het budget nog ruimte over is.
+    const ordered = [
+      ...refined.replacements.flatMap((replacement) => replacement.targets),
+      ...directImports.filter((path) => !replacedBarrels.has(path)),
+      ...refined.additional,
+    ];
+
+    const alreadyAdded = new Set<string>([modulePath]);
+
+    for (const path of ordered) {
+      if (alreadyAdded.has(path)) continue;
+
+      const content = fetched.get(path);
+      if (!content) continue;
+
+      alreadyAdded.add(path);
+      candidates.push({ path, content });
+    }
+
+    followedThrough = refined.replacements;
   }
 
   const evidence = selectEvidenceWithinBudget(candidates);
@@ -538,7 +603,7 @@ export async function resolveTestContext(
     if (example) exampleTestFile = { path: examplePath, content: example.content };
   }
 
-  return { evidence, exampleTestFile };
+  return { evidence, exampleTestFile, followedThrough };
 }
 
 /**
@@ -652,6 +717,7 @@ async function writeSingleFile(
         writablePaths: plan.paths,
         evidence: testContext.evidence,
         examplePath: testContext.exampleTestFile?.path ?? null,
+        followedThrough: testContext.followedThrough,
       })
     : "";
 
