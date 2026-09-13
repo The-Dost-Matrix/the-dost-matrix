@@ -11,11 +11,16 @@ import {
   summarizeReportLevel,
   useSystemStatus,
 } from "@/domains/system/system-status-service";
+import {
+  isActivePath,
+  mainNavigation,
+  plannedNavigation,
+} from "@/domains/navigation/matrix-navigation";
 
 /**
  * Navigatie en statusblok van het Command Center.
  *
- * Twee bewuste wijzigingen ten opzichte van de eerste versie:
+ * Drie bewuste wijzigingen ten opzichte van de eerste versie:
  *
  * 1. Het statusblok onderaan toonde vaste teksten ("All systems operational",
  *    "KNOWLEDGE CORE ONLINE", "AI CONNECTION READY") die niets controleerden.
@@ -25,26 +30,13 @@ import {
  *    verwijderd. Wat als "BINNENKORT" blijft staan, hoort bij een concrete
  *    roadmapstap; het stapnummer staat erbij zodat zichtbaar is dat het geen
  *    loze belofte is.
+ * 3. mainNavigation/plannedNavigation/isActivePath komen sinds de mobiele
+ *    layout niet meer lokaal uit dit bestand, maar uit
+ *    matrix-navigation.ts — dezelfde lijst wordt nu ook gebruikt door
+ *    topbar-navigation-menu.tsx (het uitklapbare navigatiepaneel dat op
+ *    smalle schermen de rol van deze zijbalk overneemt, zie globals.css
+ *    voor de breakpoint).
  */
-const mainNavigation = [
-  { label: "Command Center", href: "/dashboard", icon: "◉" },
-  { label: "Mission Engine", href: "/dashboard/missions-v2", icon: "⚙" },
-  { label: "Knowledge", href: "/dashboard/knowledge", icon: "◇" },
-];
-
-const plannedNavigation = [
-  { label: "Dost Council", icon: "⬡", step: "stap 13" },
-  { label: "Second Brain", icon: "◈", step: "stap 18" },
-];
-
-function isActivePath(pathname: string, href: string): boolean {
-  if (href === "/dashboard") {
-    return pathname === "/dashboard";
-  }
-
-  return pathname.startsWith(href);
-}
-
 export function Sidebar() {
   const pathname = usePathname();
   const systemStatus = useSystemStatus();

@@ -8,6 +8,7 @@ import { MatrixEventStream } from "@/components/workspace/matrix-event-stream";
 import {
   SystemMonitorPanel,
 } from "@/components/monitor/system-monitor";
+import { TopbarNavigationMenu } from "@/components/navigation/topbar-navigation-menu";
 import {
   statusIcon,
   statusLabel,
@@ -48,19 +49,28 @@ import {
  * Zolang die er niet is, telt dit scherm liever niets dan het verkeerde —
  * dezelfde regel als bij "AGENTS" en "APPROVALS" hieronder.
  */
-type TopbarDropdownId = "activity" | "system";
+type TopbarDropdownId = "nav" | "activity" | "system";
 
 /**
  * De tellers "AGENTS" en "APPROVALS" stonden hier eerder als vaste getallen
  * (4 en 0) omdat er geen live bron voor bestond. Ze zijn verwijderd in plaats
  * van blijven staan: een scherm hoort niets te tellen wat het niet echt kan
  * tellen.
+ *
+ * "nav" (stap 15-nasleep, mobiele layout) staat bewust vooraan: het is de
+ * enige van de drie die er ook echt toe doet zodra de zijbalk onder de
+ * 900px-breakpoint verdwijnt (zie .matrix-sidebar in globals.css) — zonder
+ * dit knopje was er op een telefoon geen manier meer om tussen Command
+ * Center/Mission Engine/Knowledge te wisselen. Op een breed scherm blijft
+ * dit knopje verborgen (.matrix-topbar-tool--nav in globals.css), want daar
+ * doet de zijbalk dit al.
  */
 const DROPDOWN_TOOLS: Array<{
   id: TopbarDropdownId;
   label: string;
   icon: string;
 }> = [
+  { id: "nav", label: "Navigatie", icon: "☰" },
   { id: "activity", label: "Recent Activity", icon: "◷" },
   { id: "system", label: "Systeemstatus", icon: "▤" },
 ];
@@ -156,7 +166,14 @@ export function Topbar() {
 
           <div className="matrix-topbar-tools" ref={toolsRef}>
             {DROPDOWN_TOOLS.map((tool) => (
-              <div className="matrix-topbar-tool" key={tool.id}>
+              <div
+                className={
+                  tool.id === "nav"
+                    ? "matrix-topbar-tool matrix-topbar-tool--nav"
+                    : "matrix-topbar-tool"
+                }
+                key={tool.id}
+              >
                 <button
                   aria-expanded={openDropdown === tool.id}
                   aria-haspopup="true"
@@ -186,6 +203,9 @@ export function Topbar() {
                     </div>
 
                     <div className="matrix-topbar-tool-panel-body">
+                      {tool.id === "nav" && (
+                        <TopbarNavigationMenu onNavigate={() => setOpenDropdown(null)} />
+                      )}
                       {tool.id === "activity" && (
                         <MatrixEventStream variant="dropdown" />
                       )}

@@ -278,7 +278,33 @@ input:focus, textarea:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px r
       radial-gradient(circle at 63% 8%, rgba(37, 90, 72, 0.1), transparent 25%),
       linear-gradient(180deg, rgba(2, 11, 8, 0.18), rgba(2, 11, 8, 0.72));
   }
-  
+
+  /*
+   * De zijbalk had geen enkele responsieve regel: een vaste 250px-kolom op
+   * elk schermformaat. Op een telefoon (~390-430px breed) at dat ruim de
+   * helft van het scherm op, met de rest van de app in een onbruikbaar
+   * smalle kolom geperst — geen horizontale overloop, gewoon een kolom die
+   * te smal was om iets in te lezen (elk woord viel character-voor-character
+   * op een eigen regel). Onder de 900px-breakpoint (dezelfde grens die de
+   * topbar hieronder al gebruikt voor .matrix-topbar-stats) verdwijnt de
+   * zijbalk daarom volledig en wordt .matrix-os één kolom. De navigatie die
+   * hier stond staat op die breedte in plaats daarvan als uitklapbaar
+   * "Navigatie"-paneel in de topbar (zie TopbarNavigationMenu in topbar.tsx,
+   * en .matrix-topbar-tool--nav verderop in dit bestand). Het
+   * systeemstatus-blok onderaan de zijbalk heeft op mobiel geen eigen
+   * vervanging nodig: het bestaat al als "Systeemstatus"-paneel in de
+   * topbar, op elke schermbreedte.
+   */
+  @media (max-width: 900px) {
+    .matrix-os {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .matrix-sidebar {
+      display: none;
+    }
+  }
+
   .matrix-sidebar {
     position: sticky;
     top: 0;
@@ -630,6 +656,35 @@ input:focus, textarea:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px r
 
   .matrix-topbar-tool {
     position: relative;
+  }
+
+  /*
+   * Het "Navigatie"-knopje bestaat alleen om de rol van de zijbalk over te
+   * nemen zodra die verdwijnt (zie .matrix-sidebar hierboven) — op een breed
+   * scherm staat de navigatie al links, en zou dit knopje daar een zinloos
+   * duplicaat zijn.
+   */
+  .matrix-topbar-tool--nav {
+    display: none;
+  }
+
+  @media (max-width: 900px) {
+    .matrix-topbar-tool--nav {
+      display: block;
+    }
+  }
+
+  /*
+   * TopbarNavigationMenu hergebruikt de .matrix-navigation*-klassen van de
+   * zijbalk (matrix-navigation.ts is de gedeelde bron voor beide). Binnen
+   * .matrix-topbar-tool-panel-body is de ouder geen flex-kolom zoals
+   * .matrix-sidebar dat is, dus flex:1 heeft daar geen nuttig effect, en de
+   * panel-body heeft zelf al verticale padding — vandaar deze twee
+   * overrides in plaats van de zijbalk-stijl kaal te hergebruiken.
+   */
+  .matrix-navigation--topbar {
+    flex: none;
+    padding-top: 0;
   }
 
   .matrix-topbar-tool-button {
