@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 
+import type { MissionAdvanceOutcome } from "@/core/mission-engine/v2/autonomous-advance";
+
 import {
   MISSION_STATUSES,
   type AssignmentStatus,
@@ -10,6 +12,7 @@ import {
 
 import {
   RISK_LEVELS,
+  advanceStoppedReasonLabel,
   assignmentStatusLabel,
   formatMissionCost,
   missionStatusLabel,
@@ -80,6 +83,34 @@ describe("assignmentStatusLabel", () => {
     const status = "DRAFT" as AssignmentStatus;
 
     expect(assignmentStatusLabel(status)).toBe(status);
+  });
+});
+
+describe("advanceStoppedReasonLabel", () => {
+  it("geeft voor elke stopreden een niet-lege Nederlandse omschrijving in plaats van de ruwe waarde", () => {
+    const labels: Record<MissionAdvanceOutcome["stoppedReason"], string> = {
+      TERMINAL_OR_WAITING_STATUS: "Missie beëindigd of in wachtstand",
+      STEP_LIMIT_REACHED: "Stappenlimiet bereikt",
+      DEADLINE_REACHED: "Tijdslimiet bereikt",
+      WAITING_FOR_CI: "Wachten tot de CI-controle klaar is",
+      DIRECTOR_ERROR: "Fout bij de regisseur",
+    };
+    const reasons = Object.keys(labels) as MissionAdvanceOutcome["stoppedReason"][];
+
+    for (const reason of reasons) {
+      const label = advanceStoppedReasonLabel(reason);
+
+      expect(typeof label).toBe("string");
+      expect(label.length).toBeGreaterThan(0);
+      expect(label).not.toBe(reason);
+      expect(label).toBe(labels[reason]);
+    }
+  });
+
+  it("omschrijft WAITING_FOR_CI neutraal als wachten tot de CI-controle klaar is", () => {
+    expect(advanceStoppedReasonLabel("WAITING_FOR_CI")).toBe(
+      "Wachten tot de CI-controle klaar is",
+    );
   });
 });
 

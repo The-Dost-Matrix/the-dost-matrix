@@ -1,3 +1,4 @@
+import type { MissionAdvanceOutcome } from "@/core/mission-engine/v2/autonomous-advance";
 import type { AssignmentStatus, MissionRiskLevel, MissionV2 } from "@/core/mission-engine/v2/mission";
 
 /**
@@ -34,6 +35,18 @@ export function assignmentStatusLabel(status: AssignmentStatus): string {
   };
 
   return labels[status] ?? status;
+}
+
+export function advanceStoppedReasonLabel(reason: MissionAdvanceOutcome["stoppedReason"]): string {
+  const labels: Record<MissionAdvanceOutcome["stoppedReason"], string> = {
+    TERMINAL_OR_WAITING_STATUS: "Missie beëindigd of in wachtstand",
+    STEP_LIMIT_REACHED: "Stappenlimiet bereikt",
+    DEADLINE_REACHED: "Tijdslimiet bereikt",
+    WAITING_FOR_CI: "Wachten tot de CI-controle klaar is",
+    DIRECTOR_ERROR: "Fout bij de regisseur",
+  };
+
+  return labels[reason] ?? reason;
 }
 
 /**
