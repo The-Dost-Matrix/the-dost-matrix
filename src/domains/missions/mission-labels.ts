@@ -49,6 +49,13 @@ export function advanceStoppedReasonLabel(reason: MissionAdvanceOutcome["stopped
   return labels[reason] ?? reason;
 }
 
+export function advanceOutcomeSummary(outcome: MissionAdvanceOutcome): string {
+  const title = outcome.title.replace(/\s+/g, " ").trim();
+  const stepsLabel = outcome.stepsTaken === 1 ? "stap" : "stappen";
+
+  return `${title}: ${outcome.stepsTaken} ${stepsLabel} gezet — ${advanceStoppedReasonLabel(outcome.stoppedReason)}`;
+}
+
 /**
  * Geschatte kosten tot nu toe — puur informatief. `spentCost` is in USD (zie
  * pricing.ts), het budget staat standaard in EUR (mission-factory.ts). Bewust

@@ -12,6 +12,7 @@ import {
 
 import {
   RISK_LEVELS,
+  advanceOutcomeSummary,
   advanceStoppedReasonLabel,
   assignmentStatusLabel,
   formatMissionCost,
@@ -111,6 +112,68 @@ describe("advanceStoppedReasonLabel", () => {
     expect(advanceStoppedReasonLabel("WAITING_FOR_CI")).toBe(
       "Wachten tot de CI-controle klaar is",
     );
+  });
+});
+
+describe("advanceOutcomeSummary", () => {
+  it("vat STEP_LIMIT_REACHED samen met de titel, het aantal stappen en de gelabelde stopreden", () => {
+    const outcome: MissionAdvanceOutcome = {
+      missionId: "mission-step-limit",
+      title: "Leesbare samenvatting van een autonome tik",
+      startStatus: "ACTIVE",
+      endStatus: "ACTIVE",
+      stepsTaken: 25,
+      stoppedReason: "STEP_LIMIT_REACHED",
+    };
+
+    const result = advanceOutcomeSummary(outcome);
+
+    expect(typeof result).toBe("string");
+    expect(result.trim().length).toBeGreaterThan(0);
+    expect(result).toContain(outcome.title);
+    expect(result).toContain(`${outcome.stepsTaken} stappen gezet`);
+    expect(result).toContain(advanceStoppedReasonLabel(outcome.stoppedReason));
+    expect(result.match(/[\r\n\u2028\u2029]/)).toBe(null);
+  });
+
+  it("vat WAITING_FOR_CI na één stap samen in één niet-lege Nederlandse regel", () => {
+    const outcome: MissionAdvanceOutcome = {
+      missionId: "mission-ci",
+      title: "Wachten op de controle",
+      startStatus: "WAITING_FOR_ROLE",
+      endStatus: "ACTIVE",
+      stepsTaken: 1,
+      stoppedReason: "WAITING_FOR_CI",
+    };
+
+    const result = advanceOutcomeSummary(outcome);
+
+    expect(typeof result).toBe("string");
+    expect(result.trim().length).toBeGreaterThan(0);
+    expect(result).toContain(outcome.title);
+    expect(result).toContain(`${outcome.stepsTaken} stap gezet`);
+    expect(result).toContain(advanceStoppedReasonLabel(outcome.stoppedReason));
+    expect(result.match(/[\r\n\u2028\u2029]/)).toBe(null);
+  });
+
+  it("houdt DEADLINE_REACHED zonder stappen eenregelig bij een titel met regeleinden", () => {
+    const outcome: MissionAdvanceOutcome = {
+      missionId: "mission-deadline",
+      title: "  Leesbare\r\nsamenvatting\nvan een\u2028autonome\u2029tik  ",
+      startStatus: "ACTIVE",
+      endStatus: "ACTIVE",
+      stepsTaken: 0,
+      stoppedReason: "DEADLINE_REACHED",
+    };
+
+    const result = advanceOutcomeSummary(outcome);
+
+    expect(typeof result).toBe("string");
+    expect(result.trim().length).toBeGreaterThan(0);
+    expect(result).toContain("Leesbare samenvatting van een autonome tik");
+    expect(result).toContain(`${outcome.stepsTaken} stappen gezet`);
+    expect(result).toContain(advanceStoppedReasonLabel(outcome.stoppedReason));
+    expect(result.match(/[\r\n\u2028\u2029]/)).toBe(null);
   });
 });
 
