@@ -973,12 +973,17 @@ trouwe overtyping geeft dezelfde diff), maar wel dat er niets verdwenen is. Dát
 het nieuwe pad liep, volgt uit iets anders: boven de 2.000 tekens bestaat er
 geen terugval meer naar overtypen.
 
-### Stap 18 — de hele stap, en wat er nog open staat
-Deel 1 (13 september) en deel 2 (14 september) staan hierboven. Van de
-oorspronkelijke stap 18 rest nog één ding: begrensde lees-/zoektools voor de
-Builder, zodat hij typecheck en tests kan draaien vóór hij commit. Dat vraagt
-uitbreiding van de `LlmProvider`-interface met function calling, wat per
-aanbieder verschilt — zie stap 18 onder "Voorgestelde volgende stappen".
+### Stap 18 — hoe de vier onderdelen ervoor staan
+Deel 1 (13 september) en deel 2 (14 september) staan hierboven. De
+oorspronkelijke stap 18 noemde vier dingen; daarvan zijn er twee af en staan er
+twee open — niet één, zoals hier eerst stond.
+
+Af: alias-, barrel- en typeresolutie (waarvan de alias-resolutie al in stap 10
+bleek te zitten), en patch-gebaseerd schrijven. Open: een deterministische
+signatuurcontrole, en begrensde lees-/zoektools. Die twee zijn bewust gesplitst
+omdat alleen de tweede function calling nodig heeft — ze samen onder één kopje
+zetten maakte de eerste onnodig groot. Zie stap 18 onder "Voorgestelde volgende
+stappen".
 
 Tekenend voor waarom dat deel bestaat: in zijn eigen PR-commentaar bij #60
 schreef de Builder uit zichzelf dat hij de testuitvoering en de diff niet kon
@@ -1202,21 +1207,44 @@ QA.
 verplaatst naar "Voltooid" hierboven. Het eerste deel van stap 18 is
 in dezelfde missie meegetest en staat daar ook.)
 
-### Stap 18 (deel 3) — Tools waarmee de Builder zelf kan verifiëren
-(voorheen stap 16) Wat er van stap 18 nog open staat: begrensde lees-/zoektools
-voor de Builder, plus een deterministische signatuurcontrole als extra
-verdediging. Vereist uitbreiding van de `LlmProvider`-interface met function
-calling, en dat werkt per aanbieder verschillend.
+### Stap 18 — wat er nog open staat (deel 3 en deel 4)
+(voorheen stap 16) De oorspronkelijke stap 18 noemde vier dingen. Hoe die er nu
+voor staan:
 
-**Deel 1 en deel 2 zijn af** — 13 en 14 september 2026, zie "Voltooid"
-hierboven. Elroy koos op 13 september voor deze volgorde: eerst de context
+1. **Alias-, barrel- en typeresolutie in de Context Resolver.** Alias-resolutie
+   bleek al in stap 10 gebouwd — met een expliciet opgeschreven afwijking van de
+   roadmaptekst, omdat dit project 245 keer via `@/` importeert tegen 126 keer
+   relatief. Barrel en types kwamen erbij in deel 1. **Af.**
+2. **Patch-gebaseerd schrijven.** Deel 2. **Af.**
+3. **Een deterministische signatuurcontrole als extra verdediging.** Staat nog
+   open — zie deel 3 hieronder.
+4. **Begrensde lees-/zoektools voor de Builder.** Staat nog open — zie deel 4.
+
+Deze twee stonden aanvankelijk onder één kopje, met "vereist function calling"
+erboven. Dat klopt alleen voor de tweede, en dat maakte de eerste onnodig groot
+en eng. Vandaar gesplitst.
+
+**Deel 3 — signatuurcontrole.** Een mechanische controle of een functie die de
+Builder aanroept werkelijk bestaat, met die naam en die parameters. Raakt de
+providers niet, vereist geen function calling, en is qua omvang vergelijkbaar
+met deel 1 of deel 2. Vangt precies de klasse fouten af waar stap 10 voor
+gebouwd is (verzonnen functienamen en signaturen), maar dan deterministisch in
+plaats van door het model beter te informeren — een tweede net onder het eerste.
+
+**Deel 4 — lees-/zoektools.** De grootste ingreep die er van deze hele stap nog
+ligt. De Builder kan op dit moment niets uitvoeren: hij schrijft blind en hoort
+pas via de CI of het klopt, en dat is de enige reden dat de technische
+herstellus (stap 11) bestaat. Een tool die typecheck en tests draait vóór de
+commit haalt de grond onder die hele lus vandaan.
+
+De prijs: de `LlmProvider`-interface moet uitgebreid worden met function
+calling, en dat werkt per aanbieder verschillend. Elke tool-aanroep is bovendien
+een extra modelronde. En de waarschuwing hieronder blijft staan: tools komen
+BOVENOP de gedwongen bewijslaag, nooit ervoor in de plaats.
+
+Elroy koos op 13 september de volgorde waarin dit is aangepakt: eerst de context
 slimmer maken (geen providerwijziging, laagste risico), daarna gericht bewerken,
 en function calling als laatste omdat dat de grootste ingreep is.
-
-Waarom dit deel er nog toe doet: de Builder kan op dit moment niets uitvoeren.
-Hij schrijft blind en hoort pas via de CI of het klopt — dat is de enige reden
-dat de technische herstellus (stap 11) bestaat. Een tool die typecheck en tests
-draait vóór de commit haalt de grond onder die hele lus vandaan.
 
 **Overweging: MCP als vorm voor die tools (7 september 2026).** MCP (Model
 Context Protocol) is de open standaard voor de koppeling tussen een model en
