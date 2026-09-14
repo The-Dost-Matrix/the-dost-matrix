@@ -38,6 +38,11 @@ import {
   findUnknownImports,
 } from "./export-check";
 import {
+  extractRepositoryPaths,
+  formatObjectiveEvidence,
+  type ObjectiveEvidenceFile,
+} from "./objective-evidence";
+import {
   applyEditResponse,
   EDIT_BLOCK_FORMAT,
   PatchEditError,
@@ -142,6 +147,78 @@ const MAX_EDIT_ATTEMPTS = 2;
  */
 export function shouldEditInPlace(currentContent: string | null): boolean {
   return currentContent !== null && currentContent.length >= PATCH_MODE_MIN_LENGTH;
+}
+
+/**
+ * HET KANAAL VOOR "IK MIS IETS" (14 september 2026)
+ *
+ * De bewijslaag van stap 10 zegt tegen het model: alleen wat hier staat
+ * bestaat, verzin niets. Een model dat zich daaraan houdt en merkt dat er iets
+ * ontbreekt, kan dus maar één ding doen — niet leveren. En dat deed het ook,
+ * live, vier keer op rij. Alleen had het geen manier om dat te zeggen die wij
+ * konden verstaan, dus kwam de boodschap eruit als een parseerfout, en
+ * daarna (via de terugval) als een bestand vol proza.
+ *
+ * Dat was ons gat, niet dat van het model. `INSUFFICIENT_CONTEXT` bestond al,
+ * maar alleen de contextresolver kon het opwerpen: structureel, vooraf,
+ * op basis van wat wij konden zien. Het model zat op de enige plek waar de
+ * échte behoefte zichtbaar wordt — midden in het werk — en had daar geen stem.
+ *
+ * Vandaar deze afspraak. Eén regel, aan het begin van het antwoord, en de
+ * toewijzing stopt met een nette fout die letterlijk vertelt wát er ontbrak.
+ * Elroy leest dan in het missiepaneel "de Builder mist X" in plaats van "het
+ * antwoord bevat geen enkel bewerkingsblok".
+ *
+ * Bewust een marker en geen vrije-tekstherkenning: zodra je een weigering uit
+ * proza gaat afleiden, ben je aan het raden — en dan haal je vroeg of laat een
+ * geldige bestandsinhoud onderuit omdat er toevallig "ontbreekt" in staat.
+ */
+const MISSING_CONTEXT_MARKER = "ONVOLDOENDE CONTEXT:";
+
+const MISSING_CONTEXT_INSTRUCTION = `Kun je dit niet schrijven omdat je iets nodig hebt wat je hierboven niet ziet staan — een type, een functiesignatuur, de inhoud van een ander bestand? Verzin het dan niet en lever ook geen half werk. Antwoord in plaats daarvan met één regel die begint met "${MISSING_CONTEXT_MARKER}", gevolgd door precies wat je mist en waarom je het nodig hebt. Dat is een geldig antwoord en telt niet als fout.`;
+
+/**
+ * Geeft de toelichting van het model terug wanneer het aangeeft iets te
+ * missen, en anders null.
+ *
+ * Alleen aan het begin van het antwoord: een marker die halverwege opduikt kan
+ * net zo goed onderdeel van de geschreven code of van een uitleg zijn.
+ */
+export function findMissingContextComplaint(answer: string): string | null {
+  const firstMeaningfulLine = answer
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line !== "");
+
+  if (!firstMeaningfulLine?.toUpperCase().startsWith(MISSING_CONTEXT_MARKER)) {
+    return null;
+  }
+
+  const explanation = firstMeaningfulLine.slice(MISSING_CONTEXT_MARKER.length).trim();
+
+  return explanation || "(het model gaf geen toelichting bij wat het mist)";
+}
+
+/**
+ * Of dit antwoord er überhaupt uitziet als de inhoud van een codebestand.
+ *
+ * Aanleiding: de terugval op volledig herschrijven schreef doodleuk een
+ * weigering in proza het bestand in. De lege-inhoudcontrole sloeg niet aan,
+ * want proza is niet leeg — het resultaat was een `.ts`-bestand met nul
+ * exports, dat pas door de importcontrole van stap 18 (deel 3) werd
+ * tegengehouden. Dat is één vangnet te laat.
+ *
+ * Bewust grof: er wordt niet gecontroleerd of de code goed is, alleen of het
+ * überhaupt code is. Eén regel die met een gangbaar sleutelwoord begint is
+ * genoeg. Alles wat daaronder zit, is vrijwel zeker een zin in plaats van een
+ * bestand.
+ */
+export function looksLikeSourceCode(path: string, content: string): boolean {
+  if (!/\.(ts|tsx|js|jsx|mjs|cjs)$/.test(path)) return true;
+
+  return /^[ \t]*(import|export|const|let|var|function|class|interface|type|enum|async|declare|\/\*|\/\/|#!|@)/m.test(
+    content,
+  );
 }
 
 type AssignmentRecord = MissionV2["assignments"][number];
@@ -749,6 +826,19 @@ async function editFileInPlace(
     usageTracker.add(completion);
     lastAnswer = completion.content;
 
+    // Zegt het model dat het iets mist, dan is dat een antwoord en geen fout.
+    // Niet herkansen en niet terugvallen: nog een keer vragen levert dezelfde
+    // terechte weigering op, en het volledige pad heeft exact hetzelfde
+    // probleem.
+    const missing = findMissingContextComplaint(completion.content);
+
+    if (missing) {
+      throw new BuilderContextError(
+        "INSUFFICIENT_CONTEXT",
+        `De Builder kon "${file.path}" niet schrijven omdat hij informatie mist: ${missing} Noem het ontbrekende bestand of type expliciet in de opdracht — bestanden die de opdracht met naam noemt worden automatisch meegestuurd (zie objective-evidence.ts).`,
+      );
+    }
+
     try {
       const content = applyEditResponse(currentContent, completion.content);
 
@@ -826,6 +916,7 @@ async function writeSingleFile(
   siblingFiles: BuilderFileChange[],
   testContext: BuilderTestContext | null,
   usesVitest: boolean,
+  objectiveEvidence: readonly ObjectiveEvidenceFile[],
 ): Promise<SingleFileWriteResult> {
   const provider = getChatProvider();
 
@@ -896,13 +987,18 @@ async function writeSingleFile(
     "- Alles wat je niet noemt blijft ongewijzigd. Je hoeft dus niets te herhalen om het te behouden.",
     "- Laat het vervangdeel leeg om het gevonden stuk te verwijderen.",
     "- Geef ALLEEN bewerkingsblokken. Geef nooit het hele bestand terug, ook niet als de wijziging klein is.",
+    MISSING_CONTEXT_INSTRUCTION,
   ];
 
   const fullContentInstructionLines = [
     "Geef de VOLLEDIGE nieuwe inhoud van dit ene bestand terug (niet alleen het verschil). Schrijf productiekwaliteit code die aansluit bij de bestaande stijl.",
     "",
     "BELANGRIJK: je antwoord IS de nieuwe bestandsinhoud, van de allereerste tot de allerlaatste regel — niets ervoor, niets erna. Geen markdown-codeblok (geen ``` eromheen), geen uitleg, geen inleidende zin zoals \"Hier is de inhoud:\", geen ===FILE===- of andere markeringen. Begin direct met de eerste regel van het bestand en stop na de laatste regel.",
+    "",
+    MISSING_CONTEXT_INSTRUCTION,
   ];
+
+  const objectiveEvidenceBlock = formatObjectiveEvidence(objectiveEvidence);
 
   const buildUserPrompt = (instructionLines: readonly string[]): string =>
     [
@@ -916,6 +1012,7 @@ async function writeSingleFile(
       "",
       `Je schrijft nu UITSLUITEND het bestand "${file.path}" (${status}).`,
       currentContentBlock,
+      objectiveEvidenceBlock,
       testContextBlock,
       "",
       ...instructionLines,
@@ -994,6 +1091,32 @@ async function writeSingleFile(
 
     throw new Error(
       `De Builder gaf geen bestandsinhoud terug voor "${file.path}": ${reasonHint}. Bekijk de terminal van "npm run dev" voor meer details.`,
+    );
+  }
+
+  const missing = findMissingContextComplaint(completion.content);
+
+  if (missing) {
+    throw new BuilderContextError(
+      "INSUFFICIENT_CONTEXT",
+      `De Builder kon "${file.path}" niet schrijven omdat hij informatie mist: ${missing} Noem het ontbrekende bestand of type expliciet in de opdracht — bestanden die de opdracht met naam noemt worden automatisch meegestuurd (zie objective-evidence.ts).`,
+    );
+  }
+
+  // Vormcontrole: een antwoord dat nergens op code lijkt, mag geen
+  // bestandsinhoud worden. Zie looksLikeSourceCode hierboven voor de live
+  // misser waaruit dit voortkomt — een weigering in proza die als `.ts`-
+  // bestand werd weggeschreven.
+  if (!looksLikeSourceCode(file.path, rawContent)) {
+    console.error(
+      [
+        `Builder-antwoord voor "${file.path}" ziet er niet uit als broncode; geweigerd.`,
+        `Ruwe antwoord van het model:\n${completion.content}`,
+      ].join("\n"),
+    );
+
+    throw new Error(
+      `Het antwoord van de Builder voor "${file.path}" ziet er niet uit als de inhoud van een codebestand — er staat geen enkele regel in die met een gangbaar sleutelwoord begint. Het antwoord is daarom niet weggeschreven. Dit gebeurt meestal wanneer het model uitleg geeft in plaats van code; het volledige antwoord staat in het serverlogboek.`,
     );
   }
 
@@ -1079,6 +1202,45 @@ async function assertImportedNamesExist(
   throw new Error(describeUnknownImports(problems));
 }
 
+/**
+ * Haalt de inhoud op van de bestanden die de opdracht met naam noemt.
+ *
+ * Bestanden die deze toewijzing zelf schrijft blijven eruit: die krijgt de
+ * Builder al als "huidige inhoud" of als sibling te zien, en ze twee keer in
+ * dezelfde prompt zetten is alleen maar verwarrend.
+ *
+ * Faalt het ophalen, dan wordt dat bestand overgeslagen en gaat de rest
+ * gewoon door — dezelfde fail-open lijn als de rest van de bewijslaag. Een
+ * missie hoort niet stil te vallen omdat één leesbestand even onbereikbaar is.
+ */
+async function gatherObjectiveEvidence(
+  target: GithubRepoTarget,
+  ref: string,
+  objectiveText: string,
+  writablePaths: readonly string[],
+  treePaths: readonly string[],
+): Promise<ObjectiveEvidenceFile[]> {
+  const mentioned = extractRepositoryPaths(objectiveText, treePaths).filter(
+    (path) => !writablePaths.includes(path),
+  );
+
+  const files: ObjectiveEvidenceFile[] = [];
+
+  for (const path of mentioned) {
+    try {
+      const file = await getFileContent(target, path, ref);
+      if (file) files.push({ path, content: file.content });
+    } catch (error) {
+      console.error(
+        `Bestand "${path}" uit de opdracht kon niet worden opgehaald; overgeslagen.`,
+        error,
+      );
+    }
+  }
+
+  return files;
+}
+
 async function writeFiles(
   mission: MissionV2,
   assignment: AssignmentRecord,
@@ -1087,6 +1249,7 @@ async function writeFiles(
   usageTracker: UsageTracker,
   testContextByPath: ReadonlyMap<string, BuilderTestContext>,
   usesVitest: boolean,
+  objectiveEvidence: readonly ObjectiveEvidenceFile[],
 ): Promise<BuilderWriteResult> {
   const files: BuilderFileChange[] = [];
   let model = "";
@@ -1106,6 +1269,7 @@ async function writeFiles(
       siblingFiles,
       testContextByPath.get(file.path) ?? null,
       usesVitest,
+      objectiveEvidence,
     );
     files.push({ path: file.path, content: written.content });
     model = written.model;
@@ -1270,6 +1434,18 @@ export async function executeBuilderAssignment({
   const treePaths = tree.filter((entry) => entry.type === "blob").map((entry) => entry.path);
   const hasWritableSources = plan.paths.some((path) => !isTestFilePath(path));
 
+  // Bestanden die de opdracht zélf noemt (14 september 2026). Zie
+  // objective-evidence.ts voor de live missie waaruit dit voortkwam: de
+  // opdracht zei "importeer het type uit <pad>", en juist dat bestand kreeg
+  // de Builder nooit te zien — waarna het model terecht weigerde te gokken.
+  const objectiveEvidence = await gatherObjectiveEvidence(
+    target,
+    missionBranch,
+    [assignment.objective, plan.planSummary].join("\n"),
+    plan.paths,
+    treePaths,
+  );
+
   const testContextByPath = new Map<string, BuilderTestContext>();
   for (const path of plan.paths.filter((candidate) => isTestFilePath(candidate))) {
     testContextByPath.set(
@@ -1303,6 +1479,7 @@ export async function executeBuilderAssignment({
     usageTracker,
     testContextByPath,
     usesVitest,
+    objectiveEvidence,
   );
 
   // Stap 18 (deel 3): vóór er ook maar iets gecommit wordt, mechanisch

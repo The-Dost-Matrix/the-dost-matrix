@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildTestContextBlock,
   ensureTrailingNewline,
+  findMissingContextComplaint,
   isTestFilePath,
+  looksLikeSourceCode,
   parsePlannedPaths,
   shouldEditInPlace,
 } from "./builder-runtime";
@@ -174,5 +176,73 @@ describe("shouldEditInPlace", () => {
   it("bewerkt een bestaand bestand vanaf de grens gericht", () => {
     expect(shouldEditInPlace("x".repeat(2_000))).toBe(true);
     expect(shouldEditInPlace("x".repeat(40_000))).toBe(true);
+  });
+});
+
+/**
+ * De twee blokken hieronder komen uit de live missie van 14 september 2026.
+ * Het model weigerde terecht te schrijven omdat het een type miste dat het
+ * nooit te zien had gekregen, maar had geen manier om dat te zeggen die wij
+ * verstonden — waarna zijn weigering als bestandsinhoud werd weggeschreven.
+ */
+describe("findMissingContextComplaint", () => {
+  it("herkent de afgesproken regel en geeft de toelichting terug", () => {
+    const antwoord = "ONVOLDOENDE CONTEXT: ik mis de definitie van MissionAdvanceOutcome.";
+
+    expect(findMissingContextComplaint(antwoord)).toBe(
+      "ik mis de definitie van MissionAdvanceOutcome.",
+    );
+  });
+
+  it("laat lege regels vóór de melding toe", () => {
+    expect(findMissingContextComplaint("\n\nONVOLDOENDE CONTEXT: geen type X")).toBe("geen type X");
+  });
+
+  it("zwijgt over gewone bestandsinhoud", () => {
+    expect(findMissingContextComplaint("export const x = 1;")).toBeNull();
+  });
+
+  /**
+   * De belangrijkste van de vier: er wordt geen weigering uit proza afgeleid.
+   * Zodra je dat doet, haal je vroeg of laat een geldig bestand onderuit
+   * omdat er toevallig het woord "ontbreekt" in staat.
+   */
+  it("leest een klacht in gewone zinnen niet als melding", () => {
+    const proza = "De definitie van MissionAdvanceOutcome ontbreekt, dus ik kan niets schrijven.";
+
+    expect(findMissingContextComplaint(proza)).toBeNull();
+  });
+
+  it("negeert de markering wanneer die pas halverwege staat", () => {
+    // Daar kan hij net zo goed onderdeel van de code of van uitleg zijn.
+    const antwoord = ["export const x = 1;", "ONVOLDOENDE CONTEXT: te laat"].join("\n");
+
+    expect(findMissingContextComplaint(antwoord)).toBeNull();
+  });
+});
+
+describe("looksLikeSourceCode", () => {
+  it("herkent gewone broncode", () => {
+    expect(looksLikeSourceCode("src/a.ts", "export const x = 1;")).toBe(true);
+    expect(looksLikeSourceCode("src/a.ts", "// alleen commentaar")).toBe(true);
+    expect(looksLikeSourceCode("src/a.tsx", "import React from 'react';")).toBe(true);
+  });
+
+  it("weigert een antwoord in proza", () => {
+    // Precies wat er live gebeurde: de weigering van het model werd als
+    // .ts-bestand weggeschreven en pas door de importcontrole gestopt.
+    const proza = [
+      "De daadwerkelijke definitie van MissionAdvanceOutcome ontbreekt.",
+      "Lever beide ontbrekende bronnen aan.",
+    ].join("\n");
+
+    expect(looksLikeSourceCode("src/domains/missions/mission-labels.ts", proza)).toBe(false);
+  });
+
+  it("bemoeit zich niet met andere bestandstypen", () => {
+    // Een markdown- of CSS-bestand heeft geen sleutelwoorden, en daar valt
+    // dus niets zinnigs over te zeggen.
+    expect(looksLikeSourceCode("docs/notitie.md", "Gewoon een zin.")).toBe(true);
+    expect(looksLikeSourceCode("src/app/globals.css", "body { color: red; }")).toBe(true);
   });
 });
