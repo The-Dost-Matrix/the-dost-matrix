@@ -1,4 +1,4 @@
-import type { MissionRiskLevel, MissionV2 } from "@/core/mission-engine/v2/mission";
+import type { AssignmentStatus, MissionRiskLevel, MissionV2 } from "@/core/mission-engine/v2/mission";
 
 /**
  * Pure labelfuncties, los van elk paneel. Stonden eerder als lokale functies
@@ -18,6 +18,18 @@ export function missionStatusLabel(status: MissionV2["status"]): string {
     PAUSED: "Gepauzeerd",
     COMPLETED: "Voltooid",
     FAILED: "Mislukt",
+    CANCELLED: "Geannuleerd",
+  };
+
+  return labels[status] ?? status;
+}
+
+export function assignmentStatusLabel(status: AssignmentStatus): string {
+  const labels: Record<AssignmentStatus, string> = {
+    ACTIVE: "Actief",
+    COMPLETED: "Afgerond",
+    FAILED: "Mislukt",
+    WAITING_FOR_INPUT: "Wacht op jouw input",
     CANCELLED: "Geannuleerd",
   };
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 
 import {
   MISSION_STATUSES,
+  type AssignmentStatus,
   type MissionBudget,
   type MissionRiskLevel,
   type MissionV2,
@@ -9,6 +10,7 @@ import {
 
 import {
   RISK_LEVELS,
+  assignmentStatusLabel,
   formatMissionCost,
   missionStatusLabel,
   riskLevelLabel,
@@ -50,6 +52,34 @@ describe("missionStatusLabel", () => {
       expect(typeof label).toBe("string");
       expect(label.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("assignmentStatusLabel", () => {
+  it("geeft Actief terug voor ACTIVE", () => {
+    expect(assignmentStatusLabel("ACTIVE")).toBe("Actief");
+  });
+
+  it("geeft Afgerond terug voor COMPLETED", () => {
+    expect(assignmentStatusLabel("COMPLETED")).toBe("Afgerond");
+  });
+
+  it("geeft Mislukt terug voor FAILED", () => {
+    expect(assignmentStatusLabel("FAILED")).toBe("Mislukt");
+  });
+
+  it("geeft Wacht op jouw input terug voor WAITING_FOR_INPUT", () => {
+    expect(assignmentStatusLabel("WAITING_FOR_INPUT")).toBe("Wacht op jouw input");
+  });
+
+  it("geeft Geannuleerd terug voor CANCELLED", () => {
+    expect(assignmentStatusLabel("CANCELLED")).toBe("Geannuleerd");
+  });
+
+  it("geeft een onbekende status ongewijzigd terug", () => {
+    const status = "DRAFT" as AssignmentStatus;
+
+    expect(assignmentStatusLabel(status)).toBe(status);
   });
 });
 
