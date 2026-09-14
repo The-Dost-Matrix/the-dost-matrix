@@ -48,6 +48,43 @@ import { executeRoleAssignment } from "./role-runtime";
  * de CI nog loopt) betekent "deze missie kan nu niet verder", niet "de hele
  * nachtelijke run is mislukt" — de andere missies van Elroy moeten gewoon
  * doorgaan.
+ *
+ * WAAROM DEZE LUS STOPT NA EEN BUILDER-STAP (14 september 2026)
+ *
+ * Gevonden bij het uitwerken van stap 18 (deel 4). De CI-poort van dit
+ * project was op papier dicht: QA weigert te oordelen zolang checks nog
+ * lopen (`state === "pending"`, zie qa-runtime.ts) en de Director weigert te
+ * mergen bij een rode CI (`planMissionRepair` in director-runtime.ts). In de
+ * autonome lus hieronder stond hij in de praktijk toch open, en wel door een
+ * race die geen van beide controles kón zien.
+ *
+ * Deze lus doet tot 25 stappen binnen één aanroep, achter elkaar. De Builder
+ * schrijft bestanden, commit ze en opent de pull request — en een paar
+ * seconden later beslist de Director alweer wat er daarna moet gebeuren.
+ * GitHub heeft op dat moment nog geen enkele check-run voor die commit
+ * geregistreerd. `getCombinedCheckStatus` geeft dan niet "pending" terug
+ * maar "none" (total_count === 0), en "none" betekent daar bewust "deze
+ * repository heeft geen CI" — een toestand die nooit mag blokkeren, anders
+ * zou een missie in een repository zónder CI nooit meer kunnen afronden.
+ *
+ * Het gevolg: QA beoordeelde code die nog nooit gecompileerd was, en kon
+ * alle succescriteria op GEHAALD zetten. De merge-poort ving dat verderop
+ * alsnog af, dus er is nooit iets kapots gemerged — maar er ging wel elke
+ * keer een volledige QA-ronde verloren, en in het missiepaneel stond
+ * ondertussen "alle criteria GEHAALD" op werk dat de typecheck nog moest
+ * doorstaan. Precies het beeld waar `getCombinedCheckStatus` ooit voor
+ * gebouwd is, terug via een achterdeur.
+ *
+ * De oplossing is niet nóg een controle maar een pauze: na een
+ * builder-toewijzing stopt deze lus met deze missie en laat de volgende tik
+ * (~10 minuten later) het werk oppakken. Tegen die tijd heeft GitHub de
+ * check-run wél geregistreerd en afgerond, en werken alle bestaande
+ * controles zoals ze bedoeld zijn — "none" betekent dan weer wat het hoort
+ * te betekenen.
+ *
+ * De prijs is één extra tik per builder-stap. Bij een missie met twee
+ * builder-stappen is dat 's nachts twintig minuten extra, tegen een
+ * bespaarde QA-ronde per keer. Dat is geen afweging maar winst.
  */
 
 const DEFAULT_MAX_MISSIONS = 20;
@@ -75,6 +112,7 @@ export interface MissionAdvanceOutcome {
     | "TERMINAL_OR_WAITING_STATUS"
     | "STEP_LIMIT_REACHED"
     | "DEADLINE_REACHED"
+    | "WAITING_FOR_CI"
     | "DIRECTOR_ERROR";
   /** Bij DIRECTOR_ERROR: de foutcode/boodschap, voor in de logs. */
   errorCode?: string;
@@ -102,6 +140,35 @@ function resolveActiveAssignmentId(mission: MissionV2): string | null {
   // net als de "auto-step"-actie in de API vanuit het dashboard doet.
   return mission.activeAssignmentIds[mission.activeAssignmentIds.length - 1];
 }
+
+/**
+ * De rol van een toewijzing, of null wanneer die niet gevonden wordt.
+ *
+ * Wordt opgezocht vóór het uitvoeren, niet erna: `executeRoleAssignment`
+ * geeft een bijgewerkte missie terug waarin de toewijzing al is afgerond, en
+ * een afgeronde toewijzing is een minder betrouwbaar aanknopingspunt dan de
+ * stand van vlak ervoor.
+ *
+ * De `Array.isArray`-controle is er voor missies die hier zonder
+ * toewijzingenlijst binnenkomen (oudere documenten, testdubbels). Onbekend
+ * telt dan als "geen builder" en dus als "niet pauzeren" — fail-open, in lijn
+ * met de rest van dit bestand: bij twijfel doorgaan met minder zekerheid
+ * liever dan een missie laten stilvallen op een ontbrekend veld.
+ */
+function findAssignmentRoleId(mission: MissionV2, assignmentId: string): string | null {
+  if (!Array.isArray(mission.assignments)) return null;
+
+  return (
+    mission.assignments.find((assignment) => assignment.assignmentId === assignmentId)?.roleId ??
+    null
+  );
+}
+
+/**
+ * De rol die code schrijft en commit. Zie role-runtime.ts, waar dezelfde
+ * letterlijke waarde bepaalt welke runtime een toewijzing uitvoert.
+ */
+const BUILDER_ROLE_ID = "builder";
 
 async function advanceSingleMission(
   mission: MissionV2,
@@ -141,6 +208,8 @@ async function advanceSingleMission(
         const assignmentId = resolveActiveAssignmentId(current);
         if (!assignmentId) break;
 
+        const roleId = findAssignmentRoleId(current, assignmentId);
+
         const { mission: afterRole } = await executeRoleAssignment({
           engine,
           missionId: current.missionId,
@@ -148,6 +217,18 @@ async function advanceSingleMission(
         });
         current = afterRole;
         steps += 1;
+
+        if (roleId === BUILDER_ROLE_ID) {
+          return {
+            missionId: mission.missionId,
+            title: mission.title,
+            startStatus,
+            endStatus: current.status,
+            stepsTaken: steps,
+            stoppedReason: "WAITING_FOR_CI",
+          };
+        }
+
         continue;
       }
 
@@ -155,6 +236,8 @@ async function advanceSingleMission(
         const assignmentId = resolveActiveAssignmentId(current);
         if (!assignmentId) break;
 
+        const roleId = findAssignmentRoleId(current, assignmentId);
+
         const { mission: afterRole } = await executeRoleAssignment({
           engine,
           missionId: current.missionId,
@@ -162,6 +245,18 @@ async function advanceSingleMission(
         });
         current = afterRole;
         steps += 1;
+
+        if (roleId === BUILDER_ROLE_ID) {
+          return {
+            missionId: mission.missionId,
+            title: mission.title,
+            startStatus,
+            endStatus: current.status,
+            stepsTaken: steps,
+            stoppedReason: "WAITING_FOR_CI",
+          };
+        }
+
         continue;
       }
 

@@ -1063,6 +1063,73 @@ vóórdat de Director een nieuw besluit mag nemen. Bij een klein punt is
 zelf-mergen prima, maar bij een terecht bezwaar dat wél gerepareerd moet
 worden, bestaat die route nu niet.
 
+### De CI-poort stond open door een race — 14 september 2026
+
+Gevonden bij het uitwerken van stap 18 (deel 4), en de reden dat die stap
+kleiner uitviel dan gepland: het echte gat zat niet in wat er ontbrak, maar in
+wat er al was en niet werkte.
+
+Op papier was de CI-poort dicht. QA weigert te oordelen zolang checks nog lopen
+(`state === "pending"`, qa-runtime.ts), de Director weigert te mergen bij een
+rode CI (`planMissionRepair`, director-runtime.ts), en de technische herstellus
+(stap 11) stuurt de Builder terug met de échte foutmelding. Drie controles,
+allemaal aanwezig, allemaal getest.
+
+In de autonome lus stond hij toch open. `advanceSingleMission` doet tot 25
+stappen in één aanroep, achter elkaar. De Builder committeerde en opende de
+pull request, en een paar seconden later nam de Director alweer het volgende
+besluit — op een moment dat GitHub nog geen enkele check-run voor die commit
+had geregistreerd. `getCombinedCheckStatus` geeft dan niet "pending" terug maar
+"none", en "none" betekent daar bewust "deze repository heeft geen CI", een
+toestand die nooit mag blokkeren.
+
+Het gevolg: QA beoordeelde code die nog nooit gecompileerd was, en kon alles op
+GEHAALD zetten. De merge-poort ving het verderop alsnog af, dus er is nooit
+iets kapots gemerged — maar elke keer ging er een volledige QA-ronde verloren,
+en in het missiepaneel stond ondertussen "alle criteria GEHAALD" op werk dat de
+typecheck nog moest doorstaan. Precies het beeld waar `getCombinedCheckStatus`
+ooit voor gebouwd is, terug via een achterdeur.
+
+De oplossing is geen vierde controle maar een pauze: na een builder-toewijzing
+stopt de lus met die missie en pakt de volgende tik het op. Tegen die tijd
+heeft GitHub de check-run geregistreerd en afgerond, en werken de drie
+bestaande controles zoals ze bedoeld zijn. Kosten: één extra tik per
+builder-stap.
+
+**De les, breder dan deze bug.** Alle drie de controles waren correct
+geschreven en alle drie waren getest. Wat niemand had getest, was de volgorde
+waarin ze in de autonome lus achter elkaar komen te staan. Een controle die
+"nog onbekend" niet kan onderscheiden van "niet van toepassing", is geen
+controle zodra iets hem snel genoeg passeert.
+
+### Repository op publiek — 14 september 2026
+
+Elroy heeft `The-Dost-Matrix/the-dost-matrix` van privé naar publiek gezet. De
+aanleiding was rekenwerk, niet openheid: de tienminuten-tik van
+`advance-missions.yml` is 144 runs per dag, en GitHub rondt elke job af naar
+boven op een hele minuut. Dat is ~4.300 minuten per maand tegen 2.000
+inbegrepen op het gratis plan. Halverwege elke maand zou Actions stilvallen —
+en daarmee niet alleen de nachtelijke tik, maar ook de CI waar de merge-poort
+hierboven volledig op steunt. Een besparing die het systeem blokkeert is geen
+besparing.
+
+Voor publieke repositories zijn Actions-minuten op standaard runners
+onbeperkt gratis. Daarmee vervalt het plafond, blijft de tik op tien minuten
+staan, en kosten extra CI-runs (de pauze hierboven, en alles wat later nog
+komt) niets.
+
+Vooraf gecontroleerd: `.env.local` staat in `.gitignore`, er staan geen
+e-mailadressen of bedrijfsgegevens in `docs/` of `src/`, en Elroy heeft
+geverifieerd dat er nooit een sleutelbestand in de Git-geschiedenis heeft
+gestaan. Wat wél openbaar is geworden: de architectuur, deze roadmap, en de
+Actions-logs (waarin GitHub geregistreerde secrets automatisch maskeert).
+
+Er is bewust **geen** `LICENSE`-bestand toegevoegd. Zonder licentie geldt de
+standaard — alle rechten voorbehouden — en dat is restrictiever dan elke
+open-source licentie die gekozen zou kunnen worden. Publiek betekent hier
+leesbaar, niet vrij te gebruiken. Wordt dit ooit alsnog gewenst, dan kan een
+licentie op elk moment worden toegevoegd; het auteursrecht blijft bij Elroy.
+
 ## Restpunten
 
 Kleine dingen die bij een grotere stap zijn gesignaleerd en bewust zijn
@@ -1234,8 +1301,32 @@ plaats van door het model beter te informeren — een tweede net onder het eerst
 **Deel 4 — lees-/zoektools.** De grootste ingreep die er van deze hele stap nog
 ligt. De Builder kan op dit moment niets uitvoeren: hij schrijft blind en hoort
 pas via de CI of het klopt, en dat is de enige reden dat de technische
-herstellus (stap 11) bestaat. Een tool die typecheck en tests draait vóór de
-commit haalt de grond onder die hele lus vandaan.
+herstellus (stap 11) bestaat.
+
+> **Correctie, 14 september 2026.** Hieronder stond dat "een tool die typecheck
+> en tests draait vóór de commit de grond onder die hele lus vandaan haalt".
+> Dat klopt niet, en het is twee keer mis.
+>
+> Ten eerste kán het niet op deze infrastructuur. De Matrix draait op Vercel als
+> serverless functie: geen checkout van de repository, geen `node_modules`, geen
+> manier om `npm test` uit te voeren, en een harde limiet van 300 seconden. Een
+> echte uitvoeromgeving vraagt een machine die minuten mag draaien. Die is er al
+> — dat is GitHub Actions, waar `ci.yml` precies dit al doet. Een tweede,
+> gehuurde sandbox (E2B, Modal en dergelijke) zou een nieuw account, een nieuwe
+> sleutel en een nieuwe storingsbron toevoegen naast een testomgeving die al
+> bestaat en al vertrouwd wordt. Afgewezen, tenzij ooit blijkt dat de Builder
+> écht vrije commando's nodig heeft in plaats van het vaste CI-script. Een
+> self-hosted runner op Elroy's pc is om een andere reden afgewezen: die laat
+> GitHub code uitvoeren op zijn machine, en dat botst met het principe dat
+> agents via GitHub werken en nooit rechtstreeks aan zijn schijf komen.
+>
+> Ten tweede haalt het de lus niet weg. Een model dat iets fout schrijft, blijft
+> iets fout schrijven. Wat vroeger verifiëren wél doet, is de fout goedkoper
+> maken: falen op een wegwerp-commit in plaats van op een pull request waar QA
+> en Elroy al naar zitten te kijken.
+>
+> De lees-/zoektools zijn daarmee wat er van deel 4 overblijft, en die hebben
+> geen sandbox nodig — alleen function calling in de `LlmProvider`-interface.
 
 De prijs: de `LlmProvider`-interface moet uitgebreid worden met function
 calling, en dat werkt per aanbieder verschillend. Elke tool-aanroep is bovendien
@@ -1259,8 +1350,9 @@ Concreet zou het deze dingen in deze codebase raken:
 
 - De Builder kan nu **niets uitvoeren**. Hij schrijft blind en hoort pas via
   de CI of het klopt — dat is de enige reden dat de technische herstellus
-  (stap 11) bestaat. Een tool die typecheck en tests draait vóór de commit
-  haalt de grond onder die hele lus vandaan.
+  (stap 11) bestaat. (Zie de correctie hierboven: de uitvoeromgeving die dit
+  zou oplossen bestaat al in de vorm van GitHub Actions, en een tool die
+  "vóór de commit" verifieert kan op Vercel niet bestaan.)
 - De bewijslaag gaat **één laag diep** (module onder test plus directe
   imports, maximaal acht bestanden). Criterium C — een module via een
   barrel-export of alias — is precies daarom naar deze stap doorgeschoven.
