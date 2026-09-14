@@ -27,10 +27,16 @@ import {
   findModuleUnderTest,
   refineEvidenceImports,
   resolveDirectImports,
+  resolveImportSpecifier,
   selectEvidenceWithinBudget,
   type EvidenceFile,
   type EvidenceSelection,
 } from "./context-resolver";
+import {
+  describeUnknownImports,
+  extractNamedImports,
+  findUnknownImports,
+} from "./export-check";
 import {
   applyEditResponse,
   EDIT_BLOCK_FORMAT,
@@ -945,6 +951,85 @@ async function writeSingleFile(
   return { content: ensureTrailingNewline(rawContent), model: completion.model };
 }
 
+/**
+ * Hoeveel bestanden er hooguit worden opgehaald om de importcontrole te doen.
+ *
+ * Een toewijzing raakt hooguit acht bestanden, en die importeren er samen
+ * zelden meer dan een handvol. De grens staat er voor het uitzonderlijke
+ * geval: een controle die zichzelf tot tientallen GitHub-aanroepen uitbreidt,
+ * kost meer dan hij waard is. Wordt de grens geraakt, dan worden de
+ * overgebleven imports simpelweg niet gecontroleerd — zwijgen bij twijfel,
+ * zoals de rest van export-check.ts.
+ */
+const MAX_IMPORT_CHECK_FETCHES = 20;
+
+/**
+ * Stap 18 (deel 3): weigert door te gaan wanneer de zojuist geschreven code
+ * een naam importeert die nergens geëxporteerd wordt.
+ *
+ * Draait vóór de commit, dus bij een probleem is er nog niets naar GitHub
+ * geschreven. De toewijzing faalt dan met een melding die zegt wat er niet
+ * bestaat én wat er wél is — precies wat de herstellus nodig heeft om een
+ * gerichte tweede poging te doen, in plaats van dezelfde opdracht nog eens.
+ *
+ * De nieuw geschreven inhoud gaat vóór op wat er in de repository staat. Een
+ * testbestand dat een functie importeert die in dezelfde toewijzing pas wordt
+ * aangemaakt, hoort niet te struikelen over het feit dat die functie nog niet
+ * gemerged is.
+ */
+async function assertImportedNamesExist(
+  target: GithubRepoTarget,
+  ref: string,
+  treePaths: readonly string[],
+  writtenFiles: readonly BuilderFileChange[],
+): Promise<void> {
+  const sources = new Map<string, string>();
+  for (const file of writtenFiles) {
+    sources.set(file.path, file.content);
+  }
+
+  const resolve = (fromPath: string, specifier: string) =>
+    resolveImportSpecifier(fromPath, specifier, treePaths);
+
+  // Eerst verzamelen wat er nog ontbreekt, dan pas ophalen: zo blijft het
+  // aantal GitHub-aanroepen begrensd en voorspelbaar.
+  const needed = new Set<string>();
+
+  for (const file of writtenFiles) {
+    for (const imported of extractNamedImports(file.content)) {
+      const targetPath = resolve(file.path, imported.specifier);
+      if (targetPath && !sources.has(targetPath)) needed.add(targetPath);
+    }
+  }
+
+  for (const path of Array.from(needed).slice(0, MAX_IMPORT_CHECK_FETCHES)) {
+    try {
+      const existing = await getFileContent(target, path, ref);
+      if (existing) sources.set(path, existing.content);
+    } catch {
+      // Niet kunnen ophalen is geen bewijs van een fout. Dit bestand wordt
+      // dan gewoon niet gecontroleerd.
+    }
+  }
+
+  const problems = writtenFiles.flatMap((file) =>
+    findUnknownImports({
+      path: file.path,
+      source: file.content,
+      resolve,
+      readSource: (path) => sources.get(path) ?? null,
+    }),
+  );
+
+  if (problems.length === 0) return;
+
+  console.error(
+    ["Importcontrole afgekeurd vóór commit.", describeUnknownImports(problems)].join("\n"),
+  );
+
+  throw new Error(describeUnknownImports(problems));
+}
+
 async function writeFiles(
   mission: MissionV2,
   assignment: AssignmentRecord,
@@ -1170,6 +1255,12 @@ export async function executeBuilderAssignment({
     testContextByPath,
     usesVitest,
   );
+
+  // Stap 18 (deel 3): vóór er ook maar iets gecommit wordt, mechanisch
+  // nalopen of elke geïmporteerde naam werkelijk bestaat. Zie export-check.ts
+  // voor waarom dit er is (een live misser met drie verzonnen imports) en
+  // waarom het bij elke twijfel zwijgt in plaats van blokkeert.
+  await assertImportedNamesExist(target, missionBranch, treePaths, writeResult.files);
 
   // Alleen bestanden schrijven die ook echt gepland waren — voorkomt dat de
   // tweede LLM-aanroep alsnog een bestand buiten de lijst van planFiles()
