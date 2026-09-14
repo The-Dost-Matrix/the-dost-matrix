@@ -927,8 +927,78 @@ ook iets inhoudelijks, dan blijft het gewoon bewijs. Het contextmanifest noemt
 bij een vervangen barrel beide paden, want de Builder ziet de inhoud van het
 doelbestand terwijl de rest van de codebase via de barrel importeert.
 
-Nog niet gebouwd, in deze volgorde: patch-gebaseerd schrijven, daarna function
-calling. Zie stap 18 onder "Voorgestelde volgende stappen".
+### Stap 18 (deel 2) — Gericht bewerken in plaats van overtypen
+Live bewezen op 14 september 2026 met de missie "Voeg assignmentStatusLabel toe
+aan mission-labels" (PR #60).
+
+De Builder schreef een bestand tot deze stap door de VOLLEDIGE nieuwe inhoud
+terug te geven, ook als er drie regels veranderden. Twee kosten, allebei
+meegroeiend met de bestandsgrootte. De ene is geld en tijd. De andere is erger,
+want stil: bij het overtypen van een lang bestand kan er onderweg iets
+verdwijnen zonder enig signaal — precies wat met globals.css gebeurde. QA ving
+dat toen af, maar dat was geluk, geen garantie.
+
+Sinds deze stap wordt een BESTAAND bestand vanaf 2.000 tekens gericht bewerkt
+(zie patch-edit.ts): de Builder zegt niet meer "dit is het hele bestand" maar
+"vervang precies dit stuk door dat stuk". Wat hij niet noemt, blijft per
+definitie staan. Nieuwe en kleine bestanden gaan ongewijzigd via het bestaande
+pad — dat draait al maanden en daar viel niets te winnen.
+
+Waarom zoeken-en-vervangen en geen unified diff: een echte diff vraagt van het
+model dat het regels telt, en een diff met verkeerde regelnummers is precies het
+soort fout dat je alsnog "ergens" toepast. Letterlijke tekst vraagt geen
+telwerk.
+
+Drie regels die niet onderhandelbaar zijn. Een zoekfragment moet exact één keer
+voorkomen — nul keer betekent dat het model iets citeert wat er niet staat, meer
+dan één keer betekent dat "dan maar de eerste" raden zou zijn. Alles of niets:
+mislukt één blok, dan wordt er geen enkel blok toegepast, want een half bewerkt
+bestand ziet er compleet uit. En een bewerking die het bestand zou leegmaken
+wordt geweigerd.
+
+Eén herkansing binnen dezelfde aanroep, met de precieze foutmelding erbij. Een
+spatie te veel is zo rechtgezet, en dat scheelt een hele oplever-ronde. Blijft
+het misgaan, dan faalt de toewijzing en komt hij via de gewone herstellus terug,
+waar het zichtbaar is.
+
+**Bewijs uit de live test.** De diff op `mission-labels.ts` was +13 −1: dertien
+toegevoegde regels, en als enige rode regel de type-import die werd uitgebreid.
+QA bevestigde het criterium letterlijk: "De diff van mission-labels.ts wijzigt
+uitsluitend de type-import en voegt assignmentStatusLabel toe. missionStatusLabel,
+formatMissionCost, riskLevelLabel en RISK_LEVELS blijven volledig ongewijzigd."
+Vóór deze stap had de Builder alle 55 regels van dat bestand opnieuw uitgetypt.
+
+Let op bij het beoordelen: de diff bewijst niet DAT er gericht bewerkt is (een
+trouwe overtyping geeft dezelfde diff), maar wel dat er niets verdwenen is. Dát
+het nieuwe pad liep, volgt uit iets anders: boven de 2.000 tekens bestaat er
+geen terugval meer naar overtypen.
+
+### Stap 18 — de hele stap, en wat er nog open staat
+Deel 1 (13 september) en deel 2 (14 september) staan hierboven. Van de
+oorspronkelijke stap 18 rest nog één ding: begrensde lees-/zoektools voor de
+Builder, zodat hij typecheck en tests kan draaien vóór hij commit. Dat vraagt
+uitbreiding van de `LlmProvider`-interface met function calling, wat per
+aanbieder verschilt — zie stap 18 onder "Voorgestelde volgende stappen".
+
+Tekenend voor waarom dat deel bestaat: in zijn eigen PR-commentaar bij #60
+schreef de Builder uit zichzelf dat hij de testuitvoering en de diff niet kon
+verifiëren. Hij schrijft blind en hoort pas via de CI of het klopt. Dat hij die
+beperking zelf benoemt in plaats van te doen alsof hij gecontroleerd heeft, is
+precies de eerlijkheid die de rest van dit systeem ook aanhoudt — maar het
+blijft een beperking.
+
+### Eerste volledig autonome afronding — 14 september 2026
+Bij PR #60 liep de hele keten voor het eerst van begin tot eind zonder
+tussenkomst: Director, Builder, QA, en daarna een geautomatiseerde signoff die
+de pull request zélf goedkeurde en zélf mergede. De missie kwam op VOLTOOID
+zonder dat de eigenaar GitHub had aangeraakt.
+
+Het verschil met de dag ervoor is leerzaam. Bij PR #59 escaleerde diezelfde
+signoff, met twee argumenten die allebei klopten. Nu keurde hij goed. Dezelfde
+code, dezelfde discipline — het verschil zat in de opdracht: bij #60 lagen de
+randgevallen vooraf vast, bij #59 niet. De kwaliteit van de missieopdracht
+bepaalt dus of de keten autonoom kan doorlopen, niet de strengheid van de
+beoordelaar.
 
 ### Stap 24 — LLM-provider request-scoped, wisselbaar vanuit de app
 Live bevestigd op 13 september 2026.
@@ -1132,18 +1202,21 @@ QA.
 verplaatst naar "Voltooid" hierboven. Het eerste deel van stap 18 is
 in dezelfde missie meegetest en staat daar ook.)
 
-### Stap 18 — Geavanceerde context en tools voor de Builder
-(voorheen stap 16) Pas na bewezen behoefte: begrensde lees-/zoektools voor
-de Builder (vereist uitbreiding van de `LlmProvider`-interface met function
-calling, per aanbieder verschillend), patch-gebaseerd schrijven in plaats
-van hele bestanden herschrijven, en een deterministische signatuurcontrole
-als extra verdediging.
+### Stap 18 (deel 3) — Tools waarmee de Builder zelf kan verifiëren
+(voorheen stap 16) Wat er van stap 18 nog open staat: begrensde lees-/zoektools
+voor de Builder, plus een deterministische signatuurcontrole als extra
+verdediging. Vereist uitbreiding van de `LlmProvider`-interface met function
+calling, en dat werkt per aanbieder verschillend.
 
-**Deel 1 (barrel- en typeresolutie) is af** — 13 september 2026, zie
-"Voltooid" hierboven. Wat hier nog staat zijn de twee zwaardere delen. Elroy
-heeft op 13 september gekozen voor deze volgorde: eerst de context slimmer
-maken (geen providerwijziging, laagste risico), daarna pas patch-gebaseerd
-schrijven, en function calling als laatste.
+**Deel 1 en deel 2 zijn af** — 13 en 14 september 2026, zie "Voltooid"
+hierboven. Elroy koos op 13 september voor deze volgorde: eerst de context
+slimmer maken (geen providerwijziging, laagste risico), daarna gericht bewerken,
+en function calling als laatste omdat dat de grootste ingreep is.
+
+Waarom dit deel er nog toe doet: de Builder kan op dit moment niets uitvoeren.
+Hij schrijft blind en hoort pas via de CI of het klopt — dat is de enige reden
+dat de technische herstellus (stap 11) bestaat. Een tool die typecheck en tests
+draait vóór de commit haalt de grond onder die hele lus vandaan.
 
 **Overweging: MCP als vorm voor die tools (7 september 2026).** MCP (Model
 Context Protocol) is de open standaard voor de koppeling tussen een model en
