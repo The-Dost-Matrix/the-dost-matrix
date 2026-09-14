@@ -59,6 +59,55 @@ describe("parseEditBlocks", () => {
     ]);
   });
 
+  /**
+   * De vier tests hieronder komen uit een live missie die vier pogingen
+   * achter elkaar strandde op "het antwoord bevat geen enkel bewerkingsblok"
+   * (14 september 2026), op een bestand waar de missie ervóór wél in slaagde.
+   * Alle vier beschrijven ze een antwoord dat inhoudelijk prima is en alleen
+   * op de vorm van de markering afweek.
+   */
+  it("accepteert de Engelse markeringen waar modellen op getraind zijn", () => {
+    const response = ["<<<<<<< SEARCH", "oud", "=======", "nieuw", ">>>>>>> REPLACE"].join("\n");
+
+    expect(parseEditBlocks(response)).toEqual([{ search: "oud", replace: "nieuw" }]);
+  });
+
+  it("accepteert ingesprongen markeringen", () => {
+    // Gebeurt zodra het model zijn antwoord in een codeblok zet.
+    const response = ["   <<<<<<< ZOEK", "oud", "   =======", "nieuw", "   >>>>>>> VERVANG"].join(
+      "\n",
+    );
+
+    expect(parseEditBlocks(response)).toEqual([{ search: "oud", replace: "nieuw" }]);
+  });
+
+  it("let niet op hoofdletters in het markeringswoord", () => {
+    const response = ["<<<<<<< zoek", "oud", "=======", "nieuw", ">>>>>>> Vervang"].join("\n");
+
+    expect(parseEditBlocks(response)).toEqual([{ search: "oud", replace: "nieuw" }]);
+  });
+
+  /**
+   * De tegenhanger van die soepelheid: de scheidingsregel blijft streng. Zou
+   * een regel als `// ===== sectie =====` ook als scheiding tellen, dan hakt
+   * een commentaarbalk midden in een zoekfragment het blok in tweeën — en dan
+   * gaat er iets stuk dat er wél goed uitzag.
+   */
+  it("ziet een commentaarbalk niet aan voor de scheidingsregel", () => {
+    const response = [
+      "<<<<<<< ZOEK",
+      "// ===== sectie =====",
+      "const b = 2;",
+      "=======",
+      "const b = 99;",
+      ">>>>>>> VERVANG",
+    ].join("\n");
+
+    expect(parseEditBlocks(response)).toEqual([
+      { search: "// ===== sectie =====\nconst b = 2;", replace: "const b = 99;" },
+    ]);
+  });
+
   it("negeert tekst buiten de blokken", () => {
     // Modellen schrijven graag een inleidende zin. In de hele-bestand-modus
     // belandt die ín het bestand; hier kan hij geen kwaad, dus streng zijn zou

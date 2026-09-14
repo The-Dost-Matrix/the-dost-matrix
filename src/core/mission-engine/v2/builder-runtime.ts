@@ -696,10 +696,24 @@ export function ensureTrailingNewline(content: string): string {
  * testen, committen en pushen.
  *
  * Eén herkansing, niet meer. Blijft het misgaan, dan klopt er iets
- * structureels niet en hoort de toewijzing te falen via de gewone herstellus,
- * waar het zichtbaar is — in plaats van dat dit hier blijft doorproberen tot
- * het toevallig lukt.
+ * structureels niet en heeft nóg een poging met dezelfde methode geen zin —
+ * dan valt de aanroeper terug op het volledige pad (zie
+ * `EditNotAppliedError` hieronder).
  */
+/**
+ * De gerichte bewerking is niet toegepast gekregen. Een eigen foutsoort, en
+ * niet zomaar een Error: alleen híérop mag de aanroeper terugvallen op het
+ * volledige pad. Andere fouten uit `editFileInPlace` — zoals de weigering om
+ * een bestand leeg te maken — zijn inhoudelijke bezwaren en horen gewoon door
+ * te slaan.
+ */
+export class EditNotAppliedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EditNotAppliedError";
+  }
+}
+
 async function editFileInPlace(
   mission: MissionV2,
   file: PlannedFile,
@@ -769,7 +783,7 @@ async function editFileInPlace(
     }
   }
 
-  throw new Error(
+  throw new EditNotAppliedError(
     `De Builder kreeg de bewerking van "${file.path}" na ${MAX_EDIT_ATTEMPTS} pogingen niet toegepast. Laatste reden: ${lastFailure?.message ?? "onbekend"} Bekijk de terminal van "npm run dev" voor het volledige antwoord.`,
   );
 }
@@ -870,57 +884,92 @@ async function writeSingleFile(
   // hierboven voor waarom er een grens zit, en patch-edit.ts voor het formaat.
   const editInPlace = shouldEditInPlace(file.currentContent);
 
-  const instructionLines = editInPlace
-    ? [
-        "Dit bestand bestaat al en is te groot om verantwoord over te typen. Geef daarom NIET de volledige inhoud terug, maar uitsluitend de plekken die veranderen, als één of meer bewerkingsblokken in exact dit formaat:",
-        "",
-        EDIT_BLOCK_FORMAT,
-        "",
-        "Regels die strikt gelden:",
-        "- Neem de zoektekst LETTERLIJK over uit de huidige inhoud hierboven, inclusief inspringing, aanhalingstekens en leestekens. Wijkt er één teken af, dan mislukt de bewerking.",
-        "- Kies de zoektekst zó dat hij precies één keer in het bestand voorkomt. Is een regel niet uniek, neem er dan omliggende regels bij tot het geheel uniek is.",
-        "- Gebruik meerdere blokken wanneer je op meerdere plekken iets wijzigt; ze worden op volgorde toegepast.",
-        "- Alles wat je niet noemt blijft ongewijzigd. Je hoeft dus niets te herhalen om het te behouden.",
-        "- Laat het vervangdeel leeg om het gevonden stuk te verwijderen.",
-      ]
-    : [
-        "Geef de VOLLEDIGE nieuwe inhoud van dit ene bestand terug (niet alleen het verschil). Schrijf productiekwaliteit code die aansluit bij de bestaande stijl.",
-        "",
-        "BELANGRIJK: je antwoord IS de nieuwe bestandsinhoud, van de allereerste tot de allerlaatste regel — niets ervoor, niets erna. Geen markdown-codeblok (geen ``` eromheen), geen uitleg, geen inleidende zin zoals \"Hier is de inhoud:\", geen ===FILE===- of andere markeringen. Begin direct met de eerste regel van het bestand en stop na de laatste regel.",
-      ];
+  const editInstructionLines = [
+    "Dit bestand bestaat al en is te groot om verantwoord over te typen. Geef daarom NIET de volledige inhoud terug, maar uitsluitend de plekken die veranderen, als één of meer bewerkingsblokken in exact dit formaat:",
+    "",
+    EDIT_BLOCK_FORMAT,
+    "",
+    "Regels die strikt gelden:",
+    "- Neem de zoektekst LETTERLIJK over uit de huidige inhoud hierboven, inclusief inspringing, aanhalingstekens en leestekens. Wijkt er één teken af, dan mislukt de bewerking.",
+    "- Kies de zoektekst zó dat hij precies één keer in het bestand voorkomt. Is een regel niet uniek, neem er dan omliggende regels bij tot het geheel uniek is.",
+    "- Gebruik meerdere blokken wanneer je op meerdere plekken iets wijzigt; ze worden op volgorde toegepast.",
+    "- Alles wat je niet noemt blijft ongewijzigd. Je hoeft dus niets te herhalen om het te behouden.",
+    "- Laat het vervangdeel leeg om het gevonden stuk te verwijderen.",
+    "- Geef ALLEEN bewerkingsblokken. Geef nooit het hele bestand terug, ook niet als de wijziging klein is.",
+  ];
 
-  const userPrompt = [
-    manifestBlock,
-    buildAssignmentDescription(mission, assignment),
+  const fullContentInstructionLines = [
+    "Geef de VOLLEDIGE nieuwe inhoud van dit ene bestand terug (niet alleen het verschil). Schrijf productiekwaliteit code die aansluit bij de bestaande stijl.",
     "",
-    `Jouw plan: ${plan.planSummary}`,
-    otherPaths.length > 0
-      ? `Andere bestanden die in dezelfde toewijzing worden aangepast (schrijf die hier NIET — dat gebeurt in aparte stappen): ${otherPaths.join(", ")}`
-      : "",
-    "",
-    `Je schrijft nu UITSLUITEND het bestand "${file.path}" (${status}).`,
-    currentContentBlock,
-    testContextBlock,
-    "",
-    ...instructionLines,
-  ]
-    .filter((line) => line !== "")
-    .join("\n");
+    "BELANGRIJK: je antwoord IS de nieuwe bestandsinhoud, van de allereerste tot de allerlaatste regel — niets ervoor, niets erna. Geen markdown-codeblok (geen ``` eromheen), geen uitleg, geen inleidende zin zoals \"Hier is de inhoud:\", geen ===FILE===- of andere markeringen. Begin direct met de eerste regel van het bestand en stop na de laatste regel.",
+  ];
+
+  const buildUserPrompt = (instructionLines: readonly string[]): string =>
+    [
+      manifestBlock,
+      buildAssignmentDescription(mission, assignment),
+      "",
+      `Jouw plan: ${plan.planSummary}`,
+      otherPaths.length > 0
+        ? `Andere bestanden die in dezelfde toewijzing worden aangepast (schrijf die hier NIET — dat gebeurt in aparte stappen): ${otherPaths.join(", ")}`
+        : "",
+      "",
+      `Je schrijft nu UITSLUITEND het bestand "${file.path}" (${status}).`,
+      currentContentBlock,
+      testContextBlock,
+      "",
+      ...instructionLines,
+    ]
+      .filter((line) => line !== "")
+      .join("\n");
 
   if (editInPlace) {
-    return await editFileInPlace(
-      mission,
-      file,
-      userPrompt,
-      // Op dit punt staat vast dat het bestand bestaat — shouldEditInPlace
-      // geeft alleen true bij een niet-lege currentContent.
-      file.currentContent as string,
-      usageTracker,
-    );
+    try {
+      return await editFileInPlace(
+        mission,
+        file,
+        buildUserPrompt(editInstructionLines),
+        // Op dit punt staat vast dat het bestand bestaat — shouldEditInPlace
+        // geeft alleen true bij een niet-lege currentContent.
+        file.currentContent as string,
+        usageTracker,
+      );
+    } catch (error) {
+      if (!(error instanceof EditNotAppliedError)) throw error;
+
+      // TERUGVAL OP HET VOLLEDIGE PAD (14 september 2026)
+      //
+      // Hiervóór stierf de hele toewijzing hier. Dat is precies wat er live
+      // gebeurde: een missie strandde vier pogingen achter elkaar op "het
+      // antwoord bevat geen enkel bewerkingsblok", op een bestand van 3 kB
+      // waar de missie ervóór wél in was geslaagd.
+      //
+      // Dat is de verkeerde afloop. De gerichte bewerking is een optimalisatie
+      // bovenop een pad dat al maanden betrouwbaar draait; lukt de
+      // optimalisatie niet, dan hoort het oude pad het over te nemen in plaats
+      // van dat de missie stilvalt. De redenering achter MAX_EDIT_ATTEMPTS
+      // gaat over nóg een poging met DEZELFDE methode — dat heeft geen zin.
+      // Overstappen op een andere methode is iets anders.
+      //
+      // Waarom hier geen extra bovengrens op de bestandsgrootte: die staat er
+      // al. MAX_FILE_CONTENT_LENGTH weigert bovenaan deze functie elk bestand
+      // dat te groot is om verantwoord in één keer te herschrijven, dus alles
+      // wat hier komt past per definitie in het volledige pad.
+      //
+      // Zichtbaarheid is wel voorwaarde: gebeurt dit vaak, dan is er iets mis
+      // met het bewerkingsformaat zelf, en dat mag niet onder een geslaagde
+      // missie verdwijnen.
+      console.error(
+        [
+          `Gerichte bewerking van "${file.path}" opgegeven; teruggevallen op het volledig herschrijven van het bestand.`,
+          `Reden: ${error.message}`,
+        ].join("\n"),
+      );
+    }
   }
 
   const completion = await provider.chatCompletion(buildBuilderSystemPrompt(mission), [
-    { role: "user", content: userPrompt },
+    { role: "user", content: buildUserPrompt(fullContentInstructionLines) },
   ]);
   usageTracker.add(completion);
 

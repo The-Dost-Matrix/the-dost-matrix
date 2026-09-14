@@ -45,6 +45,26 @@
  *    inleidende zin. In de hele-bestand-modus is dat rampzalig (die zin belandt
  *    dan ín het bestand); hier kan het geen kwaad, dus is streng zijn op dat
  *    punt alleen maar een extra faalreden zonder winst.
+ *
+ * SOEPEL OP DE MARKERING, STRENG OP DE INHOUD (14 september 2026)
+ *
+ * De drie regels hierboven gaan over de INHOUD van een blok, en daar blijft
+ * alles even streng. De herkenning van de MARKERINGEN was aanvankelijk net zo
+ * streng — een regel moest letterlijk gelijk zijn aan `<<<<<<< ZOEK` — en dat
+ * bleek een faalreden zonder enige winst.
+ *
+ * Aanleiding: een live missie die vier pogingen achter elkaar strandde op
+ * "het antwoord bevat geen enkel bewerkingsblok", op een bestand van 3 kB waar
+ * de missie ervóór wél in slaagde. Twee dingen kunnen dat veroorzaken, en
+ * geen van beide zegt iets over de kwaliteit van de bewerking zelf: het model
+ * schrijft de Engelse variant (`<<<<<<< SEARCH` / `>>>>>>> REPLACE`, waar het
+ * op getraind is), of het laat de markering inspringen omdat het antwoord in
+ * een codeblok staat.
+ *
+ * Vandaar: het aantal punthaken mag verschillen, de markering mag inspringen,
+ * en zowel de Nederlandse als de Engelse woorden tellen. Een verkeerd gelezen
+ * blok faalt daarna alsnog veilig — het zoekfragment komt dan niet precies
+ * één keer voor, en dan wordt er niets toegepast.
  */
 
 export type PatchEditErrorCode =
@@ -88,9 +108,30 @@ export interface EditBlock {
   replace: string;
 }
 
+/**
+ * De drie markeringherkenners. Zie de toelichting bovenaan dit bestand voor
+ * waarom deze soepeler zijn dan de markeringen die de prompt voorschrijft.
+ *
+ * De scheidingsregel blijft het strengst van de drie: een regel die alléén
+ * uit gelijktekens bestaat. Zou die ook een regel als `// =====` accepteren,
+ * dan zou een commentaarbalk midden in een zoekfragment het blok in tweeën
+ * hakken.
+ */
+function isSearchMarker(line: string): boolean {
+  return /^<{3,}\s*(?:ZOEK|SEARCH)\b/i.test(line.trim());
+}
+
+function isDividerMarker(line: string): boolean {
+  return /^={3,}$/.test(line.trim());
+}
+
+function isReplaceMarker(line: string): boolean {
+  return /^>{3,}\s*(?:VERVANG|REPLACE)\b/i.test(line.trim());
+}
+
 /** Of dit antwoord überhaupt op bewerkingsblokken lijkt. */
 export function containsEditBlocks(text: string): boolean {
-  return text.includes(SEARCH_MARKER);
+  return text.split(/\r?\n/).some(isSearchMarker);
 }
 
 /**
@@ -109,10 +150,8 @@ export function parseEditBlocks(text: string): EditBlock[] {
   let replace: string[] = [];
 
   for (const line of lines) {
-    const marker = line.trimEnd();
-
     if (state === "outside") {
-      if (marker === SEARCH_MARKER) {
+      if (isSearchMarker(line)) {
         state = "search";
         search = [];
         replace = [];
@@ -121,7 +160,7 @@ export function parseEditBlocks(text: string): EditBlock[] {
     }
 
     if (state === "search") {
-      if (marker === DIVIDER_MARKER) {
+      if (isDividerMarker(line)) {
         state = "replace";
         continue;
       }
@@ -130,7 +169,7 @@ export function parseEditBlocks(text: string): EditBlock[] {
       continue;
     }
 
-    if (marker === REPLACE_MARKER) {
+    if (isReplaceMarker(line)) {
       blocks.push({ search: search.join("\n"), replace: replace.join("\n") });
       state = "outside";
       continue;
