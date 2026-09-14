@@ -31,6 +31,11 @@ import {
   type EvidenceFile,
   type EvidenceSelection,
 } from "./context-resolver";
+import {
+  applyEditResponse,
+  EDIT_BLOCK_FORMAT,
+  PatchEditError,
+} from "./patch-edit";
 
 /**
  * Builder Runtime v0 — de eerste versie van de Builder-rol die daadwerkelijk
@@ -95,6 +100,43 @@ const MAX_TREE_LENGTH = 20_000;
 // van claude-sonnet-5 en is ruim boven wat enig bestand in dit project nu
 // haalt.
 const MAX_FILE_CONTENT_LENGTH = 300_000;
+
+/**
+ * Stap 18 (deel 2): vanaf deze grootte laat de Builder een BESTAAND bestand
+ * niet meer volledig herschrijven maar gericht bewerken (zie patch-edit.ts).
+ *
+ * Waarom een grens en niet altijd bewerken: onder een paar duizend tekens is
+ * herschrijven goedkoop en bewezen betrouwbaar — dat pad draait al maanden.
+ * De twee kosten die bewerken wegneemt (uitgetypte tokens, en het risico dat
+ * er onderweg iets wegvalt) groeien allebei mee met de bestandsgrootte, dus
+ * de winst zit bovenin. De risico's van het nieuwe pad — een zoekfragment dat
+ * net niet exact klopt — wegen daar ook het lichtst, want juist bij een groot
+ * bestand is opnieuw uittypen het duurste alternatief.
+ *
+ * Nieuwe bestanden worden altijd in hun geheel geschreven: er is niets om in
+ * te bewerken.
+ */
+const PATCH_MODE_MIN_LENGTH = 2_000;
+
+/**
+ * Hoe vaak de Builder een bewerking opnieuw mag proberen binnen dezelfde
+ * aanroep, wanneer zijn zoekfragment niet exact bleek te kloppen.
+ *
+ * Eén keer, niet vaker. De tweede poging krijgt de precieze foutmelding mee
+ * ("dit fragment kwam niet voor", "dit fragment komt drie keer voor") en dat
+ * is meestal genoeg. Lukt het dan nog niet, dan hoort de toewijzing te falen
+ * en via de gewone herstellus terug te komen — een lus die hier ter plekke
+ * blijft doorproberen verbergt juist dat er iets structureel niet klopt.
+ */
+const MAX_EDIT_ATTEMPTS = 2;
+
+/**
+ * Of dit bestand gericht bewerkt wordt in plaats van volledig herschreven.
+ * Geëxporteerd om zonder netwerk te kunnen testen.
+ */
+export function shouldEditInPlace(currentContent: string | null): boolean {
+  return currentContent !== null && currentContent.length >= PATCH_MODE_MIN_LENGTH;
+}
 
 type AssignmentRecord = MissionV2["assignments"][number];
 
@@ -637,7 +679,103 @@ export function ensureTrailingNewline(content: string): string {
 }
 
 /**
- * Vraagt de VOLLEDIGE inhoud van precies één bestand op bij de LLM.
+ * Laat de Builder een bestaand bestand gericht bewerken in plaats van
+ * overtypen, en past die bewerkingen deterministisch toe (stap 18, deel 2).
+ *
+ * De enige reden dat hier een herkansing zit: de faalstand van dit pad is heel
+ * specifiek en heel goed uit te leggen. Een zoektekst die net niet klopt —
+ * een spatie te veel, een aanhalingsteken anders — is met de precieze
+ * foutmelding erbij meestal in één keer recht te zetten. Die herkansing kost
+ * één modelaanroep; hem overslaan kost Elroy een hele ronde van uitpakken,
+ * testen, committen en pushen.
+ *
+ * Eén herkansing, niet meer. Blijft het misgaan, dan klopt er iets
+ * structureels niet en hoort de toewijzing te falen via de gewone herstellus,
+ * waar het zichtbaar is — in plaats van dat dit hier blijft doorproberen tot
+ * het toevallig lukt.
+ */
+async function editFileInPlace(
+  mission: MissionV2,
+  file: PlannedFile,
+  userPrompt: string,
+  currentContent: string,
+  usageTracker: UsageTracker,
+): Promise<SingleFileWriteResult> {
+  const provider = getChatProvider();
+
+  let lastFailure: PatchEditError | null = null;
+  let lastAnswer = "";
+
+  for (let attempt = 1; attempt <= MAX_EDIT_ATTEMPTS; attempt += 1) {
+    const prompt = lastFailure
+      ? [
+          userPrompt,
+          "",
+          "LET OP: je vorige poging kon niet worden toegepast.",
+          `Reden: ${lastFailure.message}`,
+          "",
+          "Dit was je vorige antwoord:",
+          "---",
+          lastAnswer.slice(0, 4_000),
+          "---",
+          "",
+          "Geef opnieuw bewerkingsblokken. Controleer daarbij letterlijk, teken voor teken, dat je zoektekst zó in de huidige inhoud hierboven staat, en dat hij daar precies één keer voorkomt.",
+        ].join("\n")
+      : userPrompt;
+
+    const completion = await provider.chatCompletion(buildBuilderSystemPrompt(mission), [
+      { role: "user", content: prompt },
+    ]);
+    usageTracker.add(completion);
+    lastAnswer = completion.content;
+
+    try {
+      const content = applyEditResponse(currentContent, completion.content);
+
+      // Een bewerking die het bestand leegmaakt is vrijwel zeker niet wat er
+      // bedoeld was, en is precies het soort verlies dat deze stap moet
+      // voorkomen. Liever hier stoppen dan een leeg bestand committen.
+      if (content.trim() === "") {
+        throw new Error(
+          `De bewerking van "${file.path}" zou het bestand helemaal leegmaken. Dat wordt geweigerd; wil je het bestand echt verwijderen, dan hoort dat een expliciete opdracht te zijn.`,
+        );
+      }
+
+      return { content: ensureTrailingNewline(content), model: completion.model };
+    } catch (error) {
+      if (!(error instanceof PatchEditError)) {
+        throw error;
+      }
+
+      lastFailure = error;
+
+      // Naar het serverlogboek, want de foutmelding in de UI is te smal voor
+      // het antwoord zelf — en juist dat antwoord laat zien wat het model
+      // dacht te citeren.
+      console.error(
+        [
+          `Bewerking van "${file.path}" mislukt (poging ${attempt} van ${MAX_EDIT_ATTEMPTS}).`,
+          `Code: ${error.code}`,
+          `Reden: ${error.message}`,
+          `Ruwe antwoord van het model:\n${completion.content}`,
+        ].join("\n"),
+      );
+    }
+  }
+
+  throw new Error(
+    `De Builder kreeg de bewerking van "${file.path}" na ${MAX_EDIT_ATTEMPTS} pogingen niet toegepast. Laatste reden: ${lastFailure?.message ?? "onbekend"} Bekijk de terminal van "npm run dev" voor het volledige antwoord.`,
+  );
+}
+
+/**
+ * Laat de LLM precies één bestand schrijven.
+ *
+ * Twee wegen, afhankelijk van wat er al staat. Een nieuw bestand, of een klein
+ * bestaand bestand, wordt in zijn geheel geschreven — dat pad staat hieronder
+ * en draait ongewijzigd. Een bestaand bestand vanaf PATCH_MODE_MIN_LENGTH gaat
+ * sinds stap 18 (deel 2) via `editFileInPlace` hierboven: dan levert het model
+ * alleen de plekken die veranderen, en blijft de rest per definitie staan.
  *
  * Waarom per bestand een eigen aanroep, in plaats van één aanroep voor de
  * hele toewijzing (zoals de vorige versie deed): bij meerdere bestanden in
@@ -721,6 +859,30 @@ async function writeSingleFile(
       })
     : "";
 
+  // Stap 18 (deel 2): een bestaand bestand van enige omvang wordt gericht
+  // bewerkt in plaats van volledig overgetypt. Zie PATCH_MODE_MIN_LENGTH
+  // hierboven voor waarom er een grens zit, en patch-edit.ts voor het formaat.
+  const editInPlace = shouldEditInPlace(file.currentContent);
+
+  const instructionLines = editInPlace
+    ? [
+        "Dit bestand bestaat al en is te groot om verantwoord over te typen. Geef daarom NIET de volledige inhoud terug, maar uitsluitend de plekken die veranderen, als één of meer bewerkingsblokken in exact dit formaat:",
+        "",
+        EDIT_BLOCK_FORMAT,
+        "",
+        "Regels die strikt gelden:",
+        "- Neem de zoektekst LETTERLIJK over uit de huidige inhoud hierboven, inclusief inspringing, aanhalingstekens en leestekens. Wijkt er één teken af, dan mislukt de bewerking.",
+        "- Kies de zoektekst zó dat hij precies één keer in het bestand voorkomt. Is een regel niet uniek, neem er dan omliggende regels bij tot het geheel uniek is.",
+        "- Gebruik meerdere blokken wanneer je op meerdere plekken iets wijzigt; ze worden op volgorde toegepast.",
+        "- Alles wat je niet noemt blijft ongewijzigd. Je hoeft dus niets te herhalen om het te behouden.",
+        "- Laat het vervangdeel leeg om het gevonden stuk te verwijderen.",
+      ]
+    : [
+        "Geef de VOLLEDIGE nieuwe inhoud van dit ene bestand terug (niet alleen het verschil). Schrijf productiekwaliteit code die aansluit bij de bestaande stijl.",
+        "",
+        "BELANGRIJK: je antwoord IS de nieuwe bestandsinhoud, van de allereerste tot de allerlaatste regel — niets ervoor, niets erna. Geen markdown-codeblok (geen ``` eromheen), geen uitleg, geen inleidende zin zoals \"Hier is de inhoud:\", geen ===FILE===- of andere markeringen. Begin direct met de eerste regel van het bestand en stop na de laatste regel.",
+      ];
+
   const userPrompt = [
     manifestBlock,
     buildAssignmentDescription(mission, assignment),
@@ -734,12 +896,22 @@ async function writeSingleFile(
     currentContentBlock,
     testContextBlock,
     "",
-    "Geef de VOLLEDIGE nieuwe inhoud van dit ene bestand terug (niet alleen het verschil). Schrijf productiekwaliteit code die aansluit bij de bestaande stijl.",
-    "",
-    "BELANGRIJK: je antwoord IS de nieuwe bestandsinhoud, van de allereerste tot de allerlaatste regel — niets ervoor, niets erna. Geen markdown-codeblok (geen ``` eromheen), geen uitleg, geen inleidende zin zoals \"Hier is de inhoud:\", geen ===FILE===- of andere markeringen. Begin direct met de eerste regel van het bestand en stop na de laatste regel.",
+    ...instructionLines,
   ]
     .filter((line) => line !== "")
     .join("\n");
+
+  if (editInPlace) {
+    return await editFileInPlace(
+      mission,
+      file,
+      userPrompt,
+      // Op dit punt staat vast dat het bestand bestaat — shouldEditInPlace
+      // geeft alleen true bij een niet-lege currentContent.
+      file.currentContent as string,
+      usageTracker,
+    );
+  }
 
   const completion = await provider.chatCompletion(buildBuilderSystemPrompt(mission), [
     { role: "user", content: userPrompt },

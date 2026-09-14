@@ -5,6 +5,7 @@ import {
   ensureTrailingNewline,
   isTestFilePath,
   parsePlannedPaths,
+  shouldEditInPlace,
 } from "./builder-runtime";
 
 /**
@@ -149,5 +150,29 @@ describe("parsePlannedPaths", () => {
 
   it("geeft een lege lijst bij een lege regel", () => {
     expect(parsePlannedPaths("")).toEqual([]);
+  });
+});
+
+/**
+ * Stap 18 (deel 2). Deze functie is één regel, maar legt wel een beleidskeuze
+ * vast: vanaf welke omvang een bestaand bestand gericht bewerkt wordt in
+ * plaats van overgetypt. Die grens hoort zichtbaar te zijn in een test, zodat
+ * hij niet ongemerkt verschuift.
+ */
+describe("shouldEditInPlace", () => {
+  it("schrijft een nieuw bestand altijd in zijn geheel", () => {
+    // Er is niets om in te bewerken.
+    expect(shouldEditInPlace(null)).toBe(false);
+  });
+
+  it("laat een klein bestaand bestand gewoon overtypen", () => {
+    // Onder de grens is herschrijven goedkoop en bewezen betrouwbaar; daar
+    // levert bewerken alleen een extra faalreden op.
+    expect(shouldEditInPlace("x".repeat(1_999))).toBe(false);
+  });
+
+  it("bewerkt een bestaand bestand vanaf de grens gericht", () => {
+    expect(shouldEditInPlace("x".repeat(2_000))).toBe(true);
+    expect(shouldEditInPlace("x".repeat(40_000))).toBe(true);
   });
 });
