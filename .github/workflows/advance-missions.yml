@@ -6,18 +6,37 @@ name: Autonome missie-voortgang
 #
 # Gekozen boven Vercel's ingebouwde cron omdat die op het gratis Hobby-plan
 # maar één keer per dag draait (met tot 59 minuten afwijking) — veel te grof
-# om een missie in meerdere stappen te laten voortgaan. GitHub Actions'
-# schedule-trigger is een "best effort"-timer: GitHub geeft zelf aan dat een
-# geplande run bij drukte vertraagd kan worden, en schakelt een schedule
-# automatisch uit als de repository 60 dagen zonder enige activiteit blijft
-# (een gewone commit of push zet 'm dan weer aan) — voor deze use-case
-# (elke ~10 minuten, actief project) is dat geen praktisch probleem.
+# om een missie in meerdere stappen te laten voortgaan.
+#
+# WAAROM ONEVEN MINUTEN (15 september 2026)
+#
+# Dit stond op "*/10 * * * *" en draaide in de praktijk helemaal niet elke
+# tien minuten: in de eerste dag stonden er elf runs waar er honderden hadden
+# moeten staan, soms vier uur uit elkaar. GitHub noemt zijn schedule-trigger
+# "best effort" en geeft zelf aan dat geplande runs bij drukte vertraagd of
+# zelfs helemaal weggegooid worden — zonder enig spoor in de logs. De drukste
+# momenten zijn de ronde tijdstippen: het hele uur, en daarmee ook :10, :20
+# en de rest van een "*/10"-schema.
+#
+# Vandaar deze losse, oneven minuten. Dat is geen garantie (die bestaat hier
+# niet), maar het scheelt op gewone dagen, en het kost niets.
+#
+# De echte oplossing voor de traagheid zit niet hier maar in de Matrix zelf:
+# sinds 15 september wacht een missie de CI binnen dezelfde aanroep af (zie
+# ci-wait.ts) in plaats van tot de volgende tik. Daardoor is een overgeslagen
+# tik hooguit nog vervelend, en niet meer bepalend voor hoe lang een missie
+# duurt.
+#
+# Blijkt dit alsnog te traag, dan is de volgende stap een externe planner
+# (bijvoorbeeld cron-job.org) die deze workflow via workflow_dispatch start.
+# Bewust nog niet gedaan: dat betekent MISSION_ADVANCE_SECRET in een dienst
+# van derden zetten, en die prijs is pas het overwegen waard als dit meetbaar
+# tekortschiet.
 on:
   schedule:
-    - cron: "*/10 * * * *"
-  # Handmatig te starten via de "Run workflow"-knop op GitHub, handig om de
-  # koppeling na het instellen meteen te testen zonder tot de volgende
-  # geplande run te hoeven wachten.
+    - cron: "3,13,23,33,43,53 * * * *"
+  # Handmatig te starten via de "Run workflow"-knop op GitHub — de enige
+  # manier die wél altijd meteen werkt.
   workflow_dispatch:
 
 jobs:

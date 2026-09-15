@@ -34,6 +34,18 @@ vi.mock("./engine-factory", () => ({
   createMissionEngineV2: vi.fn(() => ({})),
 }));
 
+/**
+ * Sinds 15 september 2026 wacht de lus na een builder-stap binnen dezelfde
+ * aanroep op de CI (zie ci-wait.ts). Die module praat met GitHub en wordt
+ * hier volledig gemockt: wat deze tests moeten vaststellen is wat de lus met
+ * elke uitkomst DOET, niet of het wachten zelf werkt — dat staat in
+ * ci-wait.test.ts.
+ */
+vi.mock("./ci-wait", () => ({
+  waitForMissionChecks: vi.fn(async () => "TIMED_OUT"),
+}));
+
+import { waitForMissionChecks } from "./ci-wait";
 import { runDirectorStep, DirectorRuntimeError } from "./director-runtime";
 import { executeRoleAssignment } from "./role-runtime";
 import { listMissionsForOwner } from "./firestore-store";
@@ -87,6 +99,9 @@ const farFutureDeadline = () => Date.now() + 60_000;
 describe("advanceMissionsForOwner", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Standaard: het wachten op de CI levert binnen deze aanroep niets op, dus
+    // geldt het oorspronkelijke gedrag (pauzeren tot de volgende tik).
+    vi.mocked(waitForMissionChecks).mockResolvedValue("TIMED_OUT");
   });
 
   it("negeert missies die niet ACTIVE of WAITING_FOR_ROLE zijn", async () => {
@@ -256,6 +271,97 @@ describe("advanceMissionsForOwner", () => {
 
     expect(result.outcomes[0].stoppedReason).toBe("WAITING_FOR_CI");
     expect(runDirectorStep).not.toHaveBeenCalled();
+  });
+
+  /**
+   * De versnelling van 15 september 2026. De pauze blijft de garantie; dit
+   * bepaalt alleen of hij twee minuten duurt of tot de volgende tik — en die
+   * tik bleek in de praktijk uren weg te kunnen zijn.
+   */
+  it("gaat in dezelfde tik door wanneer de CI op tijd klaar is", async () => {
+    vi.mocked(waitForMissionChecks).mockResolvedValue("SETTLED");
+
+    const mission = buildMission({
+      activeAssignmentIds: ["a1"],
+      assignments: [buildAssignment("a1", "builder")],
+    });
+    vi.mocked(listMissionsForOwner).mockResolvedValue([mission]);
+
+    vi.mocked(runDirectorStep).mockResolvedValueOnce({
+      mission,
+      decision: buildDecision({ decisionType: "DISPATCH_ROLE" }),
+      usedKnowledge: [],
+    });
+    vi.mocked(executeRoleAssignment).mockResolvedValueOnce({
+      mission: { ...mission, status: "ACTIVE" as MissionStatus, activeAssignmentIds: [] },
+      roleOutput: "pull request geopend",
+    } as never);
+    vi.mocked(runDirectorStep).mockResolvedValueOnce({
+      mission: { ...mission, status: "COMPLETED" as MissionStatus, activeAssignmentIds: [] },
+      decision: buildDecision({ decisionType: "COMPLETE_MISSION" }),
+      usedKnowledge: [],
+    });
+
+    const result = await advanceMissionsForOwner("owner-1", { deadlineAt: farFutureDeadline() });
+
+    expect(result.outcomes[0].stoppedReason).toBe("TERMINAL_OR_WAITING_STATUS");
+    expect(result.outcomes[0].endStatus).toBe("COMPLETED");
+  });
+
+  it("gaat ook door wanneer er niets te wachten valt", async () => {
+    // Een builder-stap die niets committe, laat geen pull request achter.
+    vi.mocked(waitForMissionChecks).mockResolvedValue("NO_PULL_REQUEST");
+
+    const mission = buildMission({
+      activeAssignmentIds: ["a1"],
+      assignments: [buildAssignment("a1", "builder")],
+    });
+    vi.mocked(listMissionsForOwner).mockResolvedValue([mission]);
+
+    vi.mocked(runDirectorStep).mockResolvedValueOnce({
+      mission,
+      decision: buildDecision({ decisionType: "DISPATCH_ROLE" }),
+      usedKnowledge: [],
+    });
+    vi.mocked(executeRoleAssignment).mockResolvedValueOnce({
+      mission: { ...mission, status: "ACTIVE" as MissionStatus, activeAssignmentIds: [] },
+      roleOutput: "niets gewijzigd",
+    } as never);
+    vi.mocked(runDirectorStep).mockResolvedValueOnce({
+      mission: { ...mission, status: "COMPLETED" as MissionStatus, activeAssignmentIds: [] },
+      decision: buildDecision({ decisionType: "COMPLETE_MISSION" }),
+      usedKnowledge: [],
+    });
+
+    const result = await advanceMissionsForOwner("owner-1", { deadlineAt: farFutureDeadline() });
+
+    expect(result.outcomes[0].stoppedReason).toBe("TERMINAL_OR_WAITING_STATUS");
+  });
+
+  it("pauzeert wanneer de CI-stand niet opgehaald kan worden", async () => {
+    // Doorgaan zou betekenen: opnieuw oordelen op een onbekende CI-stand, en
+    // dat is precies de bug waar de pauze voor gebouwd is.
+    vi.mocked(waitForMissionChecks).mockResolvedValue("ERROR");
+
+    const mission = buildMission({
+      activeAssignmentIds: ["a1"],
+      assignments: [buildAssignment("a1", "builder")],
+    });
+    vi.mocked(listMissionsForOwner).mockResolvedValue([mission]);
+
+    vi.mocked(runDirectorStep).mockResolvedValue({
+      mission,
+      decision: buildDecision({ decisionType: "DISPATCH_ROLE" }),
+      usedKnowledge: [],
+    });
+    vi.mocked(executeRoleAssignment).mockResolvedValue({
+      mission: { ...mission, status: "ACTIVE" as MissionStatus, activeAssignmentIds: [] },
+      roleOutput: "pull request geopend",
+    } as never);
+
+    const result = await advanceMissionsForOwner("owner-1", { deadlineAt: farFutureDeadline() });
+
+    expect(result.outcomes[0].stoppedReason).toBe("WAITING_FOR_CI");
   });
 
   it("stopt NIET na een qa-toewijzing — die schrijft geen code", async () => {

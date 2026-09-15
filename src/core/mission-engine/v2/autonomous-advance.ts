@@ -1,3 +1,4 @@
+import { waitForMissionChecks } from "./ci-wait";
 import { runDirectorStep, DirectorRuntimeError } from "./director-runtime";
 import { createMissionEngineV2 } from "./engine-factory";
 import { listMissionsForOwner } from "./firestore-store";
@@ -85,6 +86,21 @@ import { executeRoleAssignment } from "./role-runtime";
  * De prijs is één extra tik per builder-stap. Bij een missie met twee
  * builder-stappen is dat 's nachts twintig minuten extra, tegen een
  * bespaarde QA-ronde per keer. Dat is geen afweging maar winst.
+ *
+ * AANVULLING (15 september 2026): die prijs bleek geen tien minuten
+ *
+ * De aanname hierboven was dat de volgende tik tien minuten later komt. Dat
+ * klopt niet. GitHub noemt zijn schedule-trigger "best effort" en knijpt hem
+ * hard af: in de eerste dag stonden er elf runs waar er honderden hadden
+ * moeten staan, uren uit elkaar, en een overgeslagen run laat geen spoor na.
+ * Elke pauze werd daarmee geen tien minuten maar een paar uur.
+ *
+ * Daarom wordt er nu binnen dezelfde aanroep gewacht tot de CI klaar is (zie
+ * ci-wait.ts). Lukt dat, dan loopt de missie in één tik door van bouwen naar
+ * QA naar mergen. Lukt het niet, dan valt alles terug op precies het gedrag
+ * hierboven: stoppen met WAITING_FOR_CI, en de volgende tik pakt hem op. Het
+ * wachten is een versnelling, geen voorwaarde — de pauze zelf blijft de
+ * garantie.
  */
 
 const DEFAULT_MAX_MISSIONS = 20;
@@ -170,6 +186,26 @@ function findAssignmentRoleId(mission: MissionV2, assignmentId: string): string 
  */
 const BUILDER_ROLE_ID = "builder";
 
+/**
+ * Wacht na een builder-stap op de CI-uitkomst, en zegt of de lus door mag.
+ *
+ * Alleen een afgeronde uitkomst geeft groen licht om door te gaan — niet
+ * omdat die groen zou zijn (daar beslist de Director over), maar omdat er dan
+ * íets vaststaat om over te beslissen. Een missie zonder pull request heeft
+ * niets om op te wachten en mag ook door.
+ *
+ * Alles daaronder (tijd op, GitHub onbereikbaar) betekent stoppen, en dan
+ * geldt het oorspronkelijke gedrag: de volgende tik pakt de missie op.
+ */
+async function mayContinueAfterBuilderStep(
+  missionId: string,
+  deadlineAt: number,
+): Promise<boolean> {
+  const outcome = await waitForMissionChecks(missionId, { deadlineAt });
+
+  return outcome === "SETTLED" || outcome === "NO_PULL_REQUEST";
+}
+
 async function advanceSingleMission(
   mission: MissionV2,
   { deadlineAt, maxStepsPerMission }: { deadlineAt: number; maxStepsPerMission: number },
@@ -218,7 +254,10 @@ async function advanceSingleMission(
         current = afterRole;
         steps += 1;
 
-        if (roleId === BUILDER_ROLE_ID) {
+        if (roleId === BUILDER_ROLE_ID && !(await mayContinueAfterBuilderStep(
+          current.missionId,
+          deadlineAt,
+        ))) {
           return {
             missionId: mission.missionId,
             title: mission.title,
@@ -246,7 +285,10 @@ async function advanceSingleMission(
         current = afterRole;
         steps += 1;
 
-        if (roleId === BUILDER_ROLE_ID) {
+        if (roleId === BUILDER_ROLE_ID && !(await mayContinueAfterBuilderStep(
+          current.missionId,
+          deadlineAt,
+        ))) {
           return {
             missionId: mission.missionId,
             title: mission.title,
