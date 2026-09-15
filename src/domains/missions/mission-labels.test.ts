@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import type { MissionAdvanceOutcome } from "@/core/mission-engine/v2/autonomous-advance";
+import type { CiWaitOutcome } from "@/core/mission-engine/v2/ci-wait";
 
 import {
   MISSION_STATUSES,
@@ -15,6 +16,7 @@ import {
   advanceOutcomeSummary,
   advanceStoppedReasonLabel,
   assignmentStatusLabel,
+  ciWaitOutcomeLabel,
   formatMissionCost,
   missionStatusLabel,
   riskLevelLabel,
@@ -112,6 +114,27 @@ describe("advanceStoppedReasonLabel", () => {
     expect(advanceStoppedReasonLabel("WAITING_FOR_CI")).toBe(
       "Wachten tot de CI-controle klaar is",
     );
+  });
+});
+
+describe("ciWaitOutcomeLabel", () => {
+  it("geeft voor elke CI-wachtuitkomst een niet-lege Nederlandse omschrijving in plaats van de ruwe waarde", () => {
+    const labels: Record<CiWaitOutcome, string> = {
+      SETTLED: "CI-controle afgerond",
+      TIMED_OUT: "Wachttijd voor CI verstreken",
+      NO_PULL_REQUEST: "Geen pull request gevonden",
+      ERROR: "Fout bij wachten op CI",
+    };
+    const outcomes = Object.keys(labels) as CiWaitOutcome[];
+
+    for (const outcome of outcomes) {
+      const label = ciWaitOutcomeLabel(outcome);
+
+      expect(typeof label).toBe("string");
+      expect(label.trim().length).toBeGreaterThan(0);
+      expect(label).not.toBe(outcome);
+      expect(label).toBe(labels[outcome]);
+    }
   });
 });
 
