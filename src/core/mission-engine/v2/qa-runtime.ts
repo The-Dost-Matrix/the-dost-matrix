@@ -19,6 +19,12 @@ import {
   type PullRequestFileChange,
   type PullRequestSummary,
 } from "./github/github-client";
+import {
+  BUILDER_TOOL_DEFINITIONS,
+  MAX_BUILDER_TOOL_ROUNDS,
+  createBuilderToolRunner,
+} from "./builder-tools";
+import type { ChatWithToolsOptions } from "@/core/llm/types";
 import { QA_BRANCH_PREFIX } from "./mission-branch";
 import { collectCiFailureReport } from "./ci-failure-source";
 import {
@@ -434,12 +440,65 @@ export function describeCiOutcomeForPrompt(ciStatus: CombinedCheckStatus): strin
   return `${intro} er zijn geen CI-controles geregistreerd voor deze commit. Je kunt hier dus niets uit afleiden, in geen van beide richtingen.`;
 }
 
+/**
+ * GEREEDSCHAP VOOR QA (15 september 2026)
+ *
+ * Direct uit een live oordeel, een uur nadat de Builder zijn gereedschap
+ * kreeg. QA kon een criterium niet vaststellen en schreef letterlijk op
+ * waarom:
+ *
+ *   "Het type wordt geïmporteerd uit @/core/mission-engine/v2/ci-wait. De
+ *    getypeerde Records en geslaagde compilatie ondersteunen de exacte
+ *    waardedekking, maar de inhoud van ci-wait.ts ontbreekt. Daardoor is niet
+ *    vast te stellen of het type daar werkelijk is gedefinieerd of slechts
+ *    wordt doorgeëxporteerd."
+ *
+ * Volkomen terecht, en precies de houding die QA hoort te hebben: niet gokken
+ * maar "ik weet het niet" zeggen. Alleen was het antwoord één bestand ver, en
+ * Elroy moest het handmatig gaan opzoeken.
+ *
+ * Dat is exact hetzelfde gat als waar de Builder eerder op strandde: ook QA
+ * oordeelt over bewijs dat wij vooraf samenstellen, en had geen manier om
+ * zelf iets op te vragen. Nu de gereedschapslus er ligt, is dat een kleine
+ * ingreep die een hele categorie "kon niet vaststellen" wegneemt.
+ *
+ * Wat QA WEL en NIET krijgt is hetzelfde als bij de Builder: lezen en zoeken,
+ * meer niet (zie builder-tools.ts — die naam is inmiddels te eng, het
+ * gereedschap is niet builder-specifiek). Geen schrijven, geen uitvoeren.
+ *
+ * En net als daar: dit komt BOVENOP de gedwongen bewijsbundel, nooit ervoor
+ * in de plaats. QA moet nog steeds ongevraagd de volledige inhoud van de
+ * gewijzigde bestanden voorgeschoteld krijgen; gereedschap is er voor wat
+ * daarbuiten valt.
+ */
+function buildQaTools(target: GithubRepoTarget, ref: string, treePaths: readonly string[]) {
+  return {
+    tools: BUILDER_TOOL_DEFINITIONS,
+    maxToolRounds: MAX_BUILDER_TOOL_ROUNDS,
+    runTool: createBuilderToolRunner({
+      treePaths,
+      readFile: async (path) => {
+        try {
+          return (await getFileContent(target, path, ref))?.content ?? null;
+        } catch (error) {
+          console.error(`QA-gereedschap kon "${path}" niet ophalen.`, error);
+          return null;
+        }
+      },
+      onUse: (toolName, argument, outcome) => {
+        console.info(`QA-gereedschap: ${toolName}("${argument}") -> ${outcome}`);
+      },
+    }),
+  };
+}
+
 async function evaluateCriteriaAgainstEvidence(
   mission: MissionV2,
   pr: PullRequestSummary,
   evidenceText: string,
   referenceText: string,
   ciStatus: CombinedCheckStatus,
+  tools: ChatWithToolsOptions | null,
 ): Promise<{ verdict: QaLlmVerdict; model: string; usage?: ChatCompletionResult["usage"] }> {
   const provider = getChatProvider();
 
@@ -459,6 +518,12 @@ async function evaluateCriteriaAgainstEvidence(
     "",
     describeCiOutcomeForPrompt(ciStatus),
     "",
+    ...(tools
+      ? [
+          'Mis je iets om een criterium te kunnen beoordelen — de inhoud van een bestand dat hierboven niet staat, de definitie van een type, de plek waar iets vandaan komt? Zoek het dan zelf op met je gereedschap: zoek_bestanden om een pad te vinden, lees_bestand om de echte inhoud te lezen. Doe dat vóórdat je "UNDETERMINED" geeft. Blijft het daarna onvaststelbaar, dan is "UNDETERMINED" het juiste oordeel — maar gok nooit een PASSED op iets wat je niet gezien hebt.',
+          "",
+        ]
+      : []),
     "Antwoord exact in dit JSON-formaat, niets anders:",
     "{",
     '  "overallSummary": "korte samenvatting van je beoordeling",',
@@ -471,9 +536,28 @@ async function evaluateCriteriaAgainstEvidence(
     "}",
   ].join("\n");
 
-  const completion = await provider.chatCompletion(buildQaSystemPrompt(mission), [
-    { role: "user", content: userPrompt },
-  ]);
+  const systemPrompt = buildQaSystemPrompt(mission);
+  const messages = [{ role: "user" as const, content: userPrompt }];
+
+  const completion = await (async () => {
+    if (tools && provider.chatCompletionWithTools) {
+      try {
+        return await provider.chatCompletionWithTools(systemPrompt, messages, tools);
+      } catch (error) {
+        // Zelfde terugval als bij de Builder (zie askBuilder in
+        // builder-runtime.ts): gereedschap is een aanvulling, en een
+        // aanvulling die het oordeel kan blokkeren is een storing.
+        console.error(
+          [
+            "QA-gereedschapsaanroep mislukt; opnieuw geprobeerd zonder gereedschap.",
+            `Reden: ${error instanceof Error ? error.message : String(error)}`,
+          ].join("\n"),
+        );
+      }
+    }
+
+    return provider.chatCompletion(systemPrompt, messages);
+  })();
 
   let parsed: unknown;
   try {
@@ -696,6 +780,9 @@ export async function executeQaAssignment({
     evidenceText,
     referenceText,
     ciStatus,
+    // Stap 18 (deel 4), nu ook voor QA: zelf kunnen opvragen wat er buiten de
+    // bewijsbundel valt. Zie buildQaTools hierboven.
+    buildQaTools(target, pr.headSha, treePaths),
   );
   const afterRecommendation = applyBlockingRecommendation(verdict.criteria, verdict);
   const recommendationOverrode = afterRecommendation !== verdict.criteria;

@@ -1130,6 +1130,157 @@ open-source licentie die gekozen zou kunnen worden. Publiek betekent hier
 leesbaar, niet vrij te gebruiken. Wordt dit ooit alsnog gewenst, dan kan een
 licentie op elk moment worden toegevoegd; het auteursrecht blijft bij Elroy.
 
+### Stap 18 volledig af — 14 en 15 september 2026
+
+Deel 3 en deel 4 zijn allebei gebouwd én live bevestigd. Dat ging niet in een
+rechte lijn, en de omweg is leerzamer dan de bestemming.
+
+**Deel 3 — mechanische importcontrole vóór de commit** (`export-check.ts`).
+Controleert of elke geïmporteerde naam werkelijk ergens geëxporteerd wordt, en
+zwijgt bij elke twijfel (pad buiten de repository, inhoud onbeschikbaar,
+`export *` in het doelbestand). Nog vóór oplevering losgelaten op alle 211
+bronbestanden, wat meteen een eigen bug opleverde: `src/core/workflows/types.ts`
+begint met een onzichtbaar BOM-teken, waardoor zijn eerste export niet gezien
+werd en drie bestanden onterecht werden afgekeurd.
+
+Deze controle heeft zich daarna live bewezen door een kapot bestand tegen te
+houden vóór de commit — zie hieronder.
+
+**Deel 4 — lees- en zoekgereedschap** (`builder-tools.ts`,
+`chatCompletionWithTools` op `LlmProvider`). Twee gereedschappen:
+`zoek_bestanden` en `lees_bestand`. Bewust niets meer:
+
+- **Geen schrijfgereedschap.** Schrijven blijft via het vaste pad, mét de
+  bewerkingsblokken (deel 2) en de importcontrole (deel 3) eromheen. Anders kan
+  het model langs precies de controles heen schrijven die daarvoor bestaan.
+- **Geen uitvoergereedschap.** Zie de correctie bij deel 4 hierboven: dat kan op
+  Vercel niet, en het hoeft niet — de CI doet het.
+- **Bovenop de gedwongen bewijslaag, nooit ervoor in de plaats.**
+
+De gereedschapslus zit in de provider en niet in de rol, omdat Anthropic en
+OpenAI om compleet andere berichtvormen vragen. Zou de aanroeper die lus
+draaien, dan moest elke rol die gereedschap wil dat werk overdoen.
+
+**Ook voor QA (15 september).** Een uur na oplevering kon QA een criterium niet
+vaststellen met als reden: "de inhoud van ci-wait.ts ontbreekt". Exact hetzelfde
+gat, bij een andere rol. QA heeft nu hetzelfde gereedschap. De modulenaam
+`builder-tools.ts` is daarmee te eng geworden en is een kandidaat om te
+hernoemen.
+
+### De les van deze twee dagen: laat de oude weg altijd open
+
+Drie keer op rij is dezelfde fout gemaakt, en die is het opschrijven waard omdat
+hij zich niet als fout aankondigt.
+
+1. **Deel 2 (patch-modus).** Lukte de gerichte bewerking na twee pogingen niet,
+   dan stierf de toewijzing. Bewuste keuze destijds, met een redenering die
+   klopte voor "nog een poging met dezelfde methode" — maar die werd toegepast
+   op "overstappen op een andere methode", en dat is iets anders. Een missie
+   viel stil terwijl gewoon het hele bestand herschrijven (3 kB) prima had
+   gewerkt.
+2. **Deel 4 (gereedschap).** Dezelfde constructie: mislukte de
+   gereedschapsaanroep, dan viel de toewijzing om. Dat gebeurde meteen bij de
+   eerste live poging, en niet eens door iets van ons — zie hieronder.
+3. **De terugval van deel 2 zelf.** Die schreef bij gebrek aan een vormcontrole
+   de weigering van het model als bestandsinhoud weg. Alleen deel 3 ving dat af.
+
+De regel die hieruit volgt: **een optimalisatie die het onderliggende pad kan
+blokkeren is geen optimalisatie maar een storing.** Elk nieuw mechanisme krijgt
+een terugval op het pad dat het vervangt, en die terugval logt luid genoeg om te
+merken dát hij gebruikt wordt.
+
+### OpenAI-gereedschap loopt over de Responses API — 15 september 2026
+
+De eerste live poging met gereedschap gaf meteen een 400:
+
+> "Function tools with reasoning_effort are not supported for gpt-6-astra in
+> /v1/chat/completions. To use function tools, use /v1/responses or set
+> reasoning_effort to 'none'."
+
+Geen fout van deze codebase. Redenerende modellen van OpenAI accepteren geen
+gereedschap op de chat-API, ook niet wanneer wij `reasoning_effort` helemaal niet
+meesturen — die modellen redeneren standaard, en dan geldt de beperking
+onzichtbaar. De uitweg die de melding zelf noemt bestaat voor dit model
+bovendien niet: gpt-6-astra accepteert de waarde `none` niet.
+
+Daarom loopt `chatCompletionWithTools` bij OpenAI over `/v1/responses`. De
+gewone `chatCompletion` blijft op `/v1/chat/completions` — die werkt daar prima,
+en elke rol zonder gereedschap merkt er niets van.
+
+Eén detail dat essentieel is en makkelijk te missen: het volledige antwoord van
+het model, **inclusief zijn redeneerstappen**, moet ongewijzigd terug in `input`.
+Gooi je die weg tussen twee gereedschapsrondes, dan verliest het model zijn eigen
+gedachtegang en begint het elke ronde opnieuw.
+
+### Waar de bewijslaag écht tekortschoot — 14 september 2026
+
+Vier pogingen op rij strandden op "het antwoord bevat geen enkel bewerkingsblok".
+Twee keer is er op de vórm van die fout gegokt (soepelere markeringherkenning,
+een terugval) voordat het ruwe modelantwoord uit de Vercel-logs werd opgehaald.
+Daar stond het echte antwoord:
+
+> "De daadwerkelijke definitie van MissionAdvanceOutcome ontbreekt. Zonder
+> repositorytoegang kan ik die niet raadplegen. Zonder die informatie zou een
+> bewerkingsblok velden moeten veronderstellen, in strijd met je expliciete
+> opdracht om niets te verzinnen."
+
+Het model faalde niet, het **weigerde** — en precies om de reden die wij het zelf
+hebben opgedragen. Drie dingen kwamen daaruit voort:
+
+- **`objective-evidence.ts`**: bestanden die de opdracht met naam noemt gaan
+  automatisch mee. Alleen paden die aantoonbaar in de branch staan; een verzonnen
+  pad wordt nooit opgehaald.
+- **Een kanaal voor "ik mis iets"**: het model mag antwoorden met
+  `ONVOLDOENDE CONTEXT: <wat>`. `INSUFFICIENT_CONTEXT` bestond al, maar alleen de
+  contextresolver kon het opwerpen — vooraf, structureel. Het model zat op de
+  enige plek waar de échte behoefte zichtbaar wordt en had daar geen stem.
+- **Een vormcontrole** (`looksLikeSourceCode`): een antwoord waarin geen enkele
+  regel met een gangbaar sleutelwoord begint, wordt niet als `.ts`-bestand
+  weggeschreven.
+
+**De bredere les:** twee keer gokken op de vorm van een fout kostte een avond,
+terwijl het letterlijke antwoord al in de logs stond. Bij een herhaalde fout
+eerst het ruwe antwoord ophalen, dan pas een hypothese.
+
+### De autonome tik is onbetrouwbaar, dus wacht de missie zelf — 15 september 2026
+
+De pauze na een builder-stap (zie hierboven) rekende erop dat de volgende tik
+tien minuten later komt. Dat klopt niet. GitHub noemt zijn schedule-trigger
+uitdrukkelijk "best effort" en geeft zelf aan dat geplande runs bij drukte
+vertraagd of **helemaal weggegooid** worden, zonder enig spoor in de logs. De
+drukste momenten zijn de ronde tijdstippen — en `*/10` valt daar precies op. In
+de eerste dag stonden er elf runs waar er honderden hadden moeten staan, soms
+vier uur uit elkaar.
+
+Er bestaat dus geen "de tik betrouwbaar maken" zolang GitHub de klok is. Daarom
+is het probleem omgedraaid: de missie wacht de CI nu áf binnen dezelfde aanroep
+(`ci-wait.ts`, maximaal drie minuten, met zestig seconden marge vóór de
+Vercel-deadline). Lukt dat, dan loopt een missie in één tik door van bouwen naar
+QA naar mergen. Lukt het niet, dan geldt gewoon het oude gedrag.
+
+Eén ding is bewust niet versoepeld: "geen check-runs gevonden" telt níet als
+klaar. Dat is precies de toestand vlak na een push waar de hele pauze voor
+bestaat, en er staat een test op.
+
+De cron staat nu op losse, oneven minuten. Geen garantie, wel gratis. Blijkt dit
+alsnog te traag, dan is de volgende stap een externe planner die de workflow via
+`workflow_dispatch` start — bewust nog niet gedaan, want dat betekent
+`MISSION_ADVANCE_SECRET` in een dienst van derden.
+
+### Eerste missie die zichzelf moest informeren — 15 september 2026
+
+De proef op de som voor deel 4: een opdracht die het type `CiWaitOutcome` liet
+gebruiken zónder te zeggen waar het stond. De vier waarden van dat type komen
+nergens voor in wat de Builder normaal te zien krijgt.
+
+Resultaat (PR #63): correcte import uit `src/core/mission-engine/v2/ci-wait.ts`,
+en precies de vier waarden `SETTLED`, `TIMED_OUT`, `NO_PULL_REQUEST` en `ERROR`
+— niet meer en niet minder. Hij heeft het bestand zelf gezocht en gelezen.
+
+In dezelfde run werkte ook het CI-wachten binnen de tik (130 seconden), en
+weigerde QA terecht een oordeel omdat de branch achterliep op `main`. Na het
+bijwerken van de branch, één ownervraag en een merge stond de missie op VOLTOOID.
+
 ## Restpunten
 
 Kleine dingen die bij een grotere stap zijn gesignaleerd en bewust zijn
@@ -1274,104 +1425,9 @@ QA.
 verplaatst naar "Voltooid" hierboven. Het eerste deel van stap 18 is
 in dezelfde missie meegetest en staat daar ook.)
 
-### Stap 18 — wat er nog open staat (deel 3 en deel 4)
-(voorheen stap 16) De oorspronkelijke stap 18 noemde vier dingen. Hoe die er nu
-voor staan:
+(Stap 18 stond hier, met deel 3 en deel 4 nog open. Allebei voltooid en live
+bevestigd op 14 en 15 september 2026 — zie "Stap 18 volledig af" hieronder.)
 
-1. **Alias-, barrel- en typeresolutie in de Context Resolver.** Alias-resolutie
-   bleek al in stap 10 gebouwd — met een expliciet opgeschreven afwijking van de
-   roadmaptekst, omdat dit project 245 keer via `@/` importeert tegen 126 keer
-   relatief. Barrel en types kwamen erbij in deel 1. **Af.**
-2. **Patch-gebaseerd schrijven.** Deel 2. **Af.**
-3. **Een deterministische signatuurcontrole als extra verdediging.** Staat nog
-   open — zie deel 3 hieronder.
-4. **Begrensde lees-/zoektools voor de Builder.** Staat nog open — zie deel 4.
-
-Deze twee stonden aanvankelijk onder één kopje, met "vereist function calling"
-erboven. Dat klopt alleen voor de tweede, en dat maakte de eerste onnodig groot
-en eng. Vandaar gesplitst.
-
-**Deel 3 — signatuurcontrole.** Een mechanische controle of een functie die de
-Builder aanroept werkelijk bestaat, met die naam en die parameters. Raakt de
-providers niet, vereist geen function calling, en is qua omvang vergelijkbaar
-met deel 1 of deel 2. Vangt precies de klasse fouten af waar stap 10 voor
-gebouwd is (verzonnen functienamen en signaturen), maar dan deterministisch in
-plaats van door het model beter te informeren — een tweede net onder het eerste.
-
-**Deel 4 — lees-/zoektools.** De grootste ingreep die er van deze hele stap nog
-ligt. De Builder kan op dit moment niets uitvoeren: hij schrijft blind en hoort
-pas via de CI of het klopt, en dat is de enige reden dat de technische
-herstellus (stap 11) bestaat.
-
-> **Correctie, 14 september 2026.** Hieronder stond dat "een tool die typecheck
-> en tests draait vóór de commit de grond onder die hele lus vandaan haalt".
-> Dat klopt niet, en het is twee keer mis.
->
-> Ten eerste kán het niet op deze infrastructuur. De Matrix draait op Vercel als
-> serverless functie: geen checkout van de repository, geen `node_modules`, geen
-> manier om `npm test` uit te voeren, en een harde limiet van 300 seconden. Een
-> echte uitvoeromgeving vraagt een machine die minuten mag draaien. Die is er al
-> — dat is GitHub Actions, waar `ci.yml` precies dit al doet. Een tweede,
-> gehuurde sandbox (E2B, Modal en dergelijke) zou een nieuw account, een nieuwe
-> sleutel en een nieuwe storingsbron toevoegen naast een testomgeving die al
-> bestaat en al vertrouwd wordt. Afgewezen, tenzij ooit blijkt dat de Builder
-> écht vrije commando's nodig heeft in plaats van het vaste CI-script. Een
-> self-hosted runner op Elroy's pc is om een andere reden afgewezen: die laat
-> GitHub code uitvoeren op zijn machine, en dat botst met het principe dat
-> agents via GitHub werken en nooit rechtstreeks aan zijn schijf komen.
->
-> Ten tweede haalt het de lus niet weg. Een model dat iets fout schrijft, blijft
-> iets fout schrijven. Wat vroeger verifiëren wél doet, is de fout goedkoper
-> maken: falen op een wegwerp-commit in plaats van op een pull request waar QA
-> en Elroy al naar zitten te kijken.
->
-> De lees-/zoektools zijn daarmee wat er van deel 4 overblijft, en die hebben
-> geen sandbox nodig — alleen function calling in de `LlmProvider`-interface.
-
-De prijs: de `LlmProvider`-interface moet uitgebreid worden met function
-calling, en dat werkt per aanbieder verschillend. Elke tool-aanroep is bovendien
-een extra modelronde. En de waarschuwing hieronder blijft staan: tools komen
-BOVENOP de gedwongen bewijslaag, nooit ervoor in de plaats.
-
-Elroy koos op 13 september de volgorde waarin dit is aangepakt: eerst de context
-slimmer maken (geen providerwijziging, laagste risico), daarna gericht bewerken,
-en function calling als laatste omdat dat de grootste ingreep is.
-
-**Overweging: MCP als vorm voor die tools (7 september 2026).** MCP (Model
-Context Protocol) is de open standaard voor de koppeling tussen een model en
-gereedschap; de spec is gedateerd en de versie van 28 juli 2026 ging naar
-stateless verbindingen. Het is precies de vorm die deze stap nodig heeft: nu
-is elke vaardigheid van een rol met de hand geschreven glue (`github-client.ts`
-groeit met elke behoefte een functie, `context-resolver.ts` kauwt het bewijs
-voor, `project-signals.ts` haalt per signaal apart op). Met tools vraagt de
-rol zelf op wat hij nodig heeft.
-
-Concreet zou het deze dingen in deze codebase raken:
-
-- De Builder kan nu **niets uitvoeren**. Hij schrijft blind en hoort pas via
-  de CI of het klopt — dat is de enige reden dat de technische herstellus
-  (stap 11) bestaat. (Zie de correctie hierboven: de uitvoeromgeving die dit
-  zou oplossen bestaat al in de vorm van GitHub Actions, en een tool die
-  "vóór de commit" verifieert kan op Vercel niet bestaan.)
-- De bewijslaag gaat **één laag diep** (module onder test plus directe
-  imports, maximaal acht bestanden). Criterium C — een module via een
-  barrel-export of alias — is precies daarom naar deze stap doorgeschoven.
-  Met een leestool vervalt de dieptegrens als hand-geschreven probleem.
-- QA oordeelt over bewijs dat wij **vooraf selecteren**. Bij PR #54 bleek dat
-  het type dat je nodig hebt om een mock-signatuur te beoordelen twee stappen
-  ver ligt en dus buiten de bundel valt.
-
-**Maar niet in plaats van de gedwongen bewijslaag.** De hele winst van stap 10
-en 12 is dat het bewijs wordt opgedrongen in plaats van dat we hopen dat het
-model ernaar vraagt. Tools brengen dat "hopen dat hij kijkt" via de achterdeur
-terug. Tools komen er dus bovenop, nooit voor in de plaats. Andere kosten om
-mee te wegen: elke tool-aanroep is een extra modelronde (een missie kost nu
-$0,27), en de tekstafspraak met het model bleek al breekbaar — een tweede
-protocol erbij is een tweede plek waar het stuk kan.
-
-Dit verandert niets aan het principe dat rollen via GitHub werken en nooit bij
-de schijf van de eigenaar komen: de gereedschapskist blijft tot de repository
-beperkt.
 
 ### Stap 19 — In-app CI/PR-zichtbaarheid
 (voorheen stap 17, oorspronkelijk stap 10) Toon PR-status (open/gemerged, CI
