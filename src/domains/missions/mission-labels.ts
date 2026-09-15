@@ -1,4 +1,5 @@
 import type { MissionAdvanceOutcome } from "@/core/mission-engine/v2/autonomous-advance";
+import type { CiWaitOutcome } from "@/core/mission-engine/v2/ci-wait";
 import type { AssignmentStatus, MissionRiskLevel, MissionV2 } from "@/core/mission-engine/v2/mission";
 
 /**
@@ -47,6 +48,17 @@ export function advanceStoppedReasonLabel(reason: MissionAdvanceOutcome["stopped
   };
 
   return labels[reason] ?? reason;
+}
+
+export function ciWaitOutcomeLabel(outcome: CiWaitOutcome): string {
+  const labels: Record<CiWaitOutcome, string> = {
+    SETTLED: "CI-controle afgerond",
+    TIMED_OUT: "Wachttijd voor CI verstreken",
+    NO_PULL_REQUEST: "Geen pull request gevonden",
+    ERROR: "Fout bij wachten op CI",
+  };
+
+  return labels[outcome] ?? outcome;
 }
 
 export function advanceOutcomeSummary(outcome: MissionAdvanceOutcome): string {
