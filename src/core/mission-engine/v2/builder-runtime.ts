@@ -244,12 +244,40 @@ async function askBuilder(
 ): Promise<ChatCompletionResult> {
   const provider = getChatProvider();
   const messages = [{ role: "user" as const, content: prompt }];
+  const systemPrompt = buildBuilderSystemPrompt(mission);
 
   if (tools && provider.chatCompletionWithTools) {
-    return provider.chatCompletionWithTools(buildBuilderSystemPrompt(mission), messages, tools);
+    try {
+      return await provider.chatCompletionWithTools(systemPrompt, messages, tools);
+    } catch (error) {
+      // TERUGVAL ZONDER GEREEDSCHAP (15 september 2026)
+      //
+      // De allereerste live poging met gereedschap strandde meteen, en niet op
+      // iets van ons: OpenAI weigert function tools voor redenerende modellen
+      // op de oude chat-API. Dat is opgelost door daar de Responses API te
+      // gebruiken (zie openai-provider.ts), maar de les erachter is breder.
+      //
+      // Gereedschap is een optimalisatie bovenop een pad dat al maanden
+      // draait. Een optimalisatie die dat pad kan blokkeren is geen
+      // optimalisatie maar een storing — exact dezelfde fout die eerder met de
+      // gerichte bewerking is gemaakt (zie EditNotAppliedError hieronder). Een
+      // model dat van naam verandert, een provider die zijn API wijzigt, een
+      // limiet die anders uitpakt: geen van die dingen hoort een missie te
+      // laten vallen.
+      //
+      // Dus: één keer opnieuw, zonder gereedschap. De Builder heeft dan alleen
+      // de gedwongen bewijslaag — precies de situatie van vóór deze stap, die
+      // aantoonbaar werkt.
+      console.error(
+        [
+          "Gereedschapsaanroep mislukt; opnieuw geprobeerd zonder gereedschap.",
+          `Reden: ${error instanceof Error ? error.message : String(error)}`,
+        ].join("\n"),
+      );
+    }
   }
 
-  return provider.chatCompletion(buildBuilderSystemPrompt(mission), messages);
+  return provider.chatCompletion(systemPrompt, messages);
 }
 
 /**
