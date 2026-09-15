@@ -43,6 +43,12 @@ import {
   type ObjectiveEvidenceFile,
 } from "./objective-evidence";
 import {
+  BUILDER_TOOL_DEFINITIONS,
+  MAX_BUILDER_TOOL_ROUNDS,
+  createBuilderToolRunner,
+} from "./builder-tools";
+import type { ChatCompletionResult, ChatWithToolsOptions } from "@/core/llm/types";
+import {
   applyEditResponse,
   EDIT_BLOCK_FORMAT,
   PatchEditError,
@@ -178,6 +184,15 @@ const MISSING_CONTEXT_MARKER = "ONVOLDOENDE CONTEXT:";
 const MISSING_CONTEXT_INSTRUCTION = `Kun je dit niet schrijven omdat je iets nodig hebt wat je hierboven niet ziet staan — een type, een functiesignatuur, de inhoud van een ander bestand? Verzin het dan niet en lever ook geen half werk. Antwoord in plaats daarvan met één regel die begint met "${MISSING_CONTEXT_MARKER}", gevolgd door precies wat je mist en waarom je het nodig hebt. Dat is een geldig antwoord en telt niet als fout.`;
 
 /**
+ * Dezelfde regel, maar voor een provider die gereedschap ondersteunt (stap 18,
+ * deel 4). De volgorde staat er expliciet in: eerst zelf opzoeken, en pas
+ * melden dat je iets mist wanneer het er echt niet blijkt te zijn. Zonder die
+ * volgorde is de kans reëel dat het model de makkelijke uitweg pakt en meldt
+ * dat het iets mist terwijl het dat gewoon had kunnen opvragen.
+ */
+const MISSING_CONTEXT_INSTRUCTION_WITH_TOOLS = `Heb je iets nodig wat je hierboven niet ziet staan — een type, een functiesignatuur, de inhoud van een ander bestand? Verzin het dan niet, maar zoek het op met het gereedschap dat je hebt: zoek_bestanden om een pad te vinden, lees_bestand om de echte inhoud te lezen. Doe dat vóórdat je iets schrijft. Blijkt het er daarna écht niet te zijn, antwoord dan met één regel die begint met "${MISSING_CONTEXT_MARKER}", gevolgd door precies wat je mist. Dat is een geldig antwoord en telt niet als fout.`;
+
+/**
  * Geeft de toelichting van het model terug wanneer het aangeeft iets te
  * missen, en anders null.
  *
@@ -213,6 +228,64 @@ export function findMissingContextComplaint(answer: string): string | null {
  * genoeg. Alles wat daaronder zit, is vrijwel zeker een zin in plaats van een
  * bestand.
  */
+/**
+ * Eén modelaanroep voor de Builder, met gereedschap wanneer de provider dat
+ * kan en zonder wanneer niet.
+ *
+ * De terugval is geen nette bijkomstigheid maar de kern van het ontwerp:
+ * `chatCompletionWithTools` is optioneel op `LlmProvider`, zodat een provider
+ * die het niet ondersteunt exact het gedrag van vóór deze stap houdt in plaats
+ * van te breken.
+ */
+async function askBuilder(
+  mission: MissionV2,
+  prompt: string,
+  tools: ChatWithToolsOptions | null,
+): Promise<ChatCompletionResult> {
+  const provider = getChatProvider();
+  const messages = [{ role: "user" as const, content: prompt }];
+
+  if (tools && provider.chatCompletionWithTools) {
+    return provider.chatCompletionWithTools(buildBuilderSystemPrompt(mission), messages, tools);
+  }
+
+  return provider.chatCompletion(buildBuilderSystemPrompt(mission), messages);
+}
+
+/**
+ * Bouwt het gereedschap voor één toewijzing: lezen en zoeken binnen de
+ * missiebranch, en niets anders. Zie builder-tools.ts voor waarom er geen
+ * schrijf- of uitvoergereedschap bij zit.
+ */
+function buildBuilderTools(
+  target: GithubRepoTarget,
+  ref: string,
+  treePaths: readonly string[],
+  writablePaths: readonly string[],
+): ChatWithToolsOptions {
+  return {
+    tools: BUILDER_TOOL_DEFINITIONS,
+    maxToolRounds: MAX_BUILDER_TOOL_ROUNDS,
+    runTool: createBuilderToolRunner({
+      treePaths,
+      writablePaths,
+      readFile: async (path) => {
+        try {
+          return (await getFileContent(target, path, ref))?.content ?? null;
+        } catch (error) {
+          console.error(`Gereedschap kon "${path}" niet ophalen.`, error);
+          return null;
+        }
+      },
+      // Zichtbaar in het serverlogboek: zonder dit is niet te zien of de
+      // Builder zijn gereedschap gebruikt, en of hij er iets aan heeft.
+      onUse: (toolName, argument, outcome) => {
+        console.info(`Builder-gereedschap: ${toolName}("${argument}") -> ${outcome}`);
+      },
+    }),
+  };
+}
+
 export function looksLikeSourceCode(path: string, content: string): boolean {
   if (!/\.(ts|tsx|js|jsx|mjs|cjs)$/.test(path)) return true;
 
@@ -797,9 +870,8 @@ async function editFileInPlace(
   userPrompt: string,
   currentContent: string,
   usageTracker: UsageTracker,
+  tools: ChatWithToolsOptions | null,
 ): Promise<SingleFileWriteResult> {
-  const provider = getChatProvider();
-
   let lastFailure: PatchEditError | null = null;
   let lastAnswer = "";
 
@@ -820,9 +892,7 @@ async function editFileInPlace(
         ].join("\n")
       : userPrompt;
 
-    const completion = await provider.chatCompletion(buildBuilderSystemPrompt(mission), [
-      { role: "user", content: prompt },
-    ]);
+    const completion = await askBuilder(mission, prompt, tools);
     usageTracker.add(completion);
     lastAnswer = completion.content;
 
@@ -917,8 +987,8 @@ async function writeSingleFile(
   testContext: BuilderTestContext | null,
   usesVitest: boolean,
   objectiveEvidence: readonly ObjectiveEvidenceFile[],
+  tools: ChatWithToolsOptions | null,
 ): Promise<SingleFileWriteResult> {
-  const provider = getChatProvider();
 
   // Hard stoppen in plaats van stilzwijgend afkappen wanneer een bestaand
   // bestand groter is dan MAX_FILE_CONTENT_LENGTH. Dit is de kern van de fix
@@ -987,7 +1057,7 @@ async function writeSingleFile(
     "- Alles wat je niet noemt blijft ongewijzigd. Je hoeft dus niets te herhalen om het te behouden.",
     "- Laat het vervangdeel leeg om het gevonden stuk te verwijderen.",
     "- Geef ALLEEN bewerkingsblokken. Geef nooit het hele bestand terug, ook niet als de wijziging klein is.",
-    MISSING_CONTEXT_INSTRUCTION,
+    tools ? MISSING_CONTEXT_INSTRUCTION_WITH_TOOLS : MISSING_CONTEXT_INSTRUCTION,
   ];
 
   const fullContentInstructionLines = [
@@ -995,7 +1065,7 @@ async function writeSingleFile(
     "",
     "BELANGRIJK: je antwoord IS de nieuwe bestandsinhoud, van de allereerste tot de allerlaatste regel — niets ervoor, niets erna. Geen markdown-codeblok (geen ``` eromheen), geen uitleg, geen inleidende zin zoals \"Hier is de inhoud:\", geen ===FILE===- of andere markeringen. Begin direct met de eerste regel van het bestand en stop na de laatste regel.",
     "",
-    MISSING_CONTEXT_INSTRUCTION,
+    tools ? MISSING_CONTEXT_INSTRUCTION_WITH_TOOLS : MISSING_CONTEXT_INSTRUCTION,
   ];
 
   const objectiveEvidenceBlock = formatObjectiveEvidence(objectiveEvidence);
@@ -1030,6 +1100,7 @@ async function writeSingleFile(
         // geeft alleen true bij een niet-lege currentContent.
         file.currentContent as string,
         usageTracker,
+        tools,
       );
     } catch (error) {
       if (!(error instanceof EditNotAppliedError)) throw error;
@@ -1065,9 +1136,11 @@ async function writeSingleFile(
     }
   }
 
-  const completion = await provider.chatCompletion(buildBuilderSystemPrompt(mission), [
-    { role: "user", content: buildUserPrompt(fullContentInstructionLines) },
-  ]);
+  const completion = await askBuilder(
+    mission,
+    buildUserPrompt(fullContentInstructionLines),
+    tools,
+  );
   usageTracker.add(completion);
 
   const rawContent = stripSurroundingCodeFence(completion.content);
@@ -1250,6 +1323,7 @@ async function writeFiles(
   testContextByPath: ReadonlyMap<string, BuilderTestContext>,
   usesVitest: boolean,
   objectiveEvidence: readonly ObjectiveEvidenceFile[],
+  tools: ChatWithToolsOptions | null,
 ): Promise<BuilderWriteResult> {
   const files: BuilderFileChange[] = [];
   let model = "";
@@ -1270,6 +1344,7 @@ async function writeFiles(
       testContextByPath.get(file.path) ?? null,
       usesVitest,
       objectiveEvidence,
+      tools,
     );
     files.push({ path: file.path, content: written.content });
     model = written.model;
@@ -1480,6 +1555,9 @@ export async function executeBuilderAssignment({
     testContextByPath,
     usesVitest,
     objectiveEvidence,
+    // Stap 18 (deel 4): de Builder mag zelf opvragen wat hij nodig heeft, in
+    // plaats van alleen te krijgen wat wij vooraf konden bedenken.
+    buildBuilderTools(target, missionBranch, treePaths, plan.paths),
   );
 
   // Stap 18 (deel 3): vóór er ook maar iets gecommit wordt, mechanisch

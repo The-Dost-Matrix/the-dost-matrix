@@ -1,8 +1,10 @@
 import type {
   ChatCompletionResult,
+  ChatWithToolsOptions,
   EmbeddingProvider,
   LlmMessage,
   LlmProvider,
+  LlmToolCall,
 } from "@/core/llm/types";
 
 /** Zie de toelichting bij ANTHROPIC_DEFAULT_CHAT_MODEL. */
@@ -62,47 +64,170 @@ async function providerFetch(url: string, init: RequestInit): Promise<Response> 
  * keer bij het laden van de module wordt ingelezen. De constante blijft de
  * fallback voor aanroepers die niets meegeven, zoals `getCouncilProviders`.
  */
+/** Zie de toelichting bij DEFAULT_MAX_TOOL_ROUNDS in anthropic-provider.ts. */
+const DEFAULT_MAX_TOOL_ROUNDS = 4;
+
+type OpenAiToolCall = {
+  id?: string;
+  function?: { name?: string; arguments?: string };
+};
+
+type OpenAiChoice = {
+  message?: {
+    content?: string | null;
+    tool_calls?: OpenAiToolCall[];
+  };
+  finish_reason?: string | null;
+};
+
+type OpenAiResponse = {
+  choices?: OpenAiChoice[];
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+};
+
+/**
+ * OpenAI geeft de argumenten als JSON-tekst terug, niet als object. Een model
+ * dat daar iets ongeldigs van maakt, hoort geen uitzondering op te leveren:
+ * een leeg argumentenobject laat het gereedschap zelf netjes klagen, en die
+ * klacht gaat als tekst terug naar het model.
+ */
+function parseToolArguments(raw: string | undefined): Record<string, unknown> {
+  if (!raw) return {};
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
 export function createOpenAiProvider(
   apiKey: string,
   model: string = OPENAI_CHAT_MODEL,
 ): LlmProvider {
+  async function postChat(body: Record<string, unknown>): Promise<OpenAiResponse> {
+    const response = await providerFetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ model, ...body }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+
+      console.error("OpenAI chat request failed", {
+        status: response.status,
+        model,
+        body: errorText,
+      });
+
+      throw new Error(describeOpenAiFailure(response.status, errorText));
+    }
+
+    return (await response.json()) as OpenAiResponse;
+  }
+
   return {
     id: "openai",
+
+    /**
+     * Zelfde lus als bij Anthropic, andere vorm. OpenAI wil het eigen
+     * assistant-bericht (mét `tool_calls`) teruggestuurd zien, gevolgd door
+     * één los `tool`-bericht per aanroep, gekoppeld via `tool_call_id`.
+     *
+     * De laatste ronde gaat bewust zónder gereedschap de deur uit, zodat het
+     * model gedwongen wordt met een echt antwoord te komen in plaats van
+     * opnieuw iets op te vragen.
+     */
+    async chatCompletionWithTools(
+      systemPrompt: string,
+      messages: LlmMessage[],
+      options: ChatWithToolsOptions,
+    ): Promise<ChatCompletionResult> {
+      const maxRounds = options.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
+
+      const conversation: Record<string, unknown>[] = [
+        { role: "system", content: systemPrompt },
+        ...messages.map((message) => ({ role: message.role, content: message.content })),
+      ];
+
+      const tools = options.tools.map((tool) => ({
+        type: "function",
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters,
+        },
+      }));
+
+      let inputTokens = 0;
+      let outputTokens = 0;
+
+      for (let round = 0; round <= maxRounds; round += 1) {
+        const withTools = round < maxRounds;
+
+        const data = await postChat({
+          messages: conversation,
+          ...(withTools ? { tools } : {}),
+        });
+
+        inputTokens += data.usage?.prompt_tokens ?? 0;
+        outputTokens += data.usage?.completion_tokens ?? 0;
+
+        const choice = data.choices?.[0];
+        const toolCalls = choice?.message?.tool_calls ?? [];
+
+        if (toolCalls.length === 0) {
+          const text = choice?.message?.content?.trim() ?? "";
+          if (!text) throw new Error("OpenAI gaf een leeg antwoord terug.");
+
+          return {
+            content: text,
+            model: `openai/${model}`,
+            ...(typeof choice?.finish_reason === "string"
+              ? { stopReason: choice.finish_reason }
+              : {}),
+            usage: { inputTokens, outputTokens },
+          };
+        }
+
+        conversation.push({
+          role: "assistant",
+          content: choice?.message?.content ?? null,
+          tool_calls: toolCalls,
+        });
+
+        for (const toolCall of toolCalls) {
+          const call: LlmToolCall = {
+            id: toolCall.id ?? "",
+            name: toolCall.function?.name ?? "",
+            arguments: parseToolArguments(toolCall.function?.arguments),
+          };
+
+          conversation.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: await options.runTool(call),
+          });
+        }
+      }
+
+      throw new Error("De gereedschapslus van OpenAI eindigde zonder antwoord.");
+    },
     async chatCompletion(
       systemPrompt: string,
       messages: LlmMessage[],
     ): Promise<ChatCompletionResult> {
-      const response = await providerFetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: "system", content: systemPrompt }, ...messages],
-        }),
+      // Het aanroepen en de foutafhandeling staan in postChat hierboven,
+      // gedeeld met de gereedschapslus.
+      const data = await postChat({
+        messages: [{ role: "system", content: systemPrompt }, ...messages],
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-
-        console.error("OpenAI chat request failed", {
-          status: response.status,
-          model,
-          body: errorText,
-        });
-
-        throw new Error(describeOpenAiFailure(response.status, errorText));
-      }
-
-      const data = (await response.json()) as {
-        choices?: {
-          message?: { content?: string | null };
-          finish_reason?: string | null;
-        }[];
-        usage?: { prompt_tokens?: number; completion_tokens?: number };
-      };
       const text = data.choices?.[0]?.message?.content?.trim() ?? "";
       if (!text) throw new Error("OpenAI gaf een leeg antwoord terug.");
 

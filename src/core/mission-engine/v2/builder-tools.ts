@@ -1,0 +1,279 @@
+/**
+ * Stap 18 (deel 4) — lees- en zoekgereedschap voor de Builder.
+ *
+ * WAAROM DIT BESTAAT
+ *
+ * De bewijslaag (stap 10) stelt vooraf samen wat de Builder te zien krijgt:
+ * de module onder test en één laag directe imports. Dat werkt goed zolang wij
+ * kunnen raden wat hij nodig heeft, en het faalt zodra dat niet zo is.
+ *
+ * Op 14 september 2026 gebeurde dat, live en zichtbaar. De opdracht droeg de
+ * Builder op een type te gebruiken uit een bestand dat niet in de bundel zat,
+ * en het model deed precies wat het moest doen — weigeren in plaats van
+ * gokken: "Zonder die informatie zou een bewerkingsblok velden moeten
+ * veronderstellen, in strijd met je expliciete opdracht om niets te
+ * verzinnen." Vier pogingen lang.
+ *
+ * Er zijn toen twee dingen gebouwd: bestanden die de opdracht met naam noemt
+ * gaan automatisch mee (objective-evidence.ts), en het model kan melden dat
+ * het iets mist. Allebei lossen ze het geval op waarin iemand vóóraf weet wat
+ * er nodig is. Dit bestand lost het geval op waarin niemand dat wist: de
+ * Builder mag het zelf opvragen.
+ *
+ * WAT DIT NADRUKKELIJK NIET IS
+ *
+ * Geen vervanging van de gedwongen bewijslaag. De hele winst daarvan is dat
+ * het bewijs wordt opgedrongen in plaats van dat we hopen dat het model
+ * ernaar vraagt; gereedschap brengt dat "hopen dat hij kijkt" via de
+ * achterdeur terug. Het komt er dus bovenop, nooit voor in de plaats.
+ *
+ * Geen schrijfgereedschap. Deze twee lezen en zoeken, meer niet. Schrijven
+ * blijft lopen via het vaste pad met de bestandscontroles eromheen (stap 18
+ * deel 2 en 3) — anders zou het model langs elke controle heen kunnen
+ * schrijven die daar juist voor gebouwd is.
+ *
+ * Geen uitvoergereedschap. Typecheck en tests draaien kan hier niet, en hoeft
+ * ook niet: dat doet de CI, en de missie wacht er sinds 15 september op (zie
+ * ci-wait.ts).
+ *
+ * BEGRENSD, EN ALTIJD MET EEN ANTWOORD
+ *
+ * Elk gereedschap kent alleen paden die aantoonbaar in de branch staan, kapt
+ * grote bestanden af, en geeft bij een fout een leesbare tekst terug in
+ * plaats van een uitzondering. Die laatste keuze is bewust: een model dat een
+ * verkeerd pad opvraagt moet dat kunnen lezen en zichzelf corrigeren, niet de
+ * hele toewijzing laten vallen.
+ */
+
+import type { LlmToolCall, LlmToolDefinition } from "@/core/llm/types";
+
+/** Hoeveel tekens er per opgevraagd bestand maximaal teruggaan. */
+export const MAX_TOOL_FILE_CHARS = 12_000;
+
+/** Hoeveel paden een zoekopdracht hoogstens teruggeeft. */
+export const MAX_TOOL_SEARCH_RESULTS = 40;
+
+/**
+ * Hoe vaak de Builder gereedschap mag gebruiken binnen één bestandsschrijfbeurt.
+ *
+ * Vier. Genoeg om een type op te zoeken, te kijken waar het vandaan komt, en
+ * nog twee keer iets na te slaan. Meer is doorgaans geen onderzoek meer maar
+ * rondkijken, en elke ronde kost een volledige modelaanroep.
+ */
+export const MAX_BUILDER_TOOL_ROUNDS = 4;
+
+export const READ_FILE_TOOL = "lees_bestand";
+export const SEARCH_FILES_TOOL = "zoek_bestanden";
+
+/**
+ * De gereedschapsbeschrijvingen zoals het model ze te lezen krijgt.
+ *
+ * De omschrijvingen zijn bewust uitgesproken over wanneer je iets gebruikt,
+ * niet alleen over wat het doet: dat is de enige sturing die er is op de
+ * vraag of het model gereedschap pakt of gaat gokken.
+ */
+export const BUILDER_TOOL_DEFINITIONS: LlmToolDefinition[] = [
+  {
+    name: READ_FILE_TOOL,
+    description:
+      "Geeft de huidige inhoud van één bestand uit deze repository. Gebruik dit zodra je een type, functiesignatuur of constante nodig hebt die je niet letterlijk in de aangeleverde context ziet staan — dus in plaats van aannemen hoe iets eruitziet.",
+    parameters: {
+      type: "object",
+      properties: {
+        pad: {
+          type: "string",
+          description:
+            'Het volledige pad vanaf de hoofdmap van de repository, bijvoorbeeld "src/core/mission-engine/v2/mission.ts".',
+        },
+      },
+      required: ["pad"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: SEARCH_FILES_TOOL,
+    description:
+      "Zoekt bestandspaden in deze repository op een stuk tekst uit het pad of de bestandsnaam. Gebruik dit wanneer je wél weet hoe iets heet maar niet waar het staat, en vraag het gevonden bestand daarna op met lees_bestand.",
+    parameters: {
+      type: "object",
+      properties: {
+        patroon: {
+          type: "string",
+          description:
+            'Een stuk van het pad of de bestandsnaam, bijvoorbeeld "mission-labels" of "core/llm".',
+        },
+      },
+      required: ["patroon"],
+      additionalProperties: false,
+    },
+  },
+];
+
+function stringArgument(call: LlmToolCall, name: string): string | null {
+  const value = call.arguments[name];
+
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
+/**
+ * Maakt van een opgegeven pad de schrijfwijze zoals die in de bestandenlijst
+ * staat. Voorloopstrepen en het `@/`-alias eruit — zo schrijft een mens (en
+ * een importregel) het op.
+ */
+export function normalizeToolPath(raw: string): string {
+  const trimmed = raw.trim().replace(/^\/+/, "");
+
+  if (trimmed.startsWith("@/")) return `src/${trimmed.slice(2)}`;
+  if (trimmed.startsWith("./")) return trimmed.slice(2);
+
+  return trimmed;
+}
+
+/**
+ * Zoekt paden die het patroon bevatten. Hoofdletterongevoelig, want een model
+ * dat "MissionLabels" typt bedoelt "mission-labels".
+ *
+ * Kortere paden eerst: die liggen dichter bij de hoofdmap en zijn vaker het
+ * bestand dat bedoeld wordt dan een diep weggestopte naamgenoot.
+ */
+export function searchTreePaths(
+  treePaths: readonly string[],
+  pattern: string,
+  limit: number = MAX_TOOL_SEARCH_RESULTS,
+): string[] {
+  const needle = pattern.trim().toLowerCase();
+
+  if (needle === "") return [];
+
+  return treePaths
+    .filter((path) => path.toLowerCase().includes(needle))
+    .sort((a, b) => a.length - b.length || a.localeCompare(b))
+    .slice(0, limit);
+}
+
+export interface BuilderToolRunnerInput {
+  /** Alle bestanden die op de missiebranch staan. */
+  treePaths: readonly string[];
+  /** Haalt de inhoud van één bestand op, of null wanneer die er niet is. */
+  readFile: (path: string) => Promise<string | null>;
+  /** Paden die deze toewijzing zelf schrijft — die mag hij niet als "huidig" lezen. */
+  writablePaths?: readonly string[];
+  /** Wordt aangeroepen bij elk gebruik, voor het logboek. */
+  onUse?: (toolName: string, argument: string, outcome: string) => void;
+}
+
+/**
+ * Bouwt de functie die één gereedschapsaanroep uitvoert.
+ *
+ * Alles wat misgaat komt terug als leesbare tekst voor het model: een
+ * onbekend gereedschap, een ontbrekend argument, een pad dat niet bestaat.
+ * Alleen zo kan het model zich herstellen binnen dezelfde beurt.
+ *
+ * Bestanden die de toewijzing zelf gaat schrijven worden geweigerd met een
+ * uitleg. De Builder krijgt hun huidige inhoud al op de gewone manier te
+ * zien, en ze via gereedschap nóg een keer ophalen levert verwarring op over
+ * welke versie de echte is.
+ */
+export function createBuilderToolRunner({
+  treePaths,
+  readFile,
+  writablePaths = [],
+  onUse,
+}: BuilderToolRunnerInput) {
+  const known = new Set(treePaths);
+
+  return async function runBuilderTool(call: LlmToolCall): Promise<string> {
+    const report = (argument: string, outcome: string, body: string) => {
+      onUse?.(call.name, argument, outcome);
+      return body;
+    };
+
+    if (call.name === SEARCH_FILES_TOOL) {
+      const pattern = stringArgument(call, "patroon");
+
+      if (!pattern) {
+        return report("", "GEEN_PATROON", 'Geef een "patroon" mee: een stuk van het pad of de bestandsnaam.');
+      }
+
+      const matches = searchTreePaths(treePaths, pattern);
+
+      if (matches.length === 0) {
+        return report(
+          pattern,
+          "NIETS_GEVONDEN",
+          `Geen enkel bestand in deze repository bevat "${pattern}" in zijn pad. Probeer een korter of ander stuk tekst.`,
+        );
+      }
+
+      return report(
+        pattern,
+        `${matches.length}_GEVONDEN`,
+        [`Gevonden paden voor "${pattern}":`, ...matches.map((path) => `- ${path}`)].join("\n"),
+      );
+    }
+
+    if (call.name === READ_FILE_TOOL) {
+      const raw = stringArgument(call, "pad");
+
+      if (!raw) {
+        return report("", "GEEN_PAD", 'Geef een "pad" mee, vanaf de hoofdmap van de repository.');
+      }
+
+      const path = normalizeToolPath(raw);
+
+      if (writablePaths.includes(path)) {
+        return report(
+          path,
+          "EIGEN_BESTAND",
+          `"${path}" is een bestand dat je in deze toewijzing zelf schrijft. De huidige inhoud staat al in je opdracht hierboven; gebruik die.`,
+        );
+      }
+
+      if (!known.has(path)) {
+        // Zoeken op de bestandsnaam zónder extensie: een model dat
+        // "missions.ts" typt terwijl het bestand "mission.ts" heet, vindt zo
+        // alsnog de buurt waar het moet zijn.
+        const basename = (path.split("/").pop() ?? path).replace(/\.[^.]+$/, "");
+        const suggestions = searchTreePaths(treePaths, basename, 5);
+
+        return report(
+          path,
+          "BESTAAT_NIET",
+          [
+            `"${path}" bestaat niet in deze repository.`,
+            ...(suggestions.length > 0
+              ? ["Bedoelde je een van deze?", ...suggestions.map((item) => `- ${item}`)]
+              : ["Gebruik zoek_bestanden om het juiste pad te vinden."]),
+          ].join("\n"),
+        );
+      }
+
+      const content = await readFile(path);
+
+      if (content === null) {
+        return report(
+          path,
+          "NIET_OPGEHAALD",
+          `"${path}" staat wel in de bestandenlijst, maar de inhoud kon niet opgehaald worden. Ga verder zonder dit bestand en verzin de inhoud niet.`,
+        );
+      }
+
+      const truncated = content.length > MAX_TOOL_FILE_CHARS;
+
+      return report(
+        path,
+        truncated ? "AFGEKAPT" : "OK",
+        [
+          `Inhoud van ${path}${truncated ? ` (eerste ${MAX_TOOL_FILE_CHARS} tekens van ${content.length})` : ""}:`,
+          content.slice(0, MAX_TOOL_FILE_CHARS),
+        ].join("\n"),
+      );
+    }
+
+    return report(
+      "",
+      "ONBEKEND_GEREEDSCHAP",
+      `"${call.name}" bestaat niet. Beschikbaar zijn: ${BUILDER_TOOL_DEFINITIONS.map((tool) => tool.name).join(", ")}.`,
+    );
+  };
+}
