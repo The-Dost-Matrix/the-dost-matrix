@@ -153,30 +153,46 @@ describe("Anthropic — gereedschapslus", () => {
   });
 });
 
-describe("OpenAI — gereedschapslus", () => {
+/**
+ * OpenAI loopt over de Responses API (`/v1/responses`) in plaats van de
+ * chat-API. Reden: redenerende modellen als gpt-6-astra weigeren function
+ * tools op `/v1/chat/completions`, en de uitweg die OpenAI's eigen
+ * foutmelding noemt (`reasoning_effort: 'none'`) accepteert dat model niet.
+ * Zie de toelichting in openai-provider.ts.
+ */
+describe("OpenAI — gereedschapslus over de Responses API", () => {
   const openAiToolCall = {
-    choices: [
+    status: "completed",
+    output: [
+      { type: "reasoning", id: "rs_1", summary: [] },
       {
-        finish_reason: "tool_calls",
-        message: {
-          content: null,
-          tool_calls: [
-            {
-              id: "call_1",
-              type: "function",
-              function: { name: "lees_bestand", arguments: '{"pad":"src/a.ts"}' },
-            },
-          ],
-        },
+        type: "function_call",
+        call_id: "call_1",
+        name: "lees_bestand",
+        arguments: '{"pad":"src/a.ts"}',
       },
     ],
-    usage: { prompt_tokens: 10, completion_tokens: 5 },
+    usage: { input_tokens: 10, output_tokens: 5 },
   };
 
   const openAiFinal = {
-    choices: [{ finish_reason: "stop", message: { content: "export const a = 1;" } }],
-    usage: { prompt_tokens: 20, completion_tokens: 8 },
+    status: "completed",
+    output: [{ type: "message", content: [{ type: "output_text", text: "export const a = 1;" }] }],
+    usage: { input_tokens: 20, output_tokens: 8 },
   };
+
+  it("praat met /v1/responses en niet met /v1/chat/completions", async () => {
+    // Dit is de hele reden dat deze lus apart bestaat.
+    const { fetchMock } = stubFetch([openAiFinal]);
+
+    await createOpenAiProvider("sleutel", "model-y").chatCompletionWithTools!(
+      "systeem",
+      [{ role: "user", content: "x" }],
+      { tools: TOOLS, runTool: async () => "nooit" },
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.openai.com/v1/responses");
+  });
 
   it("voert het gereedschap uit en geeft daarna het echte antwoord", async () => {
     stubFetch([openAiToolCall, openAiFinal]);
@@ -195,10 +211,39 @@ describe("OpenAI — gereedschapslus", () => {
     );
 
     expect(result.content).toBe("export const a = 1;");
-    expect(calls[0].arguments).toEqual({ pad: "src/a.ts" });
+    expect(calls[0]).toEqual({
+      id: "call_1",
+      name: "lees_bestand",
+      arguments: { pad: "src/a.ts" },
+    });
   });
 
-  it("koppelt het resultaat via tool_call_id", async () => {
+  it("stuurt de systeemprompt als instructions en de gereedschappen plat", async () => {
+    // De Responses API wil geen "system"-bericht en geen tools genest onder
+    // "function" — dat is precies waar de chat-API wél om vraagt.
+    const { bodies } = stubFetch([openAiFinal]);
+
+    await createOpenAiProvider("sleutel", "model-y").chatCompletionWithTools!(
+      "systeem",
+      [{ role: "user", content: "x" }],
+      { tools: TOOLS, runTool: async () => "nooit" },
+    );
+
+    expect(bodies[0].instructions).toBe("systeem");
+    expect(bodies[0]).toHaveProperty("input");
+    expect(bodies[0]).not.toHaveProperty("messages");
+    expect((bodies[0].tools as Record<string, unknown>[])[0]).toMatchObject({
+      type: "function",
+      name: "lees_bestand",
+    });
+  });
+
+  /**
+   * De belangrijkste van dit blok. Gooi je de redeneerstappen weg tussen twee
+   * rondes, dan verliest het model zijn eigen gedachtegang en begint het elke
+   * ronde opnieuw.
+   */
+  it("stuurt het volledige antwoord inclusief redeneerstappen terug", async () => {
     const { bodies } = stubFetch([openAiToolCall, openAiFinal]);
 
     await createOpenAiProvider("sleutel", "model-y").chatCompletionWithTools!(
@@ -207,10 +252,15 @@ describe("OpenAI — gereedschapslus", () => {
       { tools: TOOLS, runTool: async () => "inhoud van a" },
     );
 
-    const tweede = bodies[1].messages as Record<string, unknown>[];
-    const toolBericht = tweede.find((message) => message.role === "tool");
+    const tweede = bodies[1].input as Record<string, unknown>[];
 
-    expect(toolBericht).toMatchObject({ tool_call_id: "call_1", content: "inhoud van a" });
+    expect(tweede.some((item) => item.type === "reasoning")).toBe(true);
+    expect(tweede.some((item) => item.type === "function_call")).toBe(true);
+    expect(tweede.at(-1)).toEqual({
+      type: "function_call_output",
+      call_id: "call_1",
+      output: "inhoud van a",
+    });
   });
 
   /**
@@ -221,15 +271,13 @@ describe("OpenAI — gereedschapslus", () => {
   it("laat ongeldige argumenten niet crashen", async () => {
     stubFetch([
       {
-        choices: [
+        status: "completed",
+        output: [
           {
-            finish_reason: "tool_calls",
-            message: {
-              content: null,
-              tool_calls: [
-                { id: "call_1", function: { name: "lees_bestand", arguments: "{kapot" } },
-              ],
-            },
+            type: "function_call",
+            call_id: "call_1",
+            name: "lees_bestand",
+            arguments: "{kapot",
           },
         ],
       },
@@ -277,5 +325,32 @@ describe("OpenAI — gereedschapslus", () => {
 
     expect(bodies[0]).toHaveProperty("tools");
     expect(bodies[2]).not.toHaveProperty("tools");
+  });
+
+  it("gebruikt output_text wanneer de provider die meestuurt", async () => {
+    stubFetch([{ status: "completed", output: [], output_text: "klaar" }]);
+
+    const result = await createOpenAiProvider("sleutel", "model-y").chatCompletionWithTools!(
+      "systeem",
+      [{ role: "user", content: "x" }],
+      { tools: TOOLS, runTool: async () => "nooit" },
+    );
+
+    expect(result.content).toBe("klaar");
+  });
+
+  it("blijft voor een gewone aanroep de chat-API gebruiken", async () => {
+    // Elke rol die géén gereedschap gebruikt — Director, QA, de Council —
+    // hoort van deze hele wijziging niets te merken.
+    const { fetchMock } = stubFetch([
+      { choices: [{ finish_reason: "stop", message: { content: "gewoon" } }] },
+    ]);
+
+    const result = await createOpenAiProvider("sleutel", "model-y").chatCompletion("systeem", [
+      { role: "user", content: "x" },
+    ]);
+
+    expect(result.content).toBe("gewoon");
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.openai.com/v1/chat/completions");
   });
 });

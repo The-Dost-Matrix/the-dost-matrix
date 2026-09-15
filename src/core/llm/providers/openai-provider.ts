@@ -67,16 +67,8 @@ async function providerFetch(url: string, init: RequestInit): Promise<Response> 
 /** Zie de toelichting bij DEFAULT_MAX_TOOL_ROUNDS in anthropic-provider.ts. */
 const DEFAULT_MAX_TOOL_ROUNDS = 4;
 
-type OpenAiToolCall = {
-  id?: string;
-  function?: { name?: string; arguments?: string };
-};
-
 type OpenAiChoice = {
-  message?: {
-    content?: string | null;
-    tool_calls?: OpenAiToolCall[];
-  };
+  message?: { content?: string | null };
   finish_reason?: string | null;
 };
 
@@ -84,6 +76,66 @@ type OpenAiResponse = {
   choices?: OpenAiChoice[];
   usage?: { prompt_tokens?: number; completion_tokens?: number };
 };
+
+/**
+ * WAAROM GEREEDSCHAP HIER OVER EEN ANDERE API LOOPT (15 september 2026)
+ *
+ * De eerste live poging met gereedschap gaf meteen een 400 terug:
+ *
+ *   "Function tools with reasoning_effort are not supported for gpt-6-astra
+ *    in /v1/chat/completions. To use function tools, use /v1/responses or set
+ *    reasoning_effort to 'none'."
+ *
+ * Dat is geen fout van deze code. Redenerende modellen van OpenAI accepteren
+ * geen gereedschap op de oude chat-API, ook niet wanneer wij `reasoning_effort`
+ * helemaal niet meesturen — die modellen redeneren standaard, en dan geldt de
+ * beperking onzichtbaar. De uitweg die de melding zelf noemt bestaat voor dit
+ * model bovendien niet: volgens het modeloverzicht van OpenAI/Azure accepteert
+ * gpt-6-astra de waarde 'none' niet.
+ *
+ * Blijft over: de Responses API. Die is voor precies dit geval gemaakt.
+ *
+ * De gewone `chatCompletion` hieronder blijft ongemoeid op /v1/chat/completions
+ * — die werkt daar prima, en elke rol die géén gereedschap gebruikt (Director,
+ * QA, de Council) hoeft hier dus niets van te merken.
+ *
+ * Twee dingen zijn anders dan bij de chat-API, en allebei zijn ze essentieel:
+ *
+ * 1. De systeemprompt heet `instructions`, en berichten gaan in `input`.
+ * 2. Het volledige antwoord van het model — inclusief zijn redeneerstappen —
+ *    moet ongewijzigd terug in `input`. Gooi je die weg, dan verliest het
+ *    model zijn eigen gedachtegang tussen twee gereedschapsrondes en begint
+ *    het elke ronde opnieuw.
+ */
+type OpenAiResponseItem = {
+  type?: string;
+  name?: string;
+  arguments?: string;
+  call_id?: string;
+  content?: { type?: string; text?: string }[];
+};
+
+type OpenAiResponsesReply = {
+  output?: OpenAiResponseItem[];
+  output_text?: string;
+  status?: string;
+  usage?: { input_tokens?: number; output_tokens?: number };
+};
+
+/** De tekst uit een Responses-antwoord: alles wat als bericht terugkomt. */
+function responsesText(data: OpenAiResponsesReply): string {
+  if (typeof data.output_text === "string" && data.output_text.trim() !== "") {
+    return data.output_text.trim();
+  }
+
+  return (data.output ?? [])
+    .filter((item) => item.type === "message")
+    .flatMap((item) => item.content ?? [])
+    .filter((part) => part.type === "output_text")
+    .map((part) => part.text ?? "")
+    .join("\n")
+    .trim();
+}
 
 /**
  * OpenAI geeft de argumenten als JSON-tekst terug, niet als object. Een model
@@ -106,8 +158,8 @@ export function createOpenAiProvider(
   apiKey: string,
   model: string = OPENAI_CHAT_MODEL,
 ): LlmProvider {
-  async function postChat(body: Record<string, unknown>): Promise<OpenAiResponse> {
-    const response = await providerFetch("https://api.openai.com/v1/chat/completions", {
+  async function postJson<T>(url: string, body: Record<string, unknown>): Promise<T> {
+    const response = await providerFetch(url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -121,6 +173,7 @@ export function createOpenAiProvider(
 
       console.error("OpenAI chat request failed", {
         status: response.status,
+        url,
         model,
         body: errorText,
       });
@@ -128,16 +181,26 @@ export function createOpenAiProvider(
       throw new Error(describeOpenAiFailure(response.status, errorText));
     }
 
-    return (await response.json()) as OpenAiResponse;
+    return (await response.json()) as T;
   }
+
+  const postChat = (body: Record<string, unknown>) =>
+    postJson<OpenAiResponse>("https://api.openai.com/v1/chat/completions", body);
+
+  const postResponses = (body: Record<string, unknown>) =>
+    postJson<OpenAiResponsesReply>("https://api.openai.com/v1/responses", body);
 
   return {
     id: "openai",
 
     /**
-     * Zelfde lus als bij Anthropic, andere vorm. OpenAI wil het eigen
-     * assistant-bericht (mét `tool_calls`) teruggestuurd zien, gevolgd door
-     * één los `tool`-bericht per aanroep, gekoppeld via `tool_call_id`.
+     * Zelfde lus als bij Anthropic, maar over de Responses API — zie de
+     * toelichting bij OpenAiResponseItem hierboven voor waarom dat moet.
+     *
+     * Het hele antwoord van het model gaat ongewijzigd terug in `input`,
+     * inclusief zijn redeneerstappen. Dat is geen netheid: zonder die stappen
+     * verliest het model tussen twee gereedschapsrondes zijn eigen gedachtegang
+     * en begint het elke ronde opnieuw.
      *
      * De laatste ronde gaat bewust zónder gereedschap de deur uit, zodat het
      * model gedwongen wordt met een echt antwoord te komen in plaats van
@@ -150,18 +213,17 @@ export function createOpenAiProvider(
     ): Promise<ChatCompletionResult> {
       const maxRounds = options.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
 
-      const conversation: Record<string, unknown>[] = [
-        { role: "system", content: systemPrompt },
-        ...messages.map((message) => ({ role: message.role, content: message.content })),
-      ];
+      const input: Record<string, unknown>[] = messages
+        .filter((message) => message.role !== "system")
+        .map((message) => ({ role: message.role, content: message.content }));
 
+      // De Responses API wil de gereedschappen plat, niet genest onder
+      // "function" zoals de chat-API.
       const tools = options.tools.map((tool) => ({
         type: "function",
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.parameters,
-        },
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
       }));
 
       let inputTokens = 0;
@@ -170,48 +232,42 @@ export function createOpenAiProvider(
       for (let round = 0; round <= maxRounds; round += 1) {
         const withTools = round < maxRounds;
 
-        const data = await postChat({
-          messages: conversation,
+        const data = await postResponses({
+          instructions: systemPrompt,
+          input,
           ...(withTools ? { tools } : {}),
         });
 
-        inputTokens += data.usage?.prompt_tokens ?? 0;
-        outputTokens += data.usage?.completion_tokens ?? 0;
+        inputTokens += data.usage?.input_tokens ?? 0;
+        outputTokens += data.usage?.output_tokens ?? 0;
 
-        const choice = data.choices?.[0];
-        const toolCalls = choice?.message?.tool_calls ?? [];
+        const calls = (data.output ?? []).filter((item) => item.type === "function_call");
 
-        if (toolCalls.length === 0) {
-          const text = choice?.message?.content?.trim() ?? "";
+        if (calls.length === 0) {
+          const text = responsesText(data);
           if (!text) throw new Error("OpenAI gaf een leeg antwoord terug.");
 
           return {
             content: text,
             model: `openai/${model}`,
-            ...(typeof choice?.finish_reason === "string"
-              ? { stopReason: choice.finish_reason }
-              : {}),
+            ...(typeof data.status === "string" ? { stopReason: data.status } : {}),
             usage: { inputTokens, outputTokens },
           };
         }
 
-        conversation.push({
-          role: "assistant",
-          content: choice?.message?.content ?? null,
-          tool_calls: toolCalls,
-        });
+        input.push(...((data.output ?? []) as unknown as Record<string, unknown>[]));
 
-        for (const toolCall of toolCalls) {
+        for (const item of calls) {
           const call: LlmToolCall = {
-            id: toolCall.id ?? "",
-            name: toolCall.function?.name ?? "",
-            arguments: parseToolArguments(toolCall.function?.arguments),
+            id: item.call_id ?? "",
+            name: item.name ?? "",
+            arguments: parseToolArguments(item.arguments),
           };
 
-          conversation.push({
-            role: "tool",
-            tool_call_id: call.id,
-            content: await options.runTool(call),
+          input.push({
+            type: "function_call_output",
+            call_id: call.id,
+            output: await options.runTool(call),
           });
         }
       }
