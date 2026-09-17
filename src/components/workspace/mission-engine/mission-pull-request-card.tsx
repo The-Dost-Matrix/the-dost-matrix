@@ -140,7 +140,7 @@ export function MissionPullRequestCard() {
       )}
 
       <button
-        className="secondary"
+        className="mev2-pr-refresh"
         disabled={loading || !user}
         onClick={() => void load()}
         type="button"
