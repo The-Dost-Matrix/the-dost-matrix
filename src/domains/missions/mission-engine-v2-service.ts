@@ -1,6 +1,7 @@
 import type { User } from "firebase/auth";
 import type { DirectorDecision } from "@/core/contracts/v2";
 import type { MissionRiskLevel, MissionV2 } from "@/core/mission-engine/v2/mission";
+import type { MissionPullRequestStatus } from "@/core/mission-engine/v2/mission-pr-status";
 import type { KnowledgeEntry } from "@/core/domain/knowledge/knowledge-entry";
 
 /**
@@ -119,6 +120,40 @@ export async function getMissionV2(user: User, missionId: string): Promise<Missi
   }
 
   return data.mission as MissionV2;
+}
+
+/**
+ * Stap 19: haalt de stand van de pull request en de CI op bij een missie.
+ *
+ * Apart van `getMissionV2` en niet standaard meegeleverd, want dit kost vier
+ * GitHub-aanroepen en het paneel haalt de missie na elke handeling opnieuw op.
+ *
+ * `pullRequest` is null wanneer er nog geen pull request is (de normale stand
+ * vóór de eerste builder-stap) én wanneer GitHub onbereikbaar was. Die twee
+ * zijn hier bewust niet uit elkaar te houden: in beide gevallen is er niets te
+ * tonen, en een foutmelding over GitHub in een informatiepaneel helpt niemand.
+ */
+export async function getMissionPullRequestStatusV2(
+  user: User,
+  missionId: string,
+): Promise<MissionPullRequestStatus | null> {
+  const idToken = await user.getIdToken();
+
+  const response = await fetch(
+    `/api/missions/v2?missionId=${encodeURIComponent(missionId)}&pullRequest=1`,
+    {
+      headers: { authorization: `Bearer ${idToken}` },
+      cache: "no-store",
+    },
+  );
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.error ?? "Stand van de pull request ophalen is mislukt.");
+  }
+
+  return (data.pullRequest as MissionPullRequestStatus | null) ?? null;
 }
 
 export async function dispatchMissionV2(

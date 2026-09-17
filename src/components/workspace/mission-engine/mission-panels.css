@@ -455,3 +455,59 @@
   min-height: 70px;
   margin-bottom: 10px;
 }
+
+/* ==========================================================================
+   Stap 19 — pull request & CI.
+
+   Kleur draagt hier betekenis en is daarom karig gebruikt: alleen een rode CI
+   en een achterlopende branch krijgen nadruk, want dat zijn de twee dingen
+   waar een missie in de praktijk op stilvalt. Een lopende CI en "geen checks"
+   blijven bewust neutraal — een kaart die altijd schreeuwt, wordt niet meer
+   gelezen.
+   ========================================================================== */
+
+.mev2-pr-attention {
+  font-weight: 600;
+  color: var(--warning, #c2820a);
+}
+
+.mev2-pr-head {
+  font-size: 0.8rem;
+  margin: 6px 0 2px;
+}
+
+.mev2-pr-ci {
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin: 2px 0;
+}
+
+.mev2-pr-ci--success {
+  color: var(--success, #2f855a);
+}
+
+.mev2-pr-ci--failure {
+  color: var(--danger, #c53030);
+}
+
+/* "loopt nog", "geen checks" en "onbekend" zeggen niets over goed of fout. */
+.mev2-pr-ci--pending,
+.mev2-pr-ci--none,
+.mev2-pr-ci--unknown {
+  font-weight: 400;
+  opacity: 0.75;
+}
+
+.mev2-pr-behind {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--warning, #c2820a);
+  margin: 2px 0;
+}
+
+.mev2-pr-files {
+  margin: 6px 0;
+  padding-left: 18px;
+  font-size: 0.72rem;
+  opacity: 0.8;
+}

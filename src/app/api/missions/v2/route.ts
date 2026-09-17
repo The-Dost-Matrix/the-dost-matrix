@@ -11,6 +11,7 @@ import { createMissionEngineV2 } from "@/core/mission-engine/v2/engine-factory";
 import { listMissionsForOwner } from "@/core/mission-engine/v2/firestore-store";
 import type { MissionRiskLevel, MissionV2 } from "@/core/mission-engine/v2/mission";
 import { proposeMissionKnowledge } from "@/core/mission-engine/v2/mission-knowledge";
+import { getMissionPullRequestStatus } from "@/core/mission-engine/v2/mission-pr-status";
 import { executeRoleAssignment } from "@/core/mission-engine/v2/role-runtime";
 import { withOwnerLlmSettings } from "@/core/repositories/llm-settings-repository";
 import type { DirectorDecision, JsonValue } from "@/core/contracts/v2";
@@ -157,6 +158,20 @@ export async function GET(request: NextRequest) {
     }
 
     assertOwnership(mission, ownerId);
+
+    // Stap 19: de stand van de pull request en de CI, maar alleen wanneer de
+    // UI er expliciet om vraagt. Bewust niet standaard bij elke missie-ophaal:
+    // dit kost vier GitHub-aanroepen, en het missiepaneel haalt de missie na
+    // elke handeling opnieuw op. Zie mission-pr-status.ts — die geeft null bij
+    // elke storing, dus dit kan de route niet laten falen.
+    if (request.nextUrl.searchParams.get("pullRequest")) {
+      const pullRequest = await getMissionPullRequestStatus(mission);
+
+      return NextResponse.json(
+        { mission, pullRequest },
+        { headers: { "cache-control": "no-store" } },
+      );
+    }
 
     return NextResponse.json({ mission }, { headers: { "cache-control": "no-store" } });
   } catch (error) {

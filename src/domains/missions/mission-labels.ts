@@ -1,5 +1,7 @@
 import type { MissionAdvanceOutcome } from "@/core/mission-engine/v2/autonomous-advance";
 import type { CiWaitOutcome } from "@/core/mission-engine/v2/ci-wait";
+import type { CombinedCheckStatus } from "@/core/mission-engine/v2/github/github-client";
+import type { MissionPullRequestState } from "@/core/mission-engine/v2/mission-pr-status";
 import type { AssignmentStatus, MissionRiskLevel, MissionV2 } from "@/core/mission-engine/v2/mission";
 
 /**
@@ -95,4 +97,59 @@ export function riskLevelLabel(level: MissionRiskLevel): string {
   };
 
   return labels[level];
+}
+
+/** Stap 19: de toestand van de pull request van een missie. */
+export function pullRequestStateLabel(state: MissionPullRequestState): string {
+  const labels: Record<MissionPullRequestState, string> = {
+    OPEN: "Open",
+    MERGED: "Gemerged",
+    CLOSED: "Gesloten zonder merge",
+  };
+
+  return labels[state] ?? state;
+}
+
+/**
+ * De CI-stand in één regel, mét de namen van de checks die het betreft.
+ *
+ * Die namen zijn het hele punt. "CI mislukt" stuurt je alsnog naar GitHub;
+ * "CI mislukt: Typecheck & import-check" vertelt je meteen waar je moet
+ * kijken — en dat is precies wat deze stap moet wegnemen.
+ *
+ * `null` betekent dat de stand niet opgehaald kon worden. Dat is iets anders
+ * dan "geen checks", en het wordt hier bewust ook anders verwoord: het eerste
+ * gaat over ons, het tweede over de repository.
+ */
+export function ciStatusLabel(ci: CombinedCheckStatus | null): string {
+  if (!ci) return "CI-stand onbekend — niet op te halen";
+
+  const named = (names: string[]) => (names.length > 0 ? `: ${names.join(", ")}` : "");
+
+  switch (ci.state) {
+    case "success":
+      return "CI geslaagd";
+    case "failure":
+      return `CI mislukt${named(ci.failingCheckNames)}`;
+    case "pending":
+      return `CI loopt nog${named(ci.pendingCheckNames)}`;
+    default:
+      return "Geen CI-controles geregistreerd voor deze commit";
+  }
+}
+
+/**
+ * De achterstand op de standaardbranch, of een lege string wanneer er niets
+ * te melden valt.
+ *
+ * Een lege string en niet "bij" of "geen achterstand": dit is een
+ * waarschuwingsregel, en een waarschuwing die er ook staat als er niets aan de
+ * hand is, wordt niet meer gelezen.
+ */
+export function behindByLabel(behindBy: number | null): string {
+  if (behindBy === null || behindBy <= 0) return "";
+
+  const commits = behindBy === 1 ? "1 commit" : `${behindBy} commits`;
+
+  return `Loopt ${commits} achter op de standaardbranch — werk de branch bij, anders weigert QA een oordeel`;
 }

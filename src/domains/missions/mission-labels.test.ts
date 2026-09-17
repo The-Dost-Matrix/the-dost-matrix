@@ -11,14 +11,19 @@ import {
   type MissionV2,
 } from "@/core/mission-engine/v2/mission";
 
+import type { CombinedCheckStatus } from "@/core/mission-engine/v2/github/github-client";
+
 import {
   RISK_LEVELS,
   advanceOutcomeSummary,
   advanceStoppedReasonLabel,
   assignmentStatusLabel,
+  behindByLabel,
+  ciStatusLabel,
   ciWaitOutcomeLabel,
   formatMissionCost,
   missionStatusLabel,
+  pullRequestStateLabel,
   riskLevelLabel,
 } from "./mission-labels";
 
@@ -268,5 +273,76 @@ describe("formatMissionCost", () => {
     expect(typeof result).toBe("string");
     expect(result.length).toBeGreaterThan(0);
     expect(result).toContain("EUR");
+  });
+});
+
+/**
+ * Stap 19. De labels zijn de hele opbrengst van die stap: de UI toont ze
+ * letterlijk, en de reden dat dit paneel bestaat is dat je ná één blik weet
+ * waar een missie op vastloopt zonder naar GitHub te hoeven.
+ */
+describe("pullRequestStateLabel", () => {
+  it("vertaalt elke toestand naar Nederlands", () => {
+    expect(pullRequestStateLabel("OPEN")).toBe("Open");
+    expect(pullRequestStateLabel("MERGED")).toBe("Gemerged");
+    expect(pullRequestStateLabel("CLOSED")).toContain("zonder merge");
+  });
+});
+
+describe("ciStatusLabel", () => {
+  const ci = (overrides: Partial<CombinedCheckStatus>): CombinedCheckStatus => ({
+    state: "success",
+    failingCheckNames: [],
+    pendingCheckNames: [],
+    ...overrides,
+  });
+
+  it("meldt een geslaagde CI kort", () => {
+    expect(ciStatusLabel(ci({ state: "success" }))).toBe("CI geslaagd");
+  });
+
+  /**
+   * De kern van deze stap: de NAAM van de gefaalde check erbij. "CI mislukt"
+   * stuurt je alsnog naar GitHub; met de naam erbij weet je meteen waar je
+   * moet kijken.
+   */
+  it("noemt bij een mislukte CI welke check faalde", () => {
+    const label = ciStatusLabel(
+      ci({ state: "failure", failingCheckNames: ["Typecheck & import-check"] }),
+    );
+
+    expect(label).toContain("mislukt");
+    expect(label).toContain("Typecheck & import-check");
+  });
+
+  it("noemt bij een lopende CI welke check nog loopt", () => {
+    expect(ciStatusLabel(ci({ state: "pending", pendingCheckNames: ["CI"] }))).toContain("CI");
+  });
+
+  it("onderscheidt 'geen checks' van 'niet op te halen'", () => {
+    // Het eerste gaat over de repository, het tweede over ons. Die twee op
+    // dezelfde manier verwoorden zou de eigenaar de verkeerde kant op sturen.
+    expect(ciStatusLabel(ci({ state: "none" }))).toContain("Geen CI-controles");
+    expect(ciStatusLabel(null)).toContain("onbekend");
+  });
+});
+
+describe("behindByLabel", () => {
+  it("zwijgt wanneer de branch bij is", () => {
+    // Een waarschuwing die er ook staat als er niets aan de hand is, wordt
+    // niet meer gelezen.
+    expect(behindByLabel(0)).toBe("");
+    expect(behindByLabel(null)).toBe("");
+  });
+
+  it("waarschuwt bij achterstand, met het aantal commits", () => {
+    expect(behindByLabel(1)).toContain("1 commit ");
+    expect(behindByLabel(3)).toContain("3 commits");
+  });
+
+  it("zegt erbij waarom het een probleem is", () => {
+    // Zonder die tweede helft weet je wel dát het misgaat maar niet waarom
+    // QA straks weigert.
+    expect(behindByLabel(2)).toContain("QA");
   });
 });

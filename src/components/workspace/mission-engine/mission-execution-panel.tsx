@@ -1,5 +1,6 @@
 "use client";
 
+import { MissionPullRequestCard } from "@/components/workspace/mission-engine/mission-pull-request-card";
 import { useMissionEngine } from "@/domains/missions/mission-engine-store";
 import { formatMissionCost, missionStatusLabel } from "@/domains/missions/mission-labels";
 
@@ -148,6 +149,11 @@ export function MissionExecutionPanel() {
                 </button>
               </article>
             )}
+
+            {/* Stap 19: bewust vlak onder de vraag van de Director en boven
+                zijn beslissing. Loopt een missie vast, dan staat de reden
+                meestal hier — en niet in de motivering eronder. */}
+            <MissionPullRequestCard />
 
             {directorReason && (
               <article className="knowledge-card">
