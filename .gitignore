@@ -72,3 +72,10 @@ desktop.ini
 # Lokale automatisering (per-pc hulpscripts, horen niet in de repo)
 # ==========================================
 git-auto-pull.bat
+
+# ==========================================
+# Door npm install neergezet, niet met de hand onderhouden
+# (zie scripts/copy-pdf-worker.mjs — de pdf.js-werker moet altijd uit dezelfde
+# versie komen als de geïnstalleerde pdfjs-dist, dus hij hoort niet in Git)
+# ==========================================
+public/pdf.worker.min.mjs

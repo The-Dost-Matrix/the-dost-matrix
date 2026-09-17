@@ -1463,25 +1463,76 @@ verplaatst naar "Voltooid" hierboven.)
 ### Stap 25 — Echte documentverwerking voor de Knowledge Foundation
 Volgt uit de externe code-audit van 13 september 2026 (zie
 `docs/reviews/code-audit-13-september-2026.md` voor het volledige oordeel per
-bevinding). De Knowledge-pagina accepteert PDF, DOCX, XLSX en afbeeldingen,
-maar alleen Markdown wordt inhoudelijk gelezen; van de rest wordt uitsluitend
-metadata vastgelegd. Er is geen server-side opslag van de originele bytes, dus
-een bestand kan later ook niet alsnog verwerkt worden. `package.json` bevat
-geen enkele parserbibliotheek.
+bevinding). De Knowledge-pagina accepteerde PDF, DOCX, XLSX en afbeeldingen,
+maar alleen Markdown werd inhoudelijk gelezen; van de rest werd uitsluitend
+metadata vastgelegd. `package.json` bevatte geen enkele parserbibliotheek.
 
-Dit is geen defect maar ontbrekende capaciteit — er gaat niets kapot, er is
-iets niet gebouwd. De volgorde die daaruit volgt: (1) echte binaire upload met
-server-side hash, MIME-detectie op de werkelijke bytes en immutable
-bronversies; (2) parser-adapters per formaat die naar één canoniek model
-schrijven; (3) kennisextractie die een geparseerde bron verwerkt in plaats van
-naar een bestandsextensie te kijken; (4) structurele chunking met provenance
-die naar een concreet fragment verwijst. Pas daarna hebben parser- en
-extractieversies in provenance betekenis.
+Dit was geen defect maar ontbrekende capaciteit — er ging niets kapot, er was
+iets niet gebouwd.
 
-Harde regel voor deze stap, overgenomen uit de audit en onderschreven: de UI
-biedt een bestandstype pas aan zodra de backend het werkelijk leest. Tot die
-tijd doet de eerlijke melding die op 13 september is ingebouwd het werk — die
-zegt per bestand of het alleen is vastgelegd of ook gelezen.
+**Gebouwd op 17 september 2026 — wacht op livebevestiging door Elroy.**
+
+De browser leest het bestand nu zelf uit (`src/domains/documents/parsing/`):
+DOCX en XLSX met een eigen ontleding bovenop `fflate`, PDF met pdf.js. Alleen
+de gewonnen tekst gaat naar de server, en die gaat langs dezelfde
+kennisextractie als een Markdown-bestand. De extensiecontrole in
+`/api/knowledge/import` is daarmee verplaatst van "is dit Markdown" naar "is
+dit een soort waarvan wij de inhoud werkelijk kunnen lezen" — punt (3) van de
+audit.
+
+#### Afwijking van de volgorde uit de audit, en waarom
+
+De audit schreef deze volgorde voor: (1) echte binaire upload met server-side
+hash, MIME-detectie op de werkelijke bytes en immutable bronversies; (2)
+parser-adapters per formaat; (3) kennisextractie op een geparseerde bron; (4)
+structurele chunking met provenance.
+
+Punt (1) is naar achteren geschoven, bewust en met instemming van Elroy. Twee
+redenen, allebei hard:
+
+- Vercel accepteert ongeveer 4,5 MB per aanvraag. Een PDF van 10 MB komt
+  sowieso niet door een serverfunctie heen, dus "de bytes naar de server"
+  vraagt hoe dan ook een aparte opslagdienst — het is geen kleinere stap dan
+  (2), maar een grotere.
+- De originele bytes bewaren vraagt Firebase Storage, en dat zit sinds eind
+  2024 niet meer in het gratis Firebase-pakket.
+
+Daarmee stond de goedkoopste route naar de capaciteit die werkelijk ontbrak
+(documenten die gelezen worden) achter de duurste stap in de lijst. De prijs
+van deze volgorde is eerlijk te benoemen: het originele bestand wordt niet
+bewaard, dus een document kan later niet opnieuw door een betere parser
+gehaald worden. Wie dat wil, uploadt het bestand opnieuw.
+
+Wat daarmee blijft staan als eigen stap: zie stap 26 hieronder.
+
+#### Wat wel en niet gelezen wordt
+
+- **DOCX** — alinea's, koppen (worden Markdown-koppen), tabellen, harde
+  regeleindes. Niet: kop- en voetteksten, voetnoten, opmerkingen, en tekst die
+  in bijgehouden wijzigingen als verwijderd staat.
+- **XLSX** — alle werkbladen als tab-gescheiden tekst, met de bladnaam erboven
+  en lege cellen op hun plaats. Datums komen eruit als het getal dat Excel
+  opslaat; de opmaakketen navolgen is een parser op zich, en er net naast
+  zitten zou erger zijn dan een zichtbaar getal.
+- **PDF** — de tekstlaag. Een ingescande PDF zonder tekstlaag levert niets op
+  en eindigt als "alleen vastgelegd"; daar hoort tekstherkenning bij en die is
+  er niet.
+- **Afbeeldingen** — onveranderd alleen vastgelegd.
+
+De harde regel uit de audit blijft staan en is nu andersom bekrachtigd: een
+bestand geldt pas als gelezen wanneer er werkelijk tekst uit is gekomen. De
+telling in de meldingsregel kijkt niet meer naar de extensie maar naar het
+resultaat, dus een beschadigd bestand en een ingescande PDF eindigen op
+dezelfde plek als een afbeelding.
+
+#### Terugval
+
+Elke parser valt terug op het gedrag van vóór deze stap: mislukt het lezen,
+dan wordt het bestand alleen vastgelegd, met de reden in de console van de
+browser. Dat is de les uit 15 september 2026 toegepast — een nieuw mechanisme
+dat het onderliggende pad kan blokkeren is een gebrek, geen verbetering. Ook
+het hulpscript `scripts/copy-pdf-worker.mjs` stopt nooit met een foutcode: een
+ontbrekende pdf.js-werker kost de PDF-tak, niet de bouw.
 
 Bewust NIET meegenomen uit die audit: de voorgestelde migratie van het hele
 kennismodel naar Claims/Evidence/Entities/Relationships. De onderbouwing staat
@@ -1489,6 +1540,18 @@ in hoofdstuk 4 van het oordeelsdocument; kort: die "reeds ontworpen
 V2-architectuur" is een schets van ruim één pagina met `Status: Review
 required`, en de concrete schade die ermee werd verdedigd (een verdwijnende
 tweede bron) is op 13 september al gerepareerd zonder re-architectuur.
+
+### Stap 26 — De originele bestanden bewaren
+Het losgeknipte punt (1) uit de audit, hierboven toegelicht. Zodra Firebase
+Storage aanstaat (Blaze-abonnement): het bestand rechtstreeks vanuit de browser
+naar Storage, server-side hash en MIME-detectie op de werkelijke bytes, en een
+onveranderlijke bronversie per upload. Pas daarná krijgen parserversies in
+provenance betekenis, want pas dan valt een document opnieuw te verwerken.
+
+Voorwaarde vooraf, en de reden dat dit een eigen stap is en geen bijzin: dit
+kost geld per maand. Het hoort niet ongemerkt aan te gaan omdat een technische
+stap er toevallig om vroeg.
+
 
 ## Acceptatiecriteria voor stap 9 t/m 12
 

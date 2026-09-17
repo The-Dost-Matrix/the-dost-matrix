@@ -11,6 +11,14 @@ import type {
   KnowledgeEntry,
   KnowledgeStatus,
 } from "@/core/domain/knowledge/knowledge-entry";
+import {
+  determineSourceType,
+  resolveMimeType,
+} from "@/domains/documents/model/source-type";
+import {
+  parseDocumentFile,
+  type ParsedDocument,
+} from "@/domains/documents/parsing/parse-document";
 
 const knowledgeTypePresentation: Record<string, { icon: string; label: string }> = {
   vision: { icon: "🔭", label: "Visie" },
@@ -201,12 +209,17 @@ const [bulkProgress, setBulkProgress] = useState({
       // Apart geteld sinds de code-audit van 13 september 2026. Dit scherm
       // meldde "N bestanden zijn verwerkt" voor ELK bestand dat de
       // uploadroute accepteerde — ook voor PDF, DOCX, XLSX en afbeeldingen,
-      // waarvan uitsluitend de metadata wordt vastgelegd en de inhoud nooit
-      // gelezen wordt (zie `if (!isMarkdown) continue` hieronder). "Verwerkt"
+      // waarvan destijds uitsluitend de metadata werd vastgelegd. "Verwerkt"
       // wekte daarmee de indruk dat er kennis uit was gehaald, terwijl er van
       // die inhoud niets in de Second Brain terechtkwam. Voor een systeem dat
       // beslissingen op zijn eigen kennis baseert is dat het duurste soort
       // onwaarheid: de eigenaar denkt iets te weten wat er nooit in is gezet.
+      //
+      // Sinds stap 25 leest de browser DOCX, XLSX en PDF wél, en is deze
+      // telling niet overbodig geworden maar juist scherper: hij telt nu wat
+      // er werkelijk uit kwam. Een ingescande PDF zonder letters, een
+      // beschadigd bestand en een afbeelding eindigen nog altijd hier — en
+      // horen dat ook te blijven doen.
       const registeredOnly: string[] = [];
       let deduplicatedItems = 0;
 
@@ -216,38 +229,45 @@ const [bulkProgress, setBulkProgress] = useState({
         index += 1
       ) {
         const currentFile = files[index];
-        const lowerFileName =
-          currentFile.name.toLowerCase();
-  
+
         setMessage(
           `Bestand ${index + 1} van ${files.length} wordt geïmporteerd: ${currentFile.name}`,
         );
   
-        const mimeType =
-          currentFile.type ||
-          (lowerFileName.endsWith(".md")
-            ? "text/markdown"
-            : lowerFileName.endsWith(".pdf")
-              ? "application/pdf"
-              : lowerFileName.endsWith(".docx")
-                ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                : lowerFileName.endsWith(".xlsx")
-                  ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                  : lowerFileName.endsWith(".jpg") ||
-                      lowerFileName.endsWith(".jpeg")
-                    ? "image/jpeg"
-                    : lowerFileName.endsWith(".png")
-                      ? "image/png"
-                      : "application/octet-stream");
-  
-        const isMarkdown =
-          lowerFileName.endsWith(".md") ||
-          mimeType === "text/markdown" ||
-          mimeType === "text/plain";
-  
-        const content = isMarkdown
-          ? await currentFile.text()
-          : "";
+        const mimeType = resolveMimeType(
+          currentFile.name,
+          currentFile.type,
+        );
+
+        const sourceType = determineSourceType(
+          currentFile.name,
+          mimeType,
+        );
+
+        // Stap 25: hier wordt het bestand werkelijk gelezen, in de browser.
+        // Mislukt dat, dan gaat de upload gewoon door zonder inhoud — het
+        // bestand wordt dan alleen vastgelegd, precies zoals vóór stap 25, en
+        // de melding onderaan zegt dat ook. Wat er misging staat in de console
+        // van de browser; stil falen zou van deze terugval een verborgen
+        // gebrek maken in plaats van een zichtbare uitzondering.
+        let parsed: ParsedDocument | null = null;
+
+        if (sourceType) {
+          try {
+            parsed = await parseDocumentFile(
+              currentFile,
+              sourceType,
+            );
+          } catch (parseError) {
+            console.error(
+              `De inhoud van "${currentFile.name}" kon niet gelezen worden; het bestand wordt alleen vastgelegd.`,
+              parseError,
+            );
+          }
+        }
+
+        const content = parsed?.text ?? "";
+
   
         const documentResponse = await fetch(
           "/api/documents/upload",
@@ -262,6 +282,8 @@ const [bulkProgress, setBulkProgress] = useState({
               mimeType,
               fileSize: currentFile.size,
               content,
+              pageCount: parsed?.metadata.pageCount,
+              sheetNames: parsed?.metadata.sheetNames,
             }),
           },
         );
@@ -278,7 +300,10 @@ const [bulkProgress, setBulkProgress] = useState({
   
         registeredDocuments += 1;
   
-        if (!isMarkdown) {
+        // Niet langer "is dit Markdown" maar "is er iets uit gekomen". Een
+        // ingescande PDF zonder letters en een beschadigde DOCX eindigen hier
+        // op dezelfde plek als een afbeelding: vastgelegd, niet gelezen.
+        if (!content) {
           registeredOnly.push(currentFile.name);
           continue;
         }
@@ -867,6 +892,8 @@ const [bulkProgress, setBulkProgress] = useState({
   multiple
   accept="
     .md,
+    .markdown,
+    .txt,
     .pdf,
     .docx,
     .xlsx,
@@ -874,6 +901,7 @@ const [bulkProgress, setBulkProgress] = useState({
     .jpeg,
     .png,
     text/markdown,
+    text/plain,
     application/pdf,
     application/vnd.openxmlformats-officedocument.wordprocessingml.document,
     application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,

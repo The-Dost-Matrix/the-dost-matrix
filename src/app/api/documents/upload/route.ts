@@ -2,10 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { verifyIdToken } from "@/core/firebase/admin";
 import { uploadDocument } from "@/domains/documents/services/document-service";
-import type {
-  DocumentRecord,
-  DocumentSourceType,
-} from "@/domains/documents/model/document";
+import type { DocumentRecord } from "@/domains/documents/model/document";
+import { determineSourceType } from "@/domains/documents/model/source-type";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,53 +17,39 @@ type UploadRequestBody = {
   fileSize?: unknown;
   projectId?: unknown;
   content?: unknown;
+  pageCount?: unknown;
+  sheetNames?: unknown;
 };
 
-function determineSourceType(
-  fileName: string,
-  mimeType: string,
-): DocumentSourceType | null {
-  const extension = fileName.toLowerCase().split(".").pop();
+/**
+ * Stap 25: `content` werd hiervóór uitsluitend voor Markdown aangenomen — elk
+ * ander bestandstype leverde niets dan metadata op. Sinds de browser DOCX,
+ * XLSX en PDF zelf uitleest (zie src/domains/documents/parsing) komt er ook
+ * bij die typen tekst mee, en is de vraag niet langer "welke extensie is dit"
+ * maar "is er inhoud meegestuurd".
+ *
+ * De grens ligt bewust boven de 120.000 tekens die de kennisextractie
+ * accepteert: dit is een opslagroute, en een document dat te groot is om er
+ * kennis uit te halen mag nog steeds bewaard worden mét zijn tekst.
+ */
+const MAX_CONTENT_LENGTH = 200_000;
 
-  if (
-    extension === "md" ||
-    mimeType === "text/markdown" ||
-    mimeType === "text/plain"
-  ) {
-    return "markdown";
-  }
+function readSheetNames(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
 
-  if (extension === "pdf" || mimeType === "application/pdf") {
-    return "pdf";
-  }
+  const names = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim().slice(0, 120))
+    .filter((item) => item.length > 0)
+    .slice(0, 50);
 
-  if (
-    extension === "docx" ||
-    mimeType ===
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-  ) {
-    return "docx";
-  }
+  return names.length > 0 ? names : undefined;
+}
 
-  if (
-    extension === "xlsx" ||
-    mimeType ===
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-  ) {
-    return "xlsx";
-  }
-
-  if (
-    extension === "jpg" ||
-    extension === "jpeg" ||
-    extension === "png" ||
-    mimeType === "image/jpeg" ||
-    mimeType === "image/png"
-  ) {
-    return "image";
-  }
-
-  return null;
+function readPageCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+    ? Math.min(value, 100_000)
+    : undefined;
 }
 
 function createTitleFromFileName(fileName: string): string {
@@ -153,11 +137,12 @@ export async function POST(request: NextRequest) {
       : undefined;
 
   const originalContent =
-    sourceType === "markdown" &&
-    typeof body?.content === "string" &&
-    body.content.trim()
-      ? body.content
+    typeof body?.content === "string" && body.content.trim()
+      ? body.content.slice(0, MAX_CONTENT_LENGTH)
       : undefined;
+
+  const pageCount = readPageCount(body?.pageCount);
+  const sheetNames = readSheetNames(body?.sheetNames);
 
       const document: DocumentRecord = {
         id: "",
@@ -173,6 +158,8 @@ export async function POST(request: NextRequest) {
         uploadedAt: new Date(),
         metadata: {
           fileSize,
+          ...(pageCount !== undefined ? { pageCount } : {}),
+          ...(sheetNames !== undefined ? { sheetNames } : {}),
         },
       };
 

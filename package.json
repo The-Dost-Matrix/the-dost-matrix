@@ -9,15 +9,18 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "verify-imports": "node scripts/verify-imports.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "postinstall": "node scripts/copy-pdf-worker.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",
     "@react-three/postprocessing": "^3.0.4",
+    "fflate": "^0.8.3",
     "firebase": "12.16.0",
     "firebase-admin": "^13.0.0",
     "next": "16.2.10",
+    "pdfjs-dist": "^6.3.289",
     "postprocessing": "^6.39.3",
     "react": "19.2.0",
     "react-dom": "19.2.0",

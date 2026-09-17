@@ -18,6 +18,23 @@ export const dynamic = "force-dynamic";
 
 const MAX_DOCUMENT_LENGTH = 120_000;
 
+/**
+ * Stap 25 — welke bronbestanden kennisextractie mogen voeden.
+ *
+ * Deze route weigerde alles wat niet op `.md` eindigde, en terecht: er wás
+ * niets anders dat inhoudelijk gelezen werd, dus tekst bij een `.pdf` kon
+ * alleen maar verzonnen zijn. Sinds de browser DOCX, XLSX en PDF zelf uitleest
+ * (zie src/domains/documents/parsing) klopt die redenering niet meer, en zou
+ * hij precies de nieuwe capaciteit blokkeren.
+ *
+ * De controle is daarom niet geschrapt maar verplaatst: niet "is dit Markdown"
+ * maar "is dit een bestandstype waarvan wij de inhoud werkelijk kunnen lezen".
+ * Een `.png` hoort hier nog steeds niet binnen te komen — daar is geen parser
+ * voor, dus tekst die bij een afbeelding wordt aangeleverd is nergens uit
+ * gelezen.
+ */
+const READABLE_EXTENSIONS = [".md", ".markdown", ".txt", ".docx", ".xlsx", ".pdf"];
+
 const ALLOWED_TYPES: KnowledgeType[] = [
   "vision",
   "goal",
@@ -253,11 +270,13 @@ export async function POST(request: NextRequest) {
       ? body.documentId.trim()
       : undefined;
 
-  if (!filename.toLowerCase().endsWith(".md")) {
+  const lowerFilename = filename.toLowerCase();
+
+  if (!READABLE_EXTENSIONS.some((extension) => lowerFilename.endsWith(extension))) {
     return NextResponse.json(
       {
         error:
-          "Knowledge Foundation accepteert voor kennisextractie alleen Markdown-inhoud.",
+          "Van dit bestandstype kan de inhoud niet gelezen worden, dus er valt ook geen kennis uit te halen.",
       },
       { status: 400 },
     );
