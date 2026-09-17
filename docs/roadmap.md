@@ -1281,6 +1281,155 @@ In dezelfde run werkte ook het CI-wachten binnen de tik (130 seconden), en
 weigerde QA terecht een oordeel omdat de branch achterliep op `main`. Na het
 bijwerken van de branch, één ownervraag en een merge stond de missie op VOLTOOID.
 
+### Stap 19 — In-app CI/PR-zichtbaarheid
+
+Voltooid en live bevestigd op 17 september 2026.
+
+(voorheen stap 17, oorspronkelijk stap 10) De stand van de pull request en
+de CI staat nu in het paneel "Director & uitvoering" zelf: nummer met link,
+open/gemerged/gesloten, de CI-uitslag mét de namen van de checks, hoeveel
+commits de branch achterloopt op de standaardbranch, en de gewijzigde
+bestanden. Plus de ouderdom van het beeld, zodat zichtbaar is dat je naar
+iets van vijf minuten geleden kijkt.
+
+Drie keuzes die erin zitten en waarom: het laadt apart van de missie (vier
+GitHub-aanroepen zijn te duur om aan elke missie-ophaal te hangen), het
+ververst niet vanzelf (een CI-controle duurt minuten; pollen zou een vaste
+stroom aanroepen opleveren voor informatie waar meestal niemand naar kijkt),
+en het gaat nooit vóór de missie staan — mislukt het ophalen, dan staat er
+één regel en verder niets.
+
+Aanleiding: op 15 september kostte het een avond om te achterhalen waaróm
+een missie vastliep. De enige weg was naar GitHub Actions, de juiste run
+aanklikken, de job openklappen en JSON onderaan een curl-logboek lezen. Twee
+keer was de reden iets wat nu in één regel op het scherm staat.
+
+**Les uit de oplevering.** De eerste versie gebruikte de kleurvariabelen
+`--success`, `--danger` en `--warning`. Die bestaan niet in dit thema, dus
+viel alles terug op de standaardwaarden voor een licht thema: het
+PR-nummer werd donkerblauw op donkergroen en was letterlijk onleesbaar. CSS
+waarschuwt hier niet voor — een niet-bestaande variabele is geen fout maar
+een terugval. Bij het toevoegen van stijlen hoort dus een blik in
+`globals.css` op wat er werkelijk gedefinieerd is; dezelfde fout stond al op
+vijf oudere plekken in `mission-panels.css` en is daar meteen meegenomen.
+
+### Stap 25 — Echte documentverwerking voor de Knowledge Foundation
+Volgt uit de externe code-audit van 13 september 2026 (zie
+`docs/reviews/code-audit-13-september-2026.md` voor het volledige oordeel per
+bevinding). De Knowledge-pagina accepteerde PDF, DOCX, XLSX en afbeeldingen,
+maar alleen Markdown werd inhoudelijk gelezen; van de rest werd uitsluitend
+metadata vastgelegd. `package.json` bevatte geen enkele parserbibliotheek.
+
+Dit was geen defect maar ontbrekende capaciteit — er ging niets kapot, er was
+iets niet gebouwd.
+
+**Voltooid en live bevestigd op 17 september 2026.**
+
+De browser leest het bestand nu zelf uit (`src/domains/documents/parsing/`):
+DOCX en XLSX met een eigen ontleding bovenop `fflate`, PDF met pdf.js. Alleen
+de gewonnen tekst gaat naar de server, en die gaat langs dezelfde
+kennisextractie als een Markdown-bestand. De extensiecontrole in
+`/api/knowledge/import` is daarmee verplaatst van "is dit Markdown" naar "is
+dit een soort waarvan wij de inhoud werkelijk kunnen lezen" — punt (3) van de
+audit.
+
+#### Afwijking van de volgorde uit de audit, en waarom
+
+De audit schreef deze volgorde voor: (1) echte binaire upload met server-side
+hash, MIME-detectie op de werkelijke bytes en immutable bronversies; (2)
+parser-adapters per formaat; (3) kennisextractie op een geparseerde bron; (4)
+structurele chunking met provenance.
+
+Punt (1) is naar achteren geschoven, bewust en met instemming van Elroy. Twee
+redenen, allebei hard:
+
+- Vercel accepteert ongeveer 4,5 MB per aanvraag. Een PDF van 10 MB komt
+  sowieso niet door een serverfunctie heen, dus "de bytes naar de server"
+  vraagt hoe dan ook een aparte opslagdienst — het is geen kleinere stap dan
+  (2), maar een grotere.
+- De originele bytes bewaren vraagt Firebase Storage, en dat zit sinds eind
+  2024 niet meer in het gratis Firebase-pakket.
+
+Daarmee stond de goedkoopste route naar de capaciteit die werkelijk ontbrak
+(documenten die gelezen worden) achter de duurste stap in de lijst. De prijs
+van deze volgorde is eerlijk te benoemen: het originele bestand wordt niet
+bewaard, dus een document kan later niet opnieuw door een betere parser
+gehaald worden. Wie dat wil, uploadt het bestand opnieuw.
+
+Wat daarmee blijft staan als eigen stap: zie stap 26, onder
+"Voorgestelde volgende stappen".
+
+#### Wat wel en niet gelezen wordt
+
+- **DOCX** — alinea's, koppen (worden Markdown-koppen), tabellen, harde
+  regeleindes. Niet: kop- en voetteksten, voetnoten, opmerkingen, en tekst die
+  in bijgehouden wijzigingen als verwijderd staat.
+- **XLSX** — alle werkbladen als tab-gescheiden tekst, met de bladnaam erboven
+  en lege cellen op hun plaats. Datums komen eruit als het getal dat Excel
+  opslaat; de opmaakketen navolgen is een parser op zich, en er net naast
+  zitten zou erger zijn dan een zichtbaar getal.
+- **PDF** — de tekstlaag. Een ingescande PDF zonder tekstlaag levert niets op
+  en eindigt als "alleen vastgelegd"; daar hoort tekstherkenning bij en die is
+  er niet.
+- **Afbeeldingen** — onveranderd alleen vastgelegd.
+
+De harde regel uit de audit blijft staan en is nu andersom bekrachtigd: een
+bestand geldt pas als gelezen wanneer er werkelijk tekst uit is gekomen. De
+telling in de meldingsregel kijkt niet meer naar de extensie maar naar het
+resultaat, dus een beschadigd bestand en een ingescande PDF eindigen op
+dezelfde plek als een afbeelding.
+
+#### Terugval
+
+Elke parser valt terug op het gedrag van vóór deze stap: mislukt het lezen,
+dan wordt het bestand alleen vastgelegd, met de reden in de console van de
+browser. Dat is de les uit 15 september 2026 toegepast — een nieuw mechanisme
+dat het onderliggende pad kan blokkeren is een gebrek, geen verbetering. Ook
+het hulpscript `scripts/copy-pdf-worker.mjs` stopt nooit met een foutcode: een
+ontbrekende pdf.js-werker kost de PDF-tak, niet de bouw.
+
+#### Les: schrijf tegen de versie die er werkelijk staat
+
+`npm install pdfjs-dist` leverde versie 6, nieuwer dan waar de code voor
+geschreven was. Twee dingen braken, allebei alleen zichtbaar via `npm run
+typecheck`: de optie `isEvalSupported` bestaat niet meer, en `destroy()` zit
+niet langer op het document maar op de laadtaak. Het tweede was een echte
+slordigheid — in de typedefinities was op `destroy()` gezocht en een treffer
+gevonden, zonder na te gaan bij wélke klasse die hoorde.
+
+Wat dat kost: twee extra rondes van "plak dit, stuur me de uitvoer". Wat het
+had voorkomen: na de installatie eerst de geïnstalleerde typedefinities
+openslaan en de gebruikte aanroepen erin terugzoeken, klasse voor klasse, in
+plaats van vertrouwen op wat de bibliotheek in een eerdere versie deed. Bij
+een bibliotheek die zijn API per grote versie herschikt is dat geen
+overdreven voorzichtigheid maar de normale werkwijze.
+
+Bewust NIET meegenomen uit die audit: de voorgestelde migratie van het hele
+kennismodel naar Claims/Evidence/Entities/Relationships. De onderbouwing staat
+in hoofdstuk 4 van het oordeelsdocument; kort: die "reeds ontworpen
+V2-architectuur" is een schets van ruim één pagina met `Status: Review
+required`, en de concrete schade die ermee werd verdedigd (een verdwijnende
+tweede bron) is op 13 september al gerepareerd zonder re-architectuur.
+
+#### Wat de livetest liet zien
+
+Drie proefbestanden tegelijk geüpload — een DOCX met koppen en een tabel,
+een XLSX met drie werkbladen waarvan één leeg, en een PDF. Uitkomst: "3
+bestanden geregistreerd, waarvan 3 inhoudelijk gelezen", zeven kennisitems
+ter beoordeling.
+
+Het belangrijkste in die zeven zat niet in de inhoud maar in het
+`section`-veld: "Agents werken via GitHub", "Kosten blokkeren nooit een
+missie", "Voltooid betekent gemerged" — de koppen uit het Word-document —
+en "Grenzen" en "Wat de prijs is" uit respectievelijk de bladnaam van het
+werkblad en een kop in de PDF. Dat veld was zonder deze stap gokwerk bij
+alles wat geen Markdown was. Het meeleveren van koppen en bladnamen is
+daarmee geen opsmuk: het is wat een kennisitem terugvindbaar maakt.
+
+Wat de extractie terecht liet liggen: de kostenregels per pull request uit
+het eerste werkblad. Die zijn geen duurzame kennis, en ze kwamen dan ook
+niet terug als kennisitem — terwijl de tekst er wel degelijk was.
+
 ## Restpunten
 
 Kleine dingen die bij een grotere stap zijn gesignaleerd en bewust zijn
@@ -1429,11 +1578,8 @@ in dezelfde missie meegetest en staat daar ook.)
 bevestigd op 14 en 15 september 2026 — zie "Stap 18 volledig af" hieronder.)
 
 
-### Stap 19 — In-app CI/PR-zichtbaarheid
-(voorheen stap 17, oorspronkelijk stap 10) Toon PR-status (open/gemerged, CI
-groen/rood, welke checks) direct in de missie-kaart, zodat Elroy nooit naar
-GitHub.com hoeft om te zien waar een missie op vastloopt. Sluit aan op de
-verificatiestatus uit stap 11.
+(Stap 19 stond hier. Voltooid en live bevestigd op 17 september 2026 —
+verplaatst naar "Voltooid" hierboven.)
 
 ### Stap 20 — Doorzoekbare Second Brain-UI
 (voorheen stap 18, oorspronkelijk stap 11) Een eenvoudig zoek-/filterscherm
@@ -1460,86 +1606,8 @@ samen ontworpen — dit is bewust nog niet ingevuld.
 (Stap 24 stond hier. Voltooid en live bevestigd op 13 september 2026 —
 verplaatst naar "Voltooid" hierboven.)
 
-### Stap 25 — Echte documentverwerking voor de Knowledge Foundation
-Volgt uit de externe code-audit van 13 september 2026 (zie
-`docs/reviews/code-audit-13-september-2026.md` voor het volledige oordeel per
-bevinding). De Knowledge-pagina accepteerde PDF, DOCX, XLSX en afbeeldingen,
-maar alleen Markdown werd inhoudelijk gelezen; van de rest werd uitsluitend
-metadata vastgelegd. `package.json` bevatte geen enkele parserbibliotheek.
-
-Dit was geen defect maar ontbrekende capaciteit — er ging niets kapot, er was
-iets niet gebouwd.
-
-**Gebouwd op 17 september 2026 — wacht op livebevestiging door Elroy.**
-
-De browser leest het bestand nu zelf uit (`src/domains/documents/parsing/`):
-DOCX en XLSX met een eigen ontleding bovenop `fflate`, PDF met pdf.js. Alleen
-de gewonnen tekst gaat naar de server, en die gaat langs dezelfde
-kennisextractie als een Markdown-bestand. De extensiecontrole in
-`/api/knowledge/import` is daarmee verplaatst van "is dit Markdown" naar "is
-dit een soort waarvan wij de inhoud werkelijk kunnen lezen" — punt (3) van de
-audit.
-
-#### Afwijking van de volgorde uit de audit, en waarom
-
-De audit schreef deze volgorde voor: (1) echte binaire upload met server-side
-hash, MIME-detectie op de werkelijke bytes en immutable bronversies; (2)
-parser-adapters per formaat; (3) kennisextractie op een geparseerde bron; (4)
-structurele chunking met provenance.
-
-Punt (1) is naar achteren geschoven, bewust en met instemming van Elroy. Twee
-redenen, allebei hard:
-
-- Vercel accepteert ongeveer 4,5 MB per aanvraag. Een PDF van 10 MB komt
-  sowieso niet door een serverfunctie heen, dus "de bytes naar de server"
-  vraagt hoe dan ook een aparte opslagdienst — het is geen kleinere stap dan
-  (2), maar een grotere.
-- De originele bytes bewaren vraagt Firebase Storage, en dat zit sinds eind
-  2024 niet meer in het gratis Firebase-pakket.
-
-Daarmee stond de goedkoopste route naar de capaciteit die werkelijk ontbrak
-(documenten die gelezen worden) achter de duurste stap in de lijst. De prijs
-van deze volgorde is eerlijk te benoemen: het originele bestand wordt niet
-bewaard, dus een document kan later niet opnieuw door een betere parser
-gehaald worden. Wie dat wil, uploadt het bestand opnieuw.
-
-Wat daarmee blijft staan als eigen stap: zie stap 26 hieronder.
-
-#### Wat wel en niet gelezen wordt
-
-- **DOCX** — alinea's, koppen (worden Markdown-koppen), tabellen, harde
-  regeleindes. Niet: kop- en voetteksten, voetnoten, opmerkingen, en tekst die
-  in bijgehouden wijzigingen als verwijderd staat.
-- **XLSX** — alle werkbladen als tab-gescheiden tekst, met de bladnaam erboven
-  en lege cellen op hun plaats. Datums komen eruit als het getal dat Excel
-  opslaat; de opmaakketen navolgen is een parser op zich, en er net naast
-  zitten zou erger zijn dan een zichtbaar getal.
-- **PDF** — de tekstlaag. Een ingescande PDF zonder tekstlaag levert niets op
-  en eindigt als "alleen vastgelegd"; daar hoort tekstherkenning bij en die is
-  er niet.
-- **Afbeeldingen** — onveranderd alleen vastgelegd.
-
-De harde regel uit de audit blijft staan en is nu andersom bekrachtigd: een
-bestand geldt pas als gelezen wanneer er werkelijk tekst uit is gekomen. De
-telling in de meldingsregel kijkt niet meer naar de extensie maar naar het
-resultaat, dus een beschadigd bestand en een ingescande PDF eindigen op
-dezelfde plek als een afbeelding.
-
-#### Terugval
-
-Elke parser valt terug op het gedrag van vóór deze stap: mislukt het lezen,
-dan wordt het bestand alleen vastgelegd, met de reden in de console van de
-browser. Dat is de les uit 15 september 2026 toegepast — een nieuw mechanisme
-dat het onderliggende pad kan blokkeren is een gebrek, geen verbetering. Ook
-het hulpscript `scripts/copy-pdf-worker.mjs` stopt nooit met een foutcode: een
-ontbrekende pdf.js-werker kost de PDF-tak, niet de bouw.
-
-Bewust NIET meegenomen uit die audit: de voorgestelde migratie van het hele
-kennismodel naar Claims/Evidence/Entities/Relationships. De onderbouwing staat
-in hoofdstuk 4 van het oordeelsdocument; kort: die "reeds ontworpen
-V2-architectuur" is een schets van ruim één pagina met `Status: Review
-required`, en de concrete schade die ermee werd verdedigd (een verdwijnende
-tweede bron) is op 13 september al gerepareerd zonder re-architectuur.
+(Stap 25 stond hier. Voltooid en live bevestigd op 17 september 2026 —
+verplaatst naar "Voltooid" hierboven.)
 
 ### Stap 26 — De originele bestanden bewaren
 Het losgeknipte punt (1) uit de audit, hierboven toegelicht. Zodra Firebase
