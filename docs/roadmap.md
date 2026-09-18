@@ -1430,6 +1430,42 @@ Wat de extractie terecht liet liggen: de kostenregels per pull request uit
 het eerste werkblad. Die zijn geen duurzame kennis, en ze kwamen dan ook
 niet terug als kennisitem — terwijl de tekst er wel degelijk was.
 
+### Het QA-gereedschap live bewezen — 18 september 2026
+
+De proef op de som voor het gereedschap bij QA (zie "Ook voor QA" hierboven):
+een missie met twee succescriteria die met de pull request alléén niet te
+beoordelen zijn.
+
+De missie ("Tests voor findRelevantKnowledge", PR #64) liet de Builder één
+testbestand schrijven voor `src/core/application/knowledge/retrieval.ts`. Twee
+van de acht criteria wezen bewust naar bestanden die de Builder niet aanraakt
+en die dus niet in de diff zitten:
+
+- *"Elk kennisitem in de tests is een volledig en geldig object volgens het type
+  KnowledgeEntry."* — dat type staat in
+  `src/core/domain/knowledge/knowledge-entry.ts`.
+- *"Waar een test een drempelwaarde of een standaardaantal resultaten
+  veronderstelt, komt dat getal overeen met wat er werkelijk in retrieval.ts
+  staat."* — de getallen stonden bewust niet in de missieopdracht.
+
+QA haalde beide. Bij het eerste noemde hij `sourceReferences`, `embedding` en
+`createdAt` bij naam als verplichte velden; bij het tweede noemde hij de
+drempel `0.08` en de standaardlimiet `12`, en had hij bovendien nagekeken dat
+`fact` en `temporary` geen boost krijgen — dat staat in twee aparte functies
+verderop in datzelfde bestand. Geen van die feiten is uit de diff of uit de
+opdracht af te leiden. Zonder het gereedschap had hier twee keer ONBEPAALD
+moeten staan.
+
+Dezelfde proef liet ook zien dat de Builder het gereedschap gebruikt: in zijn
+testbestand staat de opmerking "zonder tekstovereenkomst is de score 0, onder
+de drempel van 0.08 in retrieval.ts". Hij legt zijn eigen test uit met het
+echte getal uit het echte bestand.
+
+Een bijvangst: het verplichte veld `sourceReferences` — het nieuwste veld van
+`KnowledgeEntry`, toegevoegd bij de audit-reparatie — stond gewoon in alle
+testobjecten. De valstrik klapte niet dicht omdat er niets te gokken viel; hij
+had het type gelezen.
+
 ## Restpunten
 
 Kleine dingen die bij een grotere stap zijn gesignaleerd en bewust zijn
@@ -1439,8 +1475,42 @@ restpunt dat alleen in een alinea staat, bestaat voor hem niet. Verdwijnt een
 punt, haal het kopje dan weg in plaats van er "opgelost" achter te zetten —
 anders groeit dit hoofdstuk alsnog dicht.
 
-Momenteel geen openstaande restpunten (laatste zeven afgerond op
-7 september 2026 — zie de Tussentijds-secties hierboven).
+### De diff voor de geautomatiseerde mergebeoordeling wordt te vroeg afgekapt
+
+Gevonden op 18 september 2026 bij PR #64. In `automated-signoff.ts` staan twee
+grenzen: `MAX_PATCH_CHARS_PER_FILE = 4.000` en `MAX_TOTAL_DIFF_CHARS = 16.000`.
+De eerste knipt ook wanneer er geen ander bestand is om ruimte voor te maken.
+Bij PR #64 — één bestand van 6.165 tekens — kreeg de beoordelaar er 4.000 te
+zien en bleven 12.000 tekens van het totale budget ongebruikt.
+
+De beoordelaar deed vervolgens precies wat hem is opgedragen en escaleerde,
+met de reden "de aangeleverde diff is afgekapt". Dat gedrag is goed; de grens
+deugt niet. Gevolg zoals het nu staat: elke pull request met één bestand
+groter dan 4.000 tekens escaleert altijd, hoe klein en veilig de wijziging ook
+is — en dat is vrijwel elke testmissie.
+
+Voorgestelde oplossing: laat de grens per bestand meegroeien met wat er van
+het totaal nog over is, gedeeld door het aantal bestanden dat nog volgt. Bij
+één bestand krijgt dat bestand het volle budget; bij tien blijft de huidige
+verdeling staan.
+
+### De Builder schrijft notities over zijn eigen beperkingen in opleverbare code
+
+Gevonden op 18 september 2026 in PR #64. Bovenin het opgeleverde testbestand
+stond: "Uitvoeringsblokkade: de beschikbare tools kunnen alleen bestanden
+lezen. Niet uitgevoerd: npm test ..., npm run typecheck ... Er is geen PR
+geopend."
+
+Dat is de Builder die zijn eigen werksituatie van dat moment vastlegt in code
+die blijft staan, en het is bovendien onwaar geworden zodra de CI draaide: die
+typecheck en die tests zijn wél uitgevoerd, en er ís een pull request. QA en de
+mergebeoordelaar signaleerden het allebei; geen van beiden blokkeerde erop,
+terecht, want het is rommel en geen defect.
+
+Dit is dezelfde soort fout als het proza dat op 15 september in een `.ts`-bestand
+belandde — daar ving `looksLikeSourceCode` het af. Hier hoort een vergelijkbare
+controle: een opgeleverd bestand mag geen notities over de uitvoeringsomgeving
+van de Builder bevatten.
 
 ## Voorgestelde volgende stappen
 
