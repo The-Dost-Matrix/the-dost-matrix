@@ -168,6 +168,48 @@ export function subscribeToKnowledge(
 }
 
 /**
+ * Stap 20: alle goedgekeurde kennis van een eigenaar, voor de doorzoekbare
+ * Second Brain-pagina.
+ *
+ * WAAROM DIT NIET subscribeToKnowledgeByStatus GEBRUIKT
+ *
+ * Die functie filtert op `status == "approved"` in de query zelf, en dat is
+ * daar precies goed. Hier zou het stil kennis laten verdwijnen: kennisitems
+ * van vóór de invoering van dat veld hebben helemaal geen `status`, en
+ * Firestore vindt die niet met een gelijkheidsfilter. Ze gelden overal in deze
+ * app als goedgekeurd (zie de kennispagina, die hetzelfde doet) — een
+ * zoekpagina die ze niet toont, zou beweren dat het systeem iets niet weet
+ * terwijl het dat wel weet.
+ *
+ * Daarom één query zonder statusfilter, met de selectie hier. De prijs is dat
+ * ook wachtende en afgewezen items over de lijn komen; bij een persoonlijke
+ * kennisbank van deze omvang is dat goedkoper dan de kans op onzichtbare
+ * kennis.
+ *
+ * De status wordt bovendien expliciet ingevuld op items die hem missen. Dat is
+ * geen opsmuk: de rangschikking in relevance.ts kijkt zelf óók naar
+ * `status === "approved"`, en zou ze anders alsnog laten vallen.
+ */
+export function subscribeToApprovedKnowledge(
+  ownerId: string,
+  onChange: (entries: KnowledgeEntry[]) => void,
+  onError: (error: Error) => void,
+  max = 1000,
+): () => void {
+  return subscribeToKnowledge(
+    ownerId,
+    (entries) =>
+      onChange(
+        entries
+          .filter((entry) => !entry.status || entry.status === "approved")
+          .map((entry) => ({ ...entry, status: "approved" as const })),
+      ),
+    onError,
+    max,
+  );
+}
+
+/**
  * Restpunt (7 september 2026): de kennispagina luisterde tot nu toe met
  * `subscribeToKnowledge` (geen statusfilter) naar de 250 nieuwste
  * kennisitems van ALLE statussen door elkaar, en filterde pas daarna

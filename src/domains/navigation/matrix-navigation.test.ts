@@ -30,4 +30,21 @@ describe("navigatielijsten", () => {
     expect(new Set(mainLabels).size).toBe(mainLabels.length);
     expect(new Set(plannedLabels).size).toBe(plannedLabels.length);
   });
+
+  it("zetten geen enkel item in beide lijsten tegelijk", () => {
+    // De valkuil bij het promoveren van een gepland item: "Second Brain" kreeg
+    // bij stap 20 een echte pagina, en als het item dan in plannedNavigation
+    // blijft staan, staat het twee keer in de zijbalk — één keer als link en
+    // één keer als "nog te bouwen".
+    const mainLabels = new Set(mainNavigation.map((item) => item.label));
+    const dubbel = plannedNavigation.filter((item) => mainLabels.has(item.label));
+
+    expect(dubbel).toEqual([]);
+  });
+
+  it("geven elk gebouwd item een pad binnen het dashboard", () => {
+    for (const item of mainNavigation) {
+      expect(item.href.startsWith("/dashboard")).toBe(true);
+    }
+  });
 });

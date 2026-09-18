@@ -23,9 +23,9 @@ import "@/components/workspace/mission-engine/mission-panels.css";
  * voor de kolombreedtes.
  *
  * Het Second Brain-paneel met de 3D-bol stond hier eerder rechts; op verzoek
- * van de eigenaar verwijderd. De component second-brain-panel.tsx blijft
- * bestaan maar wordt nergens meer gebruikt: Second Brain krijgt een eigen
- * plek zodra de doorzoekbare weergave uit stap 18 er is.
+ * van de eigenaar verwijderd. Second Brain heeft sinds stap 20 zijn eigen
+ * pagina op /dashboard/second-brain, met zoeken en filteren. De component
+ * second-brain-panel.tsx (de 3D-bol) wordt nergens meer gebruikt.
  *
  * Het Dost Council-paneel uit het functioneel ontwerp staat hier bewust nog
  * niet: de Council bestaat nog niet (stap 13). Zodra die er is, wordt het

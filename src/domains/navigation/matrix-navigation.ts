@@ -1,7 +1,7 @@
 /**
  * Eén gedeelde bron voor de werkruimte-navigatie (Command Center, Mission
- * Engine, Knowledge) en de geplande, nog niet gebouwde items (Dost Council,
- * Second Brain).
+ * Engine, Knowledge, Second Brain) en de geplande, nog niet gebouwde items
+ * (Dost Council).
  *
  * Stond eerder alleen lokaal in sidebar.tsx. Verplaatst hierheen toen de
  * mobiele topbar (zie topbar-navigation-menu.tsx) exact dezelfde lijst nodig
@@ -27,11 +27,14 @@ export const mainNavigation: MatrixNavigationItem[] = [
   { label: "Command Center", href: "/dashboard", icon: "◉" },
   { label: "Mission Engine", href: "/dashboard/missions-v2", icon: "⚙" },
   { label: "Knowledge", href: "/dashboard/knowledge", icon: "◇" },
+  // Sinds stap 20 een echte pagina. Stond hiervoor in plannedNavigation
+  // hieronder; een item hoort in precies één van de twee lijsten te staan,
+  // zie de test daarop in matrix-navigation.test.ts.
+  { label: "Second Brain", href: "/dashboard/second-brain", icon: "◈" },
 ];
 
 export const plannedNavigation: MatrixPlannedNavigationItem[] = [
   { label: "Dost Council", icon: "⬡", step: "stap 13" },
-  { label: "Second Brain", icon: "◈", step: "stap 18" },
 ];
 
 export function isActivePath(pathname: string, href: string): boolean {

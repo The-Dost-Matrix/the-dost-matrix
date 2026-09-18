@@ -19,24 +19,7 @@ import {
   parseDocumentFile,
   type ParsedDocument,
 } from "@/domains/documents/parsing/parse-document";
-
-const knowledgeTypePresentation: Record<string, { icon: string; label: string }> = {
-  vision: { icon: "🔭", label: "Visie" },
-  goal: { icon: "🎯", label: "Doel" },
-  decision: { icon: "⚖️", label: "Beslissing" },
-  architecture: { icon: "🏗️", label: "Architectuur" },
-  project: { icon: "📁", label: "Project" },
-  process: { icon: "⚙️", label: "Proces" },
-  preference: { icon: "⭐", label: "Voorkeur" },
-  lesson: { icon: "💡", label: "Les" },
-  task: { icon: "✅", label: "Taak" },
-  risk: { icon: "⚠️", label: "Risico" },
-  open_question: { icon: "❓", label: "Open vraag" },
-  person: { icon: "👤", label: "Persoon" },
-  company: { icon: "🏢", label: "Bedrijf" },
-  fact: { icon: "📌", label: "Feit" },
-  legacydocument: { icon: "📄", label: "Document" },
-};
+import { knowledgeTypePresentation } from "@/domains/knowledge/knowledge-type-labels";
 
 export default function KnowledgePage() {
   const router = useRouter();

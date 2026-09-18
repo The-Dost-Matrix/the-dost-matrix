@@ -1,0 +1,173 @@
+/* ==========================================================================
+   Stap 20 — de doorzoekbare Second Brain.
+
+   Kleuren komen uit de themavariabelen van globals.css (--cyan, --green,
+   --amber, --muted, --line, --text). Dat is geen stijlvoorkeur maar een les:
+   op 17 september gebruikte een nieuw paneel hier --success en --danger, die
+   in dit thema niet bestaan. CSS waarschuwt daar niet voor — een onbekende
+   variabele valt stil terug op de meegegeven standaardwaarde, en die was op
+   een licht thema berekend. Het resultaat was donkerblauwe tekst op een
+   donkergroen vlak, onleesbaar en pas zichtbaar op het scherm zelf.
+   ========================================================================== */
+
+.sb-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sb-search {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.sb-search input {
+  flex: 1;
+  padding: 10px 14px;
+  font-size: 0.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--line, rgba(98, 237, 189, .20));
+  background: rgba(4, 18, 13, .65);
+  color: var(--text, #eafff4);
+}
+
+.sb-search input::placeholder {
+  color: var(--muted, #8fb3a3);
+}
+
+/* Eén rij per soort filter, met de naam van die soort ervoor. Zonder dat
+   voorvoegsel zijn twintig knoppen onder elkaar niet meer te lezen als
+   groepen — en juist de groep zegt wat je aan het doen bent. */
+.sb-facet {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.sb-facet-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sb-facet-label {
+  font-size: 0.65rem;
+  font-weight: 900;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted, #8fb3a3);
+  margin-right: 4px;
+  min-width: 74px;
+}
+
+.sb-chip {
+  padding: 4px 10px;
+  font-size: 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--line, rgba(98, 237, 189, .20));
+  background: transparent;
+  color: var(--muted, #8fb3a3);
+  cursor: pointer;
+}
+
+.sb-chip:hover {
+  color: var(--text, #eafff4);
+  border-color: var(--cyan, #66f7c5);
+}
+
+/* Aangezet: de enige plek waar dit scherm nadruk gebruikt, zodat in één blik
+   te zien is waarop je aan het filteren bent. */
+.sb-chip--on {
+  color: var(--bg, #030c08);
+  background: var(--cyan, #66f7c5);
+  border-color: var(--cyan, #66f7c5);
+  font-weight: 700;
+}
+
+.sb-chip-count {
+  opacity: 0.65;
+  margin-left: 5px;
+}
+
+.sb-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 0.75rem;
+  color: var(--muted, #8fb3a3);
+}
+
+.sb-clear {
+  padding: 3px 10px;
+  font-size: 0.7rem;
+  background: transparent;
+  border: 1px solid var(--line, rgba(98, 237, 189, .20));
+  border-radius: 4px;
+  color: var(--muted, #8fb3a3);
+  cursor: pointer;
+}
+
+.sb-clear:hover:not(:disabled) {
+  color: var(--cyan, #66f7c5);
+  border-color: var(--cyan, #66f7c5);
+}
+
+.sb-clear:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.sb-results {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.sb-result-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.sb-result-type {
+  font-size: 0.65rem;
+  font-weight: 900;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--cyan, #66f7c5);
+  white-space: nowrap;
+}
+
+.sb-result-source {
+  font-size: 0.7rem;
+  color: var(--amber, #ffb454);
+}
+
+.sb-result-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.sb-result-tag {
+  font-size: 0.62rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line, rgba(98, 237, 189, .20));
+  color: var(--muted, #8fb3a3);
+}
+
+/* Op een telefoon is een rij knoppen naast een label te krap; daar mag het
+   label gewoon boven zijn groep staan. */
+@media (max-width: 720px) {
+  .sb-facet {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
