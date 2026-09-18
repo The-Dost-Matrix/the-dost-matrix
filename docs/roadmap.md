@@ -1484,6 +1484,74 @@ het model gaat is onveranderd — dat was de grens die ergens voor diende. Vijf
 regressietests dekken de verdeling af. Bevestiging in de praktijk volgt bij de
 eerstvolgende needs-signoff-missie.
 
+### Stap 20 — Doorzoekbare Second Brain
+
+Voltooid en live bevestigd op 18 september 2026.
+
+(voorheen stap 18, oorspronkelijk stap 11) Een eigen pagina op
+`/dashboard/second-brain` met een zoekveld en filters op soort, herkomst,
+onderwerp en periode. "Second Brain" is daarmee van gepland item naar echte
+navigatie-ingang gegaan.
+
+#### Waarom een eigen pagina en niet in Command Center
+
+De oorspronkelijke formulering was "binnen Command Center", maar dat scherm is
+inmiddels drie volle kolommen. In `dashboard/page.tsx` stond al sinds de
+herindeling dat het Second Brain-paneel daar bewust is weggehaald en "een eigen
+plek krijgt zodra de doorzoekbare weergave er is", en in
+`matrix-navigation.ts` stond de ingang al klaar als gepland item. De codebase
+wist het antwoord dus al; het was een kwestie van hem lezen in plaats van de
+roadmapzin letterlijk nemen.
+
+#### Dezelfde rangschikking als de Director
+
+De zoekopdracht gebruikt `findRelevantKnowledge` — de berekening waarmee de
+Director kennis bij een missie betrekt. Daarvoor moest die functie los van de
+opslag: ze stond in `retrieval.ts`, dat via de repository `firebase-admin`
+inleest en dus nooit in een browserbundel kan komen. Het rekenwerk staat nu in
+`relevance.ts`; `retrieval.ts` haalt alleen nog op en exporteert de functie
+onveranderd door, zodat bestaande aanroepers (waaronder de tests uit PR #64)
+niets merken.
+
+Het alternatief was een tweede zoekimplementatie aan de clientkant. Dan zou het
+scherm andere kennis "relevant" noemen dan het systeem gebruikt — twee
+waarheden over dezelfde vraag, waarvan je pas maanden later merkt dat ze
+uiteenlopen.
+
+#### Drie dingen die pas op het scherm zelf bleken
+
+**Een zoekterm die nergens voorkwam leverde tóch treffers op.** De score telt
+een opslag op voor het type en de levensfase van een kennisitem; een beslissing
+zonder ingevulde levensfase haalt daarmee precies de drempel van 0,08, ook als
+er geen woord overeenkomt. Voor de Director is dat goed gedrag — hij vult zijn
+context met de beste kennis die er ís. Voor een zoekveld is het onzin. De
+pagina legt er daarom een eigen eis naast (`hasKeywordMatch`); de Director
+merkt er niets van.
+
+**De filterrij "Herkomst" liep over zes regels uit.** Er staat een knop per
+brondocument in, en bij 754 kennisitems zijn dat er tientallen. Het nuttigste
+filter was zo het slechtst leesbare. Opgelost met tien knoppen per rij, een
+uitklapknop en een eigen zoekveldje zodra een rij lang wordt — plus de regel
+dat een aangezet filter altijd zichtbaar blijft, ook buiten die tien, anders
+staat er een filter aan dat je niet meer uit kunt zetten.
+
+**Er zat een onzichtbare grens van dertig onderwerpen in de gegevenslaag.**
+Die had ik er zelf in gezet. Bij 754 kennisitems betekende dat: het onderwerp
+dat je zoekt bestaat niet, en het scherm laat niet merken dat er meer is. Die
+grens is weg. Inkorten hoort in de weergave, waar het zichtbaar gebeurt en uit
+te klappen valt — precies dezelfde regel als bij de wachtrij op de
+Knowledge-pagina (zie het restpunt van 7 september).
+
+#### Bereik
+
+Alleen goedgekeurde kennis, bewust. Beoordelen, bewerken en afwijzen blijven op
+de Knowledge-pagina waar de wachtrij staat; twee schermen die allebei kunnen
+bewerken zijn twee plekken waar iets fout kan gaan. Kennisitems van vóór het
+`status`-veld tellen hier als goedgekeurd — net als overal elders in deze app —
+en worden daarom client-side geselecteerd in plaats van in de Firestore-query,
+die ze niet zou vinden.
+
+
 ## Restpunten
 
 Kleine dingen die bij een grotere stap zijn gesignaleerd en bewust zijn
@@ -1493,23 +1561,9 @@ restpunt dat alleen in een alinea staat, bestaat voor hem niet. Verdwijnt een
 punt, haal het kopje dan weg in plaats van er "opgelost" achter te zetten —
 anders groeit dit hoofdstuk alsnog dicht.
 
-### De Builder schrijft notities over zijn eigen beperkingen in opleverbare code
-
-Gevonden op 18 september 2026 in PR #64. Bovenin het opgeleverde testbestand
-stond: "Uitvoeringsblokkade: de beschikbare tools kunnen alleen bestanden
-lezen. Niet uitgevoerd: npm test ..., npm run typecheck ... Er is geen PR
-geopend."
-
-Dat is de Builder die zijn eigen werksituatie van dat moment vastlegt in code
-die blijft staan, en het is bovendien onwaar geworden zodra de CI draaide: die
-typecheck en die tests zijn wél uitgevoerd, en er ís een pull request. QA en de
-mergebeoordelaar signaleerden het allebei; geen van beiden blokkeerde erop,
-terecht, want het is rommel en geen defect.
-
-Dit is dezelfde soort fout als het proza dat op 15 september in een `.ts`-bestand
-belandde — daar ving `looksLikeSourceCode` het af. Hier hoort een vergelijkbare
-controle: een opgeleverd bestand mag geen notities over de uitvoeringsomgeving
-van de Builder bevatten.
+Momenteel geen openstaande restpunten (de laatste twee, uit PR #64, zijn op
+18 september 2026 afgerond — zie de secties over stap 20 en over het
+QA-gereedschap hierboven).
 
 ## Voorgestelde volgende stappen
 
@@ -1650,11 +1704,8 @@ bevestigd op 14 en 15 september 2026 — zie "Stap 18 volledig af" hieronder.)
 (Stap 19 stond hier. Voltooid en live bevestigd op 17 september 2026 —
 verplaatst naar "Voltooid" hierboven.)
 
-### Stap 20 — Doorzoekbare Second Brain-UI
-(voorheen stap 18, oorspronkelijk stap 11) Een eenvoudig zoek-/filterscherm
-(op onderwerp, missie, datum) binnen Command Center, zodat kennis
-terugvindbaar is zonder dat Elroy weet welke missie 'm oorspronkelijk
-voorstelde.
+(Stap 20 stond hier. Voltooid en live bevestigd op 18 september 2026 —
+verplaatst naar "Voltooid" hierboven.)
 
 ### Stap 21 — Missie-sjablonen
 (voorheen stap 19, oorspronkelijk stap 12) Voor terugkerende soorten missies
