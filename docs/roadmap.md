@@ -1466,6 +1466,24 @@ Een bijvangst: het verplichte veld `sourceReferences` — het nieuwste veld van
 testobjecten. De valstrik klapte niet dicht omdat er niets te gokken viel; hij
 had het type gelezen.
 
+#### Wat dezelfde proef aan het licht bracht
+
+De geautomatiseerde mergebeoordeling (`automated-signoff.ts`) weigerde PR #64
+met als reden dat de aangeleverde diff was afgekapt. Dat oordeel klopte: hij
+kreeg 4.000 van de 6.165 tekens te zien. De oorzaak was een grens per bestand
+van 4.000 tekens náást een totaalbudget van 16.000, waarbij de eerste ook knipte
+als er geen ander bestand was om ruimte voor te maken — 12.000 tekens budget
+bleven ongebruikt liggen.
+
+Daarmee escaleerde elke pull request met één bestand groter dan 4.000 tekens
+altijd, hoe klein en veilig ook, en deed deze controle niet meer waarvoor ze is
+gebouwd. Gerepareerd op 18 september 2026: elk bestand krijgt nu een evenredig
+deel van wat er van het totaal nog over is, en wat een klein bestand niet
+opmaakt schuift door naar het volgende. De harde grens op wat er in totaal naar
+het model gaat is onveranderd — dat was de grens die ergens voor diende. Vijf
+regressietests dekken de verdeling af. Bevestiging in de praktijk volgt bij de
+eerstvolgende needs-signoff-missie.
+
 ## Restpunten
 
 Kleine dingen die bij een grotere stap zijn gesignaleerd en bewust zijn
@@ -1474,25 +1492,6 @@ meekrijgt in zijn projectstand-index (die leest alleen `###`-kopjes) — een
 restpunt dat alleen in een alinea staat, bestaat voor hem niet. Verdwijnt een
 punt, haal het kopje dan weg in plaats van er "opgelost" achter te zetten —
 anders groeit dit hoofdstuk alsnog dicht.
-
-### De diff voor de geautomatiseerde mergebeoordeling wordt te vroeg afgekapt
-
-Gevonden op 18 september 2026 bij PR #64. In `automated-signoff.ts` staan twee
-grenzen: `MAX_PATCH_CHARS_PER_FILE = 4.000` en `MAX_TOTAL_DIFF_CHARS = 16.000`.
-De eerste knipt ook wanneer er geen ander bestand is om ruimte voor te maken.
-Bij PR #64 — één bestand van 6.165 tekens — kreeg de beoordelaar er 4.000 te
-zien en bleven 12.000 tekens van het totale budget ongebruikt.
-
-De beoordelaar deed vervolgens precies wat hem is opgedragen en escaleerde,
-met de reden "de aangeleverde diff is afgekapt". Dat gedrag is goed; de grens
-deugt niet. Gevolg zoals het nu staat: elke pull request met één bestand
-groter dan 4.000 tekens escaleert altijd, hoe klein en veilig de wijziging ook
-is — en dat is vrijwel elke testmissie.
-
-Voorgestelde oplossing: laat de grens per bestand meegroeien met wat er van
-het totaal nog over is, gedeeld door het aantal bestanden dat nog volgt. Bij
-één bestand krijgt dat bestand het volle budget; bij tien blijft de huidige
-verdeling staan.
 
 ### De Builder schrijft notities over zijn eigen beperkingen in opleverbare code
 

@@ -27,12 +27,6 @@ vi.mock("@/core/firebase/admin", () => ({
 import { adminDb } from "@/core/firebase/admin";
 import { findRelevantKnowledge } from "./retrieval";
 
-/**
- * Uitvoeringsblokkade: de beschikbare tools kunnen alleen bestanden lezen.
- * Niet uitgevoerd: npm test -- src/core/application/knowledge/retrieval.test.ts,
- * npm run typecheck, npm test en de Git-diffcontrole. Er is geen PR geopend.
- */
-
 /** Alle verplichte KnowledgeEntry-velden, zonder typecasts of externe data. */
 function makeEntry(overrides: Partial<KnowledgeEntry> = {}): KnowledgeEntry {
   return {
