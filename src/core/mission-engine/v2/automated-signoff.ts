@@ -44,8 +44,15 @@ const VERDICT_TAG_PATTERN = /<oordeel>\s*(AKKOORD|ESCALEREN)\s*<\/oordeel>/gi;
 // Zelfde reden als MAX_KNOWLEDGE_CONTEXT_LENGTH in director-runtime.ts: een
 // harde grens op wat naar het model gaat, zodat één ongebruikelijk grote
 // diff nooit een onbeperkt dure of onbeperkt lange aanroep veroorzaakt.
-const MAX_PATCH_CHARS_PER_FILE = 4_000;
 const MAX_TOTAL_DIFF_CHARS = 16_000;
+
+/**
+ * Ondergrens per bestand. Onder ongeveer dit aantal tekens is een stuk diff
+ * niet meer te beoordelen maar alleen nog te bekijken, en dan is het eerlijker
+ * om te melden dat er bestanden zijn weggelaten dan om er twintig snippers
+ * naast elkaar te leggen.
+ */
+const MIN_PATCH_CHARS_PER_FILE = 1_500;
 
 const SYSTEM_PROMPT = `Je bent de laatste, geautomatiseerde controle voordat een pull request
 automatisch wordt gemerged in de eigen codebase van The Dost Matrix, ZONDER
@@ -77,23 +84,60 @@ function truncate(text: string, maxChars: number): string {
   return `${text.slice(0, maxChars)}\n… (afgekapt, ${text.length - maxChars} tekens weggelaten)`;
 }
 
-function buildDiffBlock(files: PullRequestFileChange[]): string {
+/**
+ * Verdeelt het tekenbudget over de gewijzigde bestanden.
+ *
+ * WAAROM DIT NIET MEER EEN VASTE GRENS PER BESTAND IS
+ *
+ * Tot 18 september 2026 kreeg elk bestand hoogstens 4.000 tekens, naast een
+ * totaalbudget van 16.000. Die eerste grens knipte ook wanneer er geen ander
+ * bestand was om ruimte voor te maken. Bij PR #64 — één testbestand van 6.165
+ * tekens — zag de beoordelaar er 4.000 van, terwijl er 12.000 tekens budget
+ * ongebruikt bleven liggen. Hij escaleerde met als reden "de aangeleverde diff
+ * is afgekapt", en dat was precies het juiste oordeel: wie de helft van een
+ * wijziging ziet, hoort hem niet goed te keuren.
+ *
+ * Het gevolg was alleen wel dat élke pull request met één bestand groter dan
+ * 4.000 tekens automatisch escaleerde, hoe klein en veilig de wijziging ook
+ * was. Daarmee deed deze hele controle niet meer waarvoor ze is gebouwd — een
+ * missie 's nachts laten doorlopen zonder op een klik te wachten.
+ *
+ * Nu krijgt elk bestand een evenredig deel van wat er van het totaal nog over
+ * is. Bij één bestand is dat het hele budget; bij tien is het een tiende, en
+ * wat een klein bestand niet opmaakt schuift door naar het volgende. De harde
+ * grens op wat er in totaal naar het model gaat blijft ongewijzigd — dat was
+ * de grens die ergens voor diende.
+ */
+export function buildDiffBlock(files: PullRequestFileChange[]): string {
   const blocks: string[] = [];
-  let used = 0;
+  let remaining = MAX_TOTAL_DIFF_CHARS;
 
-  for (const file of files) {
-    const patch = file.patch
-      ? truncate(file.patch, MAX_PATCH_CHARS_PER_FILE)
-      : "(geen diff beschikbaar voor dit bestand — waarschijnlijk een binair bestand of een hernoeming)";
-    const block = `### ${file.filename} (${file.status})\n${patch}`;
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
 
-    if (used + block.length > MAX_TOTAL_DIFF_CHARS) {
-      blocks.push("… (overige bestanden weggelaten, diff werd te groot voor deze beoordeling)");
+    if (remaining < MIN_PATCH_CHARS_PER_FILE) {
+      const omitted = files.length - index;
+
+      blocks.push(
+        `… (nog ${omitted} bestand${omitted === 1 ? "" : "en"} weggelaten, ` +
+          "de diff werd te groot voor deze beoordeling)",
+      );
       break;
     }
 
+    const allowance = Math.max(
+      MIN_PATCH_CHARS_PER_FILE,
+      Math.floor(remaining / (files.length - index)),
+    );
+
+    const patch = file.patch
+      ? truncate(file.patch, allowance)
+      : "(geen diff beschikbaar voor dit bestand — waarschijnlijk een binair bestand of een hernoeming)";
+
+    const block = `### ${file.filename} (${file.status})\n${patch}`;
+
     blocks.push(block);
-    used += block.length;
+    remaining -= block.length;
   }
 
   return blocks.join("\n\n");

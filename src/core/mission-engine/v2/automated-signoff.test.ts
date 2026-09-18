@@ -12,7 +12,7 @@ vi.mock("@/core/llm/model-router", () => ({
 }));
 
 import { getChatProvider } from "@/core/llm/model-router";
-import { reviewPullRequestForAutomatedSignoff } from "./automated-signoff";
+import { buildDiffBlock, reviewPullRequestForAutomatedSignoff } from "./automated-signoff";
 import type { PullRequestFileChange } from "./github/github-client";
 import type { MissionV2 } from "./mission";
 
@@ -109,5 +109,76 @@ describe("reviewPullRequestForAutomatedSignoff", () => {
     expect(userMessage).toContain("Voorbeeldmissie");
     expect(userMessage).toContain("Een geïsoleerde utility-functie toevoegen.");
     expect(userMessage).toContain("formatCurrency");
+  });
+});
+
+/**
+ * Regressietests bij de reparatie van 18 september 2026. Zie de toelichting
+ * boven buildDiffBlock: een vaste grens van 4.000 tekens per bestand kapte ook
+ * af wanneer er geen ander bestand was om ruimte voor te maken, waardoor elke
+ * pull request met één bestand daarboven automatisch escaleerde en deze hele
+ * controle niet meer deed waarvoor ze bestaat.
+ */
+describe("buildDiffBlock", () => {
+  function fileWithPatch(filename: string, patchLength: number): PullRequestFileChange {
+    return {
+      filename,
+      status: "added",
+      patch: `+${"x".repeat(patchLength - 1)}`,
+    };
+  }
+
+  it("geeft één bestand het volle budget in plaats van een vaste 4.000 tekens", () => {
+    // 6.165 tekens: precies de omvang waar PR #64 op strandde.
+    const block = buildDiffBlock([fileWithPatch("src/a.ts", 6_165)]);
+
+    expect(block).not.toContain("afgekapt");
+    expect(block).toContain("src/a.ts");
+    expect(block.length).toBeGreaterThan(6_000);
+  });
+
+  it("kapt een bestand dat het hele budget overschrijdt wél af, met vermelding", () => {
+    // De harde grens op wat er naar het model gaat blijft staan; alleen de
+    // verdeling eronder is veranderd.
+    const block = buildDiffBlock([fileWithPatch("src/groot.ts", 40_000)]);
+
+    expect(block).toContain("afgekapt");
+    expect(block.length).toBeLessThan(17_000);
+  });
+
+  it("laat tien kleine bestanden allemaal volledig zien", () => {
+    const files = Array.from({ length: 10 }, (_, index) =>
+      fileWithPatch(`src/bestand-${index}.ts`, 500),
+    );
+
+    const block = buildDiffBlock(files);
+
+    for (const file of files) {
+      expect(block).toContain(file.filename);
+    }
+
+    expect(block).not.toContain("afgekapt");
+    expect(block).not.toContain("weggelaten");
+  });
+
+  it("meldt hoeveel bestanden er zijn weggelaten wanneer het budget opraakt", () => {
+    const files = Array.from({ length: 20 }, (_, index) =>
+      fileWithPatch(`src/bestand-${index}.ts`, 5_000),
+    );
+
+    const block = buildDiffBlock(files);
+
+    expect(block).toContain("src/bestand-0.ts");
+    expect(block).not.toContain("src/bestand-19.ts");
+    expect(block).toMatch(/nog \d+ bestanden weggelaten/);
+    expect(block.length).toBeLessThan(17_000);
+  });
+
+  it("zegt het eerlijk wanneer GitHub geen diff meelevert", () => {
+    const block = buildDiffBlock([
+      { filename: "logo.png", status: "added", patch: undefined },
+    ]);
+
+    expect(block).toContain("geen diff beschikbaar");
   });
 });
