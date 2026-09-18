@@ -870,6 +870,53 @@ de tweede beoordeling mag hem zelfstandig mergen. Hij komt alleen bij Elroy
 terecht wanneer die beoordeling zelf twijfelt, of wanneer de wijziging in de
 harde escalatiecategorie valt.
 
+#### Die verwachting klopte vijf dagen lang niet — 18 september 2026
+
+De zin hierboven was een voorspelling, en de praktijk sprak hem twee keer
+tegen. De beoordeling heeft na haar bouw nóóit iets goedgekeurd:
+
+- **PR #58 (13 september)** — escaleerde op de inhoud: ze zag twee onbesproken
+  keuzes in hoe een functie eurobedragen afrondt. Niets kapot, niets
+  onomkeerbaar. Elroy beoordeelde en mergde zelf.
+- **PR #64 (18 september)** — escaleerde omdat de aangeleverde diff was
+  afgekapt. Onze eigen fout in de budgetverdeling (zie automated-signoff.ts).
+  Elroy beoordeelde en mergde zelf.
+
+Elroy wees er zelf op, met de roadmapzin in de hand waarin hij deze
+beoordeling nu juist had overgedragen omdat hij niet per wijziging wilde
+oordelen. Hij had gelijk: wat er stond werkte niet zoals beschreven, en dat
+was hier niet opgemerkt.
+
+**Twee oorzaken, allebei gerepareerd.** De afkapping was er één. De andere was
+de instructie zelf, en die was de zwaarste: ze eindigde met "Twijfel je, ook
+maar een beetje? Kies dan escaleren." Met die zin erin vindt een model altijd
+wel iets, en dan is de beoordeling geen beoordeling meer maar een doorgeefluik
+naar de eigenaar.
+
+De lat ligt sinds vandaag op een BENOEMBAAR risico: wat gaat er kapot, of wat
+is moeilijk terug te draaien. Opmerkingen over smaak, over een verdedigbare
+keuze die de beoordelaar anders had gemaakt, of over iets dat beter
+gedocumenteerd had gekund, tellen uitdrukkelijk niet meer. Escaleert ze, dan
+moet ze in haar toelichting zeggen wát er kapot kan. De vangnetten eromheen
+zijn onveranderd: harde categorie, groene CI, alle criteria GEHAALD, en een
+onleesbaar oordeel dat nooit als goedkeuring telt.
+
+Drie tests in automated-signoff.test.ts bewaken die afstelling — ze kijken naar
+de tekst van de instructie, wat ongebruikelijk is maar hier verdiend: zou die
+"bij twijfel"-zin er stil weer insluipen, dan valt dat nergens aan op behalve
+aan het uitblijven van automatische merges.
+
+**Het bewijs.** De missie "Tests voor de werkruimtelezer" (PR #65, één nieuw
+testbestand onder `src/core/`, dus needs-signoff via de bestandsregel en buiten
+de harde categorie): de beoordeling keurde goed, de Director mergde zelf, de
+missie ging op VOLTOOID. De knop "Goedkeuring & Mergen" is geen enkele keer
+verschenen. Eerste keer sinds de bouw van stap 15 dat dat lukte.
+
+Eerlijk over wat dit wél en niet aantoont: beide reparaties stonden live bij
+deze run, dus ze zijn op één missie niet los van elkaar te bewijzen. Dat de
+instructie de zwaarste van de twee was, leidt zich af uit PR #58 — daar had de
+beoordelaar de volledige diff gezien en escaleerde ze toch, op inhoud.
+
 ### Stap 17 — Director Evidence Upgrade
 (voorheen stap 15) Live bewezen op 13 september 2026 met de missie "Voeg
 utility truncateMiddle toe" (PR #59).
