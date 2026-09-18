@@ -12,7 +12,11 @@ vi.mock("@/core/llm/model-router", () => ({
 }));
 
 import { getChatProvider } from "@/core/llm/model-router";
-import { buildDiffBlock, reviewPullRequestForAutomatedSignoff } from "./automated-signoff";
+import {
+  SYSTEM_PROMPT,
+  buildDiffBlock,
+  reviewPullRequestForAutomatedSignoff,
+} from "./automated-signoff";
 import type { PullRequestFileChange } from "./github/github-client";
 import type { MissionV2 } from "./mission";
 
@@ -109,6 +113,37 @@ describe("reviewPullRequestForAutomatedSignoff", () => {
     expect(userMessage).toContain("Voorbeeldmissie");
     expect(userMessage).toContain("Een geïsoleerde utility-functie toevoegen.");
     expect(userMessage).toContain("formatCurrency");
+  });
+});
+
+/**
+ * De afstelling van de instructie, vastgelegd op 18 september 2026.
+ *
+ * Deze test kijkt naar de tekst van een prompt, en dat is ongebruikelijk. De
+ * reden staat in de toelichting bovenaan automated-signoff.ts: de eerste versie
+ * eindigde met "twijfel je, ook maar een beetje? Kies dan escaleren", en met
+ * die zin erin heeft de beoordeling in twee livetests nooit iets goedgekeurd.
+ * Elroy deed het werk dat hij juist had overgedragen. Zou die zin er ooit stil
+ * weer insluipen, dan valt dat nergens aan op behalve aan het uitblijven van
+ * automatische merges — precies het soort onzichtbaarheid waar dit project
+ * tests voor schrijft.
+ */
+describe("de instructie voor de beoordelaar", () => {
+  it("vraagt om een benoembaar risico in plaats van om afwezigheid van twijfel", () => {
+    expect(SYSTEM_PROMPT).toContain("BENOEMEN");
+    expect(SYSTEM_PROMPT).not.toContain("ook maar een beetje");
+  });
+
+  it("noemt expliciet wat géén reden tot escaleren is", () => {
+    expect(SYSTEM_PROMPT).toContain("smaak, stijl");
+  });
+
+  it("laat de twee oordeelvormen ongewijzigd", () => {
+    // parseAutomatedSignoffVerdict zoekt letterlijk naar deze twee regels;
+    // veranderen ze in de instructie, dan herkent de code het oordeel niet meer
+    // en telt alles als "niet goedgekeurd".
+    expect(SYSTEM_PROMPT).toContain("<oordeel>AKKOORD</oordeel>");
+    expect(SYSTEM_PROMPT).toContain("<oordeel>ESCALEREN</oordeel>");
   });
 });
 

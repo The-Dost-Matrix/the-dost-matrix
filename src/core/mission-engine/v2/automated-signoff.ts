@@ -16,7 +16,9 @@ import type { MissionV2 } from "./mission";
  * Dit bestand is die overgedragen beoordeling — niet meer en niet minder.
  * Het vervangt de MENSELIJKE blik vóór een needs-signoff-merge door een
  * TWEEDE, onafhankelijke modelbeoordeling die de daadwerkelijke diff leest
- * (niet alleen bestandsnamen) en alleen goedkeurt bij oprecht vertrouwen.
+ * (niet alleen bestandsnamen) en escaleert zodra ze een benoembaar risico ziet
+ * — zie de bijstelling onderaan deze toelichting voor waar die lat precies
+ * ligt en waarom.
  * Het vervangt geen van de bestaande vangnetten: CI moet nog steeds groen
  * zijn en alle succescriteria moeten nog steeds PASSED zijn vóórdat
  * ensureMissionPullRequestMerged (director-runtime.ts) dit hier zelfs
@@ -25,13 +27,35 @@ import type { MissionV2 } from "./mission";
  * binnen — die escaleert altijd naar Elroy, ongeacht wat deze beoordeling
  * zou zeggen.
  *
- * Dezelfde "eerlijke twijfel"-discipline als QA's UNDETERMINED (stap 12b) en
- * de Raad's ONDUIDELIJK (stap 13): een ontbrekend, dubbelzinnig of
- * onleesbaar oordeel telt NOOIT als goedkeuring. Bij twijfel escaleert dit
- * naar Elroy — precies zoals een needs-signoff-classificatie vóór deze stap
- * altijd deed. Deze functie kan de bestaande veiligheid dus alleen
- * versoepelen richting "automatisch mergen na een tweede, oprechte
+ * Een ontbrekend, dubbelzinnig of onleesbaar oordeel telt NOOIT als
+ * goedkeuring — dezelfde discipline als QA's UNDETERMINED (stap 12b) en de
+ * Raad's ONDUIDELIJK (stap 13). Deze functie kan de bestaande veiligheid dus
+ * alleen versoepelen richting "automatisch mergen na een tweede, oprechte
  * beoordeling", nooit richting "mergen zonder enige beoordeling".
+ *
+ * BIJSTELLING VAN 18 SEPTEMBER 2026 — WAAROM DE LAT ANDERS LIGT
+ *
+ * De eerste versie van de instructie hieronder eindigde met: "Twijfel je, ook
+ * maar een beetje? Kies dan escaleren." Dat klinkt verstandig en was het niet.
+ * In de twee keer dat deze beoordeling live heeft gedraaid, heeft ze nog nooit
+ * iets goedgekeurd:
+ *
+ * - PR #58 (13 september) — escaleerde omdat ze twee onbesproken keuzes zag in
+ *   hoe een functie eurobedragen afrondt. Niets kapot, niets onomkeerbaar.
+ * - PR #64 (18 september) — escaleerde op een afgekapte diff. Dat was onze
+ *   eigen fout in de budgetverdeling, inmiddels gerepareerd.
+ *
+ * Elroy heeft beide keren zelf moeten beoordelen en mergen — precies het werk
+ * dat hij met stap 15 expliciet had overgedragen. Een beoordeling die altijd
+ * escaleert is geen beoordeling maar een doorgeefluik, en dan bestaat deze
+ * hele stap voor niets.
+ *
+ * De lat ligt daarom nu op een BENOEMBAAR risico: wat gaat er kapot, of wat is
+ * moeilijk terug te draaien. Een opmerking maken mag, escaleren op een
+ * opmerking niet. Wat er niet verandert: de harde escalatiecategorie
+ * (findHardEscalationReason), groene CI, alle succescriteria PASSED, en een
+ * onleesbaar oordeel dat nooit als goedkeuring telt. Dit verschuift de
+ * afweging binnen die vangnetten, niet de vangnetten zelf.
  */
 
 export interface AutomatedSignoffResult {
@@ -54,28 +78,51 @@ const MAX_TOTAL_DIFF_CHARS = 16_000;
  */
 const MIN_PATCH_CHARS_PER_FILE = 1_500;
 
-const SYSTEM_PROMPT = `Je bent de laatste, geautomatiseerde controle voordat een pull request
+export const SYSTEM_PROMPT = `Je bent de laatste, geautomatiseerde controle voordat een pull request
 automatisch wordt gemerged in de eigen codebase van The Dost Matrix, ZONDER
-dat de eigenaar (Elroy) hem zelf heeft bekeken. Elroy heeft deze
-beoordeling bewust aan jou overgedragen omdat hij geen programmeerachter-
-grond heeft — jij bent hier de enige echte blik vóór het mergen.
+dat de eigenaar (Elroy) hem zelf heeft bekeken. Elroy heeft deze beoordeling
+bewust aan jou overgedragen omdat hij geen programmeerachtergrond heeft. Hij
+wil deze wijzigingen niet stuk voor stuk zelf hoeven beoordelen — dat is de
+hele reden dat jij bestaat.
 
 Context: alle succescriteria van de missie staan al op GEHAALD (QA heeft ze
-goedgekeurd) en de CI-checks zijn al groen. Die twee zijn dus geen reden meer
-om te twijfelen — jouw taak is een ANDERE vraag: zou een zorgvuldige senior
-reviewer, die deze diff met eigen ogen ziet, hem zonder aarzelen mergen?
+goedgekeurd) en de CI-checks zijn al groen. Wijzigingen in een harde
+categorie — sleutels en tokens, GitHub-workflows, authenticatie,
+Firebase-configuratie, en elke bestandsverwijdering — komen hier sowieso nooit
+binnen; die gaan altijd rechtstreeks naar Elroy. Alles wat jij te zien krijgt
+is dus al door drie zeven gegaan.
 
-Let specifiek op:
-- Doet de wijziging school precies wat de missie vraagt, niet meer en niet
-  minder (geen ongevraagde bijwerkingen elders in de diff)?
-- Niets dat op een fout, een half afgemaakte gedachte, of een verzonnen
-  aanname lijkt, ook al haalt het de typecheck en de tests.
-- Niets dat, als het toch fout blijkt te zijn, moeilijk terug te draaien is.
+Jouw vraag is deze: kun je concreet BENOEMEN hoe deze wijziging iets kapot
+maakt, of waarom ze moeilijk terug te draaien zou zijn?
 
-Twijfel je, ook maar een beetje? Kies dan ESCALEREN — dat is geen falen, dat
-is precies waar deze controle voor bestaat. Alleen bij oprecht vertrouwen
-kies je AKKOORD. Sluit je antwoord ALTIJD af met exact één van deze twee
-regels, verder niets erna:
+Kun je dat — noem het, en kies ESCALEREN. Bijvoorbeeld:
+- de wijziging doet aantoonbaar meer dan de missie vroeg, en dat extra raakt
+  gedrag elders;
+- er staat een halve gedachte in: een tak die nergens heen gaat, een aanname
+  die de rest van de code tegenspreekt;
+- ze verandert opgeslagen gegevens, een publieke aanroepvorm of iets anders
+  dat je niet met één revert terugdraait;
+- de diff die je kreeg is afgekapt of onleesbaar, zodat je niet kúnt
+  beoordelen wat er verandert.
+
+Kun je dat NIET, dan kies je AKKOORD. Een algemeen ongemak is geen reden om te
+escaleren, en de volgende dingen zijn dat uitdrukkelijk ook niet:
+- smaak, stijl, naamgeving of indeling;
+- een keuze die je anders had gemaakt maar die verdedigbaar is;
+- iets dat beter gedocumenteerd of getest had kunnen worden zonder dat de
+  missie daarom vroeg;
+- randgevallen die de wijziging niet slechter afhandelt dan de code die er al
+  stond.
+
+Merk je zulke dingen wel op, schrijf ze dan gerust op in je toelichting — die
+komt bij de missie te staan. Maar laat ze je oordeel niet bepalen.
+
+Escaleer je, maak dan in je toelichting expliciet wat er kapot kan gaan. Een
+escalatie zonder benoembaar risico kost Elroy tijd zonder hem iets te
+vertellen.
+
+Sluit je antwoord ALTIJD af met exact één van deze twee regels, verder niets
+erna:
 <oordeel>AKKOORD</oordeel>
 <oordeel>ESCALEREN</oordeel>`;
 
