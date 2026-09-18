@@ -69,6 +69,18 @@ function formatDate(date: Date | null): string {
   });
 }
 
+/**
+ * Hoeveel knoppen een filterrij standaard toont.
+ *
+ * Bij de eerste livetest liep de rij "Herkomst" over zes regels uit, omdat er
+ * een knop per brondocument in staat en er inmiddels 754 kennisitems zijn. Het
+ * nuttigste filter was daarmee het slechtst leesbare. Afkappen op een vast
+ * aantal is geen oplossing — dan verdwijnt juist het document dat je zoekt —
+ * dus staat er nu een uitklapknop bij, met een eigen zoekveldje zodra de lijst
+ * lang wordt.
+ */
+const FACET_PREVIEW = 10;
+
 interface FacetRowProps {
   label: string;
   options: { value: string; count: number }[];
@@ -78,6 +90,29 @@ interface FacetRowProps {
 }
 
 function FacetRow({ label, options, selected, formatValue, onToggle }: FacetRowProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [needle, setNeedle] = useState("");
+
+  const display = (value: string) => (formatValue ? formatValue(value) : value);
+
+  const trimmedNeedle = needle.trim().toLowerCase();
+
+  const matching = trimmedNeedle
+    ? options.filter((option) => display(option.value).toLowerCase().includes(trimmedNeedle))
+    : options;
+
+  const preview = expanded || trimmedNeedle ? matching : matching.slice(0, FACET_PREVIEW);
+
+  // Een aangezet filter moet altijd zichtbaar blijven, ook als het buiten de
+  // voorvertoning of buiten het zoekveldje valt — anders staat er een filter
+  // aan dat je niet meer uit kunt zetten.
+  const visible = [
+    ...preview,
+    ...options.filter((option) => selected.includes(option.value) && !preview.includes(option)),
+  ];
+
+  const hidden = matching.length - preview.length;
+
   if (options.length === 0) return null;
 
   return (
@@ -85,17 +120,47 @@ function FacetRow({ label, options, selected, formatValue, onToggle }: FacetRowP
       <span className="sb-facet-label">{label}</span>
 
       <div className="sb-facet-chips">
-        {options.map((option) => (
+        {options.length > FACET_PREVIEW && (
+          <input
+            className="sb-facet-search"
+            onChange={(event) => setNeedle(event.target.value)}
+            placeholder={`Zoek in ${options.length}…`}
+            type="search"
+            value={needle}
+          />
+        )}
+
+        {visible.map((option) => (
           <button
             key={option.value}
             className={`sb-chip${selected.includes(option.value) ? " sb-chip--on" : ""}`}
             onClick={() => onToggle(option.value)}
             type="button"
           >
-            {formatValue ? formatValue(option.value) : option.value}
+            {display(option.value)}
             <span className="sb-chip-count">{option.count}</span>
           </button>
         ))}
+
+        {hidden > 0 && (
+          <button className="sb-chip sb-chip--more" onClick={() => setExpanded(true)} type="button">
+            nog {hidden} meer
+          </button>
+        )}
+
+        {expanded && !trimmedNeedle && matching.length > FACET_PREVIEW && (
+          <button
+            className="sb-chip sb-chip--more"
+            onClick={() => setExpanded(false)}
+            type="button"
+          >
+            inklappen
+          </button>
+        )}
+
+        {trimmedNeedle && matching.length === 0 && (
+          <span className="sb-facet-empty">niets gevonden</span>
+        )}
       </div>
     </div>
   );

@@ -86,6 +86,33 @@
   font-weight: 700;
 }
 
+/* De uitklap- en inklapknop: zelfde vorm als een filterknop, maar zonder de
+   suggestie dat je er iets mee aanzet. */
+.sb-chip--more {
+  border-style: dashed;
+  font-style: italic;
+}
+
+.sb-facet-search {
+  padding: 3px 10px;
+  font-size: 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--line, rgba(98, 237, 189, .20));
+  background: rgba(4, 18, 13, .65);
+  color: var(--text, #eafff4);
+  width: 150px;
+}
+
+.sb-facet-search::placeholder {
+  color: var(--muted, #8fb3a3);
+}
+
+.sb-facet-empty {
+  font-size: 0.7rem;
+  color: var(--muted, #8fb3a3);
+  font-style: italic;
+}
+
 .sb-chip-count {
   opacity: 0.65;
   margin-left: 5px;

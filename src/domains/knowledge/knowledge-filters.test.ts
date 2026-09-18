@@ -81,6 +81,17 @@ describe("collectFacets", () => {
     expect(facetten.tags[0]).toEqual({ value: "github", count: 2 });
   });
 
+  it("kapt de onderwerpen niet af", () => {
+    // Bij 754 kennisitems liep de eerste versie tegen een grens van dertig aan,
+    // waardoor het onderwerp dat je zocht onvindbaar werd zonder dat het
+    // scherm liet merken dat er meer was. Inkorten hoort in de weergave.
+    const veel = Array.from({ length: 40 }, (_, index) =>
+      maakItem({ id: `item-${index}`, tags: [`onderwerp-${index}`] }),
+    );
+
+    expect(collectFacets(veel).tags).toHaveLength(40);
+  });
+
   it("noemt alleen soorten die er werkelijk zijn", () => {
     // Een filterknop voor kennis die je niet hebt, levert altijd niets op.
     const facetten = collectFacets([maakItem({ type: "lesson" })]);

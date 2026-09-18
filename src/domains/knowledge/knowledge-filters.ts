@@ -106,12 +106,18 @@ function tally(values: string[]): FacetOption[] {
  * Welke keuzes er te maken vallen, afgeleid uit de kennis die er werkelijk
  * is. Bewust geen vaste lijst van alle mogelijke types: een filterknop voor
  * een soort kennis die je niet hebt, is een knop die altijd niets oplevert.
+ *
+ * Er wordt hier niets afgekapt. De eerste versie hield de onderwerpen op
+ * dertig, en dat is precies de verkeerde plek om te snoeien: bij 754
+ * kennisitems was het onderwerp dat jij zocht dan gewoon onvindbaar, zonder
+ * dat het scherm liet merken dat er meer was. Het inkorten hoort in de
+ * weergave thuis, waar het zichtbaar gebeurt en uit te klappen valt.
  */
 export function collectFacets(entries: KnowledgeEntry[]): KnowledgeFacets {
   return {
     types: tally(entries.map((entry) => entry.type ?? "fact")),
     sources: tally(entries.map(entrySourceLabel)),
-    tags: tally(entries.flatMap((entry) => entry.tags)).slice(0, 30),
+    tags: tally(entries.flatMap((entry) => entry.tags)),
   };
 }
 
