@@ -65,10 +65,51 @@ export interface AutomatedSignoffResult {
 
 const VERDICT_TAG_PATTERN = /<oordeel>\s*(AKKOORD|ESCALEREN)\s*<\/oordeel>/gi;
 
-// Zelfde reden als MAX_KNOWLEDGE_CONTEXT_LENGTH in director-runtime.ts: een
-// harde grens op wat naar het model gaat, zodat één ongebruikelijk grote
-// diff nooit een onbeperkt dure of onbeperkt lange aanroep veroorzaakt.
-const MAX_TOTAL_DIFF_CHARS = 16_000;
+/**
+ * Hoeveel tekens diff er hoogstens naar het model gaan.
+ *
+ * WAAR DIT GETAL OP GEBASEERD IS — EN WAAR HET EERST OP GEBASEERD WAS
+ *
+ * Tot 19 september 2026 stond hier 16.000, met als hele onderbouwing
+ * "zelfde reden als MAX_KNOWLEDGE_CONTEXT_LENGTH in director-runtime.ts". Die
+ * constante staat op 6.000 en begrenst iets heel anders: hoeveel kennis uit
+ * het Second Brain er in een prompt mag. 16.000 was dus geen afgeleide van
+ * een echte grens, maar een zelfverzonnen getal met een verwijzing ernaast
+ * die het geloofwaardig liet lijken.
+ *
+ * Dat heeft twee keer een missie laten stranden. PR #64: één testbestand van
+ * 6.165 tekens. PR #66: twee bestanden waarvan het grootste 11.365 tekens
+ * was. Beide keren zag de beoordelaar een afgekapte diff en escaleerde hij —
+ * terecht, want wie een deel van een wijziging niet ziet, hoort haar niet
+ * goed te keuren. Het gevolg was alleen dat Elroy de beoordeling deed die hij
+ * juist had overgedragen.
+ *
+ * Deze grens dient één doel: voorkomen dat een uitzonderlijk grote pull
+ * request een onbeperkt dure of onbeperkt trage aanroep veroorzaakt. Ze is
+ * uitdrukkelijk GEEN veiligheidsgrens — de veiligheid zit in het oordeel van
+ * het model, in findHardEscalationReason en in de CI-poort, niet in hoeveel
+ * tekens het model te zien krijgt. Minder laten zien maakt de beoordeling
+ * niet voorzichtiger, alleen blinder.
+ *
+ * Daarom nu 200.000 tekens. De onderbouwing, zodat een volgende sessie hem
+ * kan narekenen in plaats van hem te moeten geloven:
+ *
+ * - Broncode is ruwweg 3,5 tekens per token, dus 200.000 tekens is ongeveer
+ *   57.000 tokens. Het contextvenster van de modellen die deze beoordeling
+ *   draait (zie ANTHROPIC_DEFAULT_CHAT_MODEL en de OpenAI-tegenhanger) is een
+ *   veelvoud daarvan; er blijft ruim plaats over voor de instructie, de
+ *   missie en de succescriteria.
+ * - Aan invoerkosten is dat in de orde van tien à twintig eurocent voor één
+ *   beoordeling. Dat is dezelfde orde als wat een hele missie vandaag kost.
+ * - En het architectuurprincipe van dit project is dat kosten een missie
+ *   nooit blokkeren. Een plafond dat vooral escalaties produceert, is precies
+ *   zo'n blokkade — alleen vermomd als voorzichtigheid.
+ *
+ * Een pull request die hier nog overheen gaat, is in één missie geschreven en
+ * groter dan 200.000 tekens diff. Dan is escaleren naar Elroy niet het falen
+ * van deze controle maar het juiste antwoord.
+ */
+export const MAX_TOTAL_DIFF_CHARS = 200_000;
 
 /**
  * Ondergrens per bestand. Onder ongeveer dit aantal tekens is een stuk diff
@@ -76,7 +117,7 @@ const MAX_TOTAL_DIFF_CHARS = 16_000;
  * om te melden dat er bestanden zijn weggelaten dan om er twintig snippers
  * naast elkaar te leggen.
  */
-const MIN_PATCH_CHARS_PER_FILE = 1_500;
+export const MIN_PATCH_CHARS_PER_FILE = 1_500;
 
 export const SYSTEM_PROMPT = `Je bent de laatste, geautomatiseerde controle voordat een pull request
 automatisch wordt gemerged in de eigen codebase van The Dost Matrix, ZONDER

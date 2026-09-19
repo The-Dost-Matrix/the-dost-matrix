@@ -13,6 +13,8 @@ vi.mock("@/core/llm/model-router", () => ({
 
 import { getChatProvider } from "@/core/llm/model-router";
 import {
+  MAX_TOTAL_DIFF_CHARS,
+  MIN_PATCH_CHARS_PER_FILE,
   SYSTEM_PROMPT,
   allocateDiffBudget,
   buildDiffBlock,
@@ -187,6 +189,22 @@ describe("buildDiffBlock", () => {
     expect(block).not.toContain("weggelaten");
   });
 
+  it("laat een realistische missie-oplevering van code plus tests volledig zien", () => {
+    // Deze test bewaakt het PLAFOND zelf, niet de verdeling eronder. 40.000
+    // tekens code met 40.000 tekens tests is een gewone, niet eens grote
+    // oplevering — vele malen #64 (6.165) en #66 (11.365), de twee gevallen
+    // waarop dit al eens strandde. Zakt MAX_TOTAL_DIFF_CHARS ooit terug naar
+    // een getal waar zoiets niet meer in past, dan valt deze test om, en dat
+    // hoort ook: dan wordt de beoordelaar weer blind gemaakt.
+    const block = buildDiffBlock([
+      fileWithPatch("src/core/toepassing.ts", 40_000),
+      fileWithPatch("src/core/toepassing.test.ts", 40_000),
+    ]);
+
+    expect(block).not.toContain("afgekapt");
+    expect(block).not.toContain("weggelaten");
+  });
+
   it("verdeelt het budget van klein naar groot, ongeacht de volgorde in de lijst", () => {
     // De uitkomst hoort niet af te hangen van de volgorde waarin GitHub de
     // bestanden toevallig teruggeeft.
@@ -199,11 +217,17 @@ describe("buildDiffBlock", () => {
 
   it("kapt een bestand dat het hele budget overschrijdt wél af, met vermelding", () => {
     // De harde grens op wat er naar het model gaat blijft staan; alleen de
-    // verdeling eronder is veranderd.
-    const block = buildDiffBlock([fileWithPatch("src/groot.ts", 40_000)]);
+    // verdeling eronder is veranderd. De omvang wordt hier afgeleid van de
+    // constante zelf, zodat deze test blijft meten wat hij bedoelt te meten
+    // wanneer het plafond ooit weer verschuift — op 19 september 2026 ging het
+    // van 16.000 naar 200.000, en een vast getal van 40.000 zou toen stil zijn
+    // gaan slagen om de verkeerde reden.
+    const block = buildDiffBlock([
+      fileWithPatch("src/groot.ts", MAX_TOTAL_DIFF_CHARS * 2),
+    ]);
 
     expect(block).toContain("afgekapt");
-    expect(block.length).toBeLessThan(17_000);
+    expect(block.length).toBeLessThan(MAX_TOTAL_DIFF_CHARS + 1_000);
   });
 
   it("laat tien kleine bestanden allemaal volledig zien", () => {
@@ -222,16 +246,23 @@ describe("buildDiffBlock", () => {
   });
 
   it("meldt hoeveel bestanden er zijn weggelaten wanneer het budget opraakt", () => {
-    const files = Array.from({ length: 20 }, (_, index) =>
-      fileWithPatch(`src/bestand-${index}.ts`, 5_000),
+    // Weglaten gebeurt pas wanneer er zóveel bestanden zijn dat er voor het
+    // volgende bestand geen zinnige portie meer over is — dus meer bestanden
+    // dan het plafond gedeeld door de ondergrens. Bij 200.000 en 1.500 zijn
+    // dat er ruim honderddertig. Vandaar dat het aantal hier uit die twee
+    // constanten volgt in plaats van uit een vast getal.
+    const count = Math.ceil(MAX_TOTAL_DIFF_CHARS / MIN_PATCH_CHARS_PER_FILE) + 10;
+
+    const files = Array.from({ length: count }, (_, index) =>
+      fileWithPatch(`src/bestand-${index}.ts`, MIN_PATCH_CHARS_PER_FILE * 2),
     );
 
     const block = buildDiffBlock(files);
 
     expect(block).toContain("src/bestand-0.ts");
-    expect(block).not.toContain("src/bestand-19.ts");
+    expect(block).not.toContain(`src/bestand-${count - 1}.ts`);
     expect(block).toMatch(/nog \d+ bestanden weggelaten/);
-    expect(block.length).toBeLessThan(17_000);
+    expect(block.length).toBeLessThan(MAX_TOTAL_DIFF_CHARS + 10_000);
   });
 
   it("zegt het eerlijk wanneer GitHub geen diff meelevert", () => {
