@@ -18,6 +18,7 @@ import {
   type GithubRepoTarget,
   type PullRequestSummary,
 } from "./github/github-client";
+import { stripExecutionNotes } from "./execution-notes";
 import { MISSION_BRANCH_NAME } from "./mission-branch";
 import type { MissionV2 } from "./mission";
 import {
@@ -344,6 +345,11 @@ function buildBuilderSystemPrompt(mission: MissionV2): string {
     // hieronder). Een systeeminstructie die iets anders zegt dan wat de
     // gebruikersprompt vraagt, is zelf een bron van onbetrouwbaarheid.
     "Volg exact het antwoordformaat dat in de instructie hieronder wordt gevraagd — niet automatisch JSON, tenzij dat expliciet gevraagd wordt.",
+    // Eerste verdediging tegen de misser uit PR #64; het vangnet eronder staat
+    // in execution-notes.ts. Wat jij op dit moment wel of niet kon draaien is
+    // een eigenschap van deze ene aanroep, niet van de code — over een maand
+    // leest niemand het meer als iets anders dan een onwaarheid.
+    "Schrijf nooit aantekeningen over je eigen werkomgeving in een bestand dat je oplevert: geen opmerkingen over welk gereedschap je had, wat je niet hebt kunnen uitvoeren, of dat er nog geen pull request is. Kon je iets niet, zeg dat dan in je antwoord buiten de bestandsinhoud om. Commentaar in een bestand gaat over de code, nooit over jou.",
   ].join(" ");
 }
 
@@ -1221,7 +1227,23 @@ async function writeSingleFile(
     );
   }
 
-  return { content: ensureTrailingNewline(rawContent), model: completion.model };
+  // Opruiming, geen weigering: aantekeningen van de Builder over zijn eigen
+  // werkomgeving horen niet in een bestand dat blijft staan, maar de code
+  // eromheen is goed en een missie laten falen op een opmerking kost een hele
+  // lus voor iets wat hier in één stap weg is. Zie execution-notes.ts voor de
+  // live misser (PR #64) en voor waarom dit vangnet bewust terughoudend is.
+  const { content: cleanedContent, removed } = stripExecutionNotes(rawContent);
+
+  if (removed.length > 0) {
+    console.warn(
+      [
+        `Builder-antwoord voor "${file.path}" bevatte ${removed.length} aantekening(en) over zijn eigen uitvoering; verwijderd vóór het wegschrijven.`,
+        ...removed,
+      ].join("\n"),
+    );
+  }
+
+  return { content: ensureTrailingNewline(cleanedContent), model: completion.model };
 }
 
 /**

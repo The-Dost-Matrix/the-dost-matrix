@@ -1758,10 +1758,150 @@ verplaatst naar "Voltooid" hierboven.)
 (voorheen stap 19, oorspronkelijk stap 12) Voor terugkerende soorten missies
 een herbruikbaar sjabloon met vooraf ingevulde objective/succescriteria.
 
-### Stap 22 — Claude zichtbaar ingebed in de app
-(voorheen stap 20, oorspronkelijk stap 13) Een paneel in Command Center dat
-live meekijkt met een externe Claude Code/Cowork-sessie (logs/activiteit).
-Nog geen twee-richtingen besturing — puur zichtbaarheid als eerste stap.
+### Stap 22 — De Claude-koppeling: terugkoppeling zonder tussenpersoon
+
+**Deze stap vervangt de oude stap 22, die de andere kant op keek.** Daar stond:
+"een paneel in Command Center dat live meekijkt met een externe Claude
+Code/Cowork-sessie". Dat is niet wat nodig is. Het probleem is niet dat Elroy
+niet kan zien wat Claude doet — het is dat Claude niet kan zien wat The Dost
+Matrix doet, tenzij Elroy het overtypt of er een schermafdruk van maakt.
+
+**Waar deze stap vandaan komt.** Elroy, 19 september 2026: "Alles wat er in The
+Dost Matrix gebeurde heb ik 1 op 1 teruggekoppeld naar jou. En dat laatste moet
+gewoon rechtstreeks gebeuren, zonder mijn tussenkomst. Zoals jij mij wel vaker
+een multiple choice vraag stelt, wil ik nog moeten antwoorden, maar de rest moet
+jij gewoon samen met de director doen."
+
+Dat is de hele stap in twee zinnen. Hij blijft de beslisser, hij stopt met
+postbode zijn.
+
+#### Het misverstand dat eerst weg moest
+
+De eerste gedachte was een chatvenster voor Claude naast het veld "Stel je vraag
+aan de Director". Dat is om twee redenen de verkeerde vorm.
+
+Ten eerste: de Director ís Claude. In `anthropic-provider.ts` staat
+`ANTHROPIC_DEFAULT_CHAT_MODEL = "claude-sonnet-5"`, en zolang de provider op
+Anthropic staat, praat het veld "Stel je vraag aan de Director" letterlijk met
+Claude. Een tweede veld met "Claude" erboven levert een Claude op die mínder
+weet dan de Director, want die krijgt tenminste nog de kennisbank mee. Wat
+ontbreekt is niet het model maar de wérkplek: de gekloonde repo, de testruns,
+de geschiedenis van weken, en het gereedschap om bestanden te wijzigen en een
+pull request te openen. Een werkplek past niet achter een tekstveld.
+
+Ten tweede zou het een gesprek met z'n drieën worden, en dat is niet wat er
+gevraagd wordt. Het worden twee kanalen:
+
+- **Het kanaal van Elroy** — hij en de Director, precies zoals nu. Onveranderd.
+- **Het kanaal van Claude** — Claude leest de missiestand en praat terug via de
+  wegen die er al zijn (`auto-step`, `answer-owner-input`, `approve-and-merge`),
+  niet via het chatvenster van Elroy.
+- **Een uitkijkpost** — het paneel "Wat Claude heeft gedaan" maakt dat tweede
+  kanaal zichtbaar zonder dat Elroy eraan hoeft deel te nemen.
+
+#### Onderdeel 1 — De deur
+
+`/api/missions/v2` kan alles al wat hiervoor nodig is: `create`, `dispatch`,
+`run-role`, `auto-step`, `cancel`, `approve-and-merge` en `answer-owner-input`.
+Er hoeft geen enkele nieuwe missiefunctie bij. Het enige dat ontbreekt is een
+manier om binnen te komen zonder browser: de route verifieert vandaag een
+Firebase ID-token, en dat kan alleen een ingelogde browser maken.
+
+Dat patroon staat al in huis. `/api/missions/v2/advance` wordt door GitHub
+Actions aangeroepen en vergelijkt daarvoor `MISSION_ADVANCE_SECRET` met
+`timingSafeEqual`, om precies dezelfde reden: Actions kan net zomin een
+Firebase-token maken. Zelfde patroon, tweede sleutel, eigen naam.
+
+De sleutel geeft toegang tot de missies van één eigenaar. Hij is geen
+tweede login en mag nooit méér kunnen dan de zeven acties hierboven.
+
+#### Onderdeel 2 — De regel voor wie de ownervraag krijgt
+
+De lus bestaat al: `action: "answer-owner-input"` laat de Director een vraag aan
+zijn eigenaar stellen en op antwoord wachten. Vandaag kan Elroy die als enige
+beantwoorden. Dat is het onderdeel dat verhuist.
+
+Standaard beantwoordt Claude de ownervraag. Naar Elroy gaat wat alleen hij kan
+beslissen:
+
+- smaak en vorm — hoe iets eruitziet, hoe het heet, waar het staat;
+- prioriteit — of iets nu moet of later;
+- een risico dat hij moet aanvaarden, of een keuze die geld kost;
+- alles waarover hij eerder expliciet iets anders besloot dan wat er nu voorligt.
+
+En onverkort naar Elroy gaat de harde categorie die al in
+`findHardEscalationReason` staat: geheimen, tokens, GitHub-workflows,
+authenticatie, Firebase-configuratie, en élke bestandsverwijdering. Daar
+verandert deze stap niets aan, wat een geautomatiseerde beoordeling er ook van
+vindt. Die lijst is er juist voor het geval dat een model zich vergist.
+
+#### Onderdeel 3 — Het paneel
+
+Zichtbaarheid, geen bediening: wat er in Claude's naam gebeurd is, met
+tijdstippen, in dezelfde missiegeschiedenis als al het andere. Dit is het enige
+onderdeel dat overblijft van de oude stap 22 — alleen niet meer als doel op
+zich, maar als uitkijkpost op iets dat daadwerkelijk gebeurt.
+
+#### Beveiliging
+
+Dit is de reden dat deze stap niet "even" gedaan wordt.
+
+**De sleutel is een sleutel tot het systeem.** Wie hem heeft, kan missies
+aanmaken en pull requests laten mergen. Hij hoort in dezelfde categorie als de
+andere geheimen: alleen in de omgevingsvariabelen van Vercel en in
+`.env.local` (dat in `.gitignore` staat), nooit in de repository, die publiek
+is. Hetzelfde geldt voor elke plek waar een sessie hem bewaart.
+
+**De harde escalatieregels blijven gelden voor alles wat langs deze weg wordt
+aangeraakt.** De sleutel maakt Claude geen eigenaar. Hij maakt Claude een rol
+met dezelfde grenzen als de andere rollen.
+
+**Een missie die via deze weg binnenkomt, is herkenbaar als zodanig** in de
+geschiedenis. Zou de sleutel ooit uitlekken, dan is de vraag "wat is hier
+gebeurd en door wie" beantwoordbaar in plaats van giswerk.
+
+**De sleutel moet vervangbaar zijn zonder dat er iets breekt.** Eén omgevings-
+variabele wijzigen en opnieuw uitrollen — geen code aanpassen.
+
+#### De eerlijke grens
+
+Claude is er alleen wanneer er een sessie draait. Typt de Director 's nachts een
+vraag, dan staat die er 's ochtends nog steeds, onbeantwoord.
+
+Daar is een gedeeltelijk antwoord op: een ingeplande taak die op vaste tijden
+een verse sessie start, kijkt of er iets klaarstaat en het afhandelt. Zo'n verse
+sessie heeft de repository, de kennisbank en de werkafspraken uit de
+samenwerkings-skill — maar niet de herinnering aan het gesprek waarin iets
+besloten werd. Voor "de Director heeft een vraag" en "PR #67 hangt" is dat
+genoeg. Voor "weet je nog waarom we dat in juli anders hebben gedaan" niet.
+
+Dat verschil is geen tekortkoming van deze stap maar de reden dat de
+Knowledge Foundation bestaat: wat opgeschreven staat, weet een verse sessie ook.
+
+#### Wat bewust níét in deze stap zit
+
+Een eigen Claude-chatpaneel dat zelf de Anthropic-API aanroept — het patroon van
+`/api/council/ask`, een avond werk. Dat levert een Claude op die alleen weet wat
+de app hem doorgeeft: geen repo, geen testresultaten, geen geheugen, en geen
+mogelijkheid om iets te dóén. Interessant is het pas als terugval nádat deze
+stap er staat, zodat het paneel kan zeggen "Claude is er nu niet, wil je het aan
+de Director vragen?" — in plaats van dat er twee chatvensters zijn waartussen
+elke keer gekozen moet worden.
+
+#### Wanneer deze stap af is
+
+1. Er staat een missie in de geschiedenis die door Claude is aangemaakt zonder
+   dat Elroy iets in de browser heeft gedaan.
+2. Er staat een ownervraag in de geschiedenis die door Claude is beantwoord,
+   met zichtbaar wie hem beantwoordde.
+3. Er staat een ownervraag die naar Elroy is geëscaleerd volgens de regel
+   hierboven, en niet door Claude is afgedaan.
+4. Een poging met een onjuiste sleutel wordt geweigerd, en dat is terug te zien.
+5. Het paneel toont beide gevallen uit punt 2 en 3 met tijdstip.
+
+Punt 3 is de belangrijkste van de vijf. Een koppeling die alles zelf afdoet, is
+geen verbetering maar een verplaatsing van hetzelfde probleem: dan is Elroy niet
+meer de postbode maar ook niet meer de beslisser.
 
 ### Stap 23 — Visualisatie van wat er achter de schermen gebeurt
 (voorheen stap 22, oorspronkelijk stap 15, door Elroy zelf toegevoegd) Een
