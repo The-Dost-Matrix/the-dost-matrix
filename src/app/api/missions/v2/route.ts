@@ -8,6 +8,11 @@ import {
   resolveAgentOwnerId,
   type RequestActor,
 } from "@/core/mission-engine/v2/agent-access";
+import {
+  countAgentAnswers,
+  markAgentAnswer,
+  routeOwnerQuestion,
+} from "@/core/mission-engine/v2/owner-question-routing";
 import type {
   CreateMissionPayload,
 } from "@/core/mission-engine/v2/commands";
@@ -469,7 +474,11 @@ async function handleApproveAndMerge(body: ApproveAndMergeBody, ownerId: string)
  * inputverzoek) heeft criterionOutcome geen effect — de missie hervat dan
  * gewoon, exact het gedrag van vóór deze stap.
  */
-async function handleAnswerOwnerInput(body: AnswerOwnerInputBody, ownerId: string) {
+async function handleAnswerOwnerInput(
+  body: AnswerOwnerInputBody,
+  ownerId: string,
+  actor: RequestActor,
+) {
   if (typeof body.missionId !== "string" || !body.missionId.trim()) {
     return NextResponse.json({ error: "missionId ontbreekt." }, { status: 400 });
   }
@@ -498,6 +507,37 @@ async function handleAnswerOwnerInput(body: AnswerOwnerInputBody, ownerId: strin
       ? body.criterionOutcome
       : null;
 
+  /**
+   * Stap 22, onderdeel 2 — hier wordt de routeringsregel afgedwongen.
+   *
+   * Komt het antwoord van Elroy zelf, dan verandert er niets: hij mag elke
+   * vraag beantwoorden, ook de vragen die de agent had mogen doen. Komt het
+   * antwoord via de agentsleutel, dan bepaalt routeOwnerQuestion of dat mag,
+   * en een "nee" is hier een weigering en geen advies. Zou deze controle
+   * alleen aan de kant van de aanroeper staan, dan zou de partij die zich aan
+   * de grens moet houden zelf bepalen waar hij ligt.
+   */
+  let response = body.response.trim();
+
+  if (actor === "agent") {
+    const route = routeOwnerQuestion(mission, {
+      agentAnswersSoFar: countAgentAnswers(mission),
+    });
+
+    if (route?.destination !== "agent") {
+      return NextResponse.json(
+        {
+          error:
+            "Deze vraag hoort bij de eigenaar en kan niet namens hem worden beantwoord.",
+          reason: route?.reason ?? "Er staat geen vraag open om te beantwoorden.",
+        },
+        { status: 403 },
+      );
+    }
+
+    response = markAgentAnswer(response);
+  }
+
   const updated = await engine.recordOwnerInput({
     actor: { type: "owner", id: ownerId },
     correlationId: randomUUID(),
@@ -509,7 +549,7 @@ async function handleAnswerOwnerInput(body: AnswerOwnerInputBody, ownerId: strin
     expectedTargetVersion: mission.version,
     payload: {
       requestId: mission.pendingOwnerInput.requestId,
-      response: body.response.trim(),
+      response,
       criterionOutcome,
     },
   });
@@ -764,7 +804,7 @@ export async function POST(request: NextRequest) {
         case "approve-and-merge":
           return await handleApproveAndMerge(body as ApproveAndMergeBody, ownerId);
         case "answer-owner-input":
-          return await handleAnswerOwnerInput(body as AnswerOwnerInputBody, ownerId);
+          return await handleAnswerOwnerInput(body as AnswerOwnerInputBody, ownerId, actor);
         default:
           return NextResponse.json({ error: "Onbekende actie." }, { status: 400 });
       }
