@@ -3,6 +3,11 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 
 import { verifyIdToken } from "@/core/firebase/admin";
+import {
+  AGENT_KEY_HEADER,
+  resolveAgentOwnerId,
+  type RequestActor,
+} from "@/core/mission-engine/v2/agent-access";
 import type {
   CreateMissionPayload,
 } from "@/core/mission-engine/v2/commands";
@@ -103,9 +108,33 @@ function publicErrorCode(error: unknown): string | undefined {
   return undefined;
 }
 
-async function requireOwnerId(request: NextRequest): Promise<string> {
+/**
+ * Roadmapstap 22, onderdeel 1 — twee wegen naar dezelfde ene eigenaar.
+ *
+ * De browser komt binnen met een Firebase ID-token; een meewerkende
+ * Claude-sessie komt binnen met de agentsleutel in een eigen header (zie
+ * agent-access.ts voor waarom het een aparte sleutel en een aparte header is).
+ * Beide leveren dezelfde eigenaar-UID op en krijgen daarna exact dezelfde
+ * behandeling — assertOwnership, de harde escalatieregels en de
+ * geautomatiseerde beoordeling staan allemaal ONDER dit punt en merken het
+ * verschil niet.
+ *
+ * De sleutel wordt eerst geprobeerd en faalt stil: ontbreekt hij, is hij
+ * verkeerd, of is de omgevingsvariabele niet ingesteld, dan gaat de aanroep
+ * gewoon verder langs het Firebase-token. Daarmee verandert er niets voor de
+ * browser, ook niet wanneer deze hele koppeling uit staat.
+ */
+async function requireOwner(
+  request: NextRequest,
+): Promise<{ ownerId: string; actor: RequestActor }> {
+  const agentOwnerId = resolveAgentOwnerId(request.headers.get(AGENT_KEY_HEADER));
+
+  if (agentOwnerId) {
+    return { ownerId: agentOwnerId, actor: "agent" };
+  }
+
   const decoded = await verifyIdToken(request.headers.get("authorization"));
-  return decoded.uid;
+  return { ownerId: decoded.uid, actor: "owner" };
 }
 
 function assertOwnership(mission: MissionV2, ownerId: string): void {
@@ -118,7 +147,7 @@ export async function GET(request: NextRequest) {
   let ownerId: string;
 
   try {
-    ownerId = await requireOwnerId(request);
+    ({ ownerId } = await requireOwner(request));
   } catch {
     return NextResponse.json(
       { error: "Je sessie is ongeldig of verlopen. Log opnieuw in." },
@@ -683,9 +712,10 @@ async function handleAutoStep(body: AutoStepBody, ownerId: string) {
 
 export async function POST(request: NextRequest) {
   let ownerId: string;
+  let actor: RequestActor;
 
   try {
-    ownerId = await requireOwnerId(request);
+    ({ ownerId, actor } = await requireOwner(request));
   } catch {
     return NextResponse.json(
       { error: "Je sessie is ongeldig of verlopen. Log opnieuw in." },
@@ -697,6 +727,20 @@ export async function POST(request: NextRequest) {
 
   if (!body || typeof body.action !== "string") {
     return NextResponse.json({ error: "Veld 'action' ontbreekt." }, { status: 400 });
+  }
+
+  // Elke handeling die niet uit de browser komt, laat een spoor na in de
+  // serverlogboeken. Zou de agentsleutel ooit uitlekken, dan is "wat is hier
+  // gebeurd en langs welke weg" een vraag met een antwoord in plaats van
+  // giswerk. Het zichtbaar maken hiervan in Command Center is onderdeel 3 van
+  // stap 22; dit is de laag eronder, en die hoort er eerder te zijn dan het
+  // scherm dat hem toont.
+  if (actor === "agent") {
+    console.warn("Mission Engine V2 aangeroepen met de agentsleutel", {
+      ownerId,
+      action: body.action,
+      at: new Date().toISOString(),
+    });
   }
 
   try {
