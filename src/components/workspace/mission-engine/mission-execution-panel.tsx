@@ -1,5 +1,6 @@
 "use client";
 
+import { MissionAgentActivityCard } from "@/components/workspace/mission-engine/mission-agent-activity-card";
 import { MissionPullRequestCard } from "@/components/workspace/mission-engine/mission-pull-request-card";
 import { useMissionEngine } from "@/domains/missions/mission-engine-store";
 import { formatMissionCost, missionStatusLabel } from "@/domains/missions/mission-labels";
@@ -179,6 +180,10 @@ export function MissionExecutionPanel() {
                 <p>{roleOutput}</p>
               </article>
             )}
+
+            {/* Stap 22, onderdeel 3: toont zichzelf alleen wanneer er
+                daadwerkelijk iets namens de eigenaar is beantwoord. */}
+            <MissionAgentActivityCard mission={mission} />
           </div>
         )}
       </div>

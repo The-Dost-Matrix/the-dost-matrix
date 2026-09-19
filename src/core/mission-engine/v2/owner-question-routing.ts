@@ -74,15 +74,58 @@ export const MAX_AGENT_ANSWERS_PER_MISSION = 2;
  */
 export const AGENT_ANSWER_MARKER = "[namens jou beantwoord door Claude]";
 
+export interface AgentAnswerRecord {
+  criterionId?: string;
+  /** Het succescriterium waar het antwoord over ging. */
+  description: string;
+  /** Het antwoord zelf, zonder de twee voorvoegsels die eromheen stonden. */
+  answer: string;
+  /** Wat het criterium daarna werd. */
+  outcome?: string;
+  /** Wanneer, als ISO-tekst; null wanneer dat niet is vastgelegd. */
+  answeredAt: string | null;
+}
+
 /**
- * Telt hoe vaak er in deze missie al namens de eigenaar is geantwoord, door
- * te kijken naar de sporen die die antwoorden op de succescriteria hebben
- * achtergelaten.
+ * Haalt op wat er in deze missie namens de eigenaar is beantwoord — de
+ * grondstof voor onderdeel 3, het paneel "Wat Claude heeft gedaan".
+ *
+ * Er is geen aparte collectie voor nodig: recordOwnerInput bewaart het
+ * antwoord al als lastEvaluationNote op het criterium, met evaluatedAt erbij.
+ * Het merkteken maakt die regels herkenbaar. Een logboek dat naast de
+ * werkelijkheid wordt bijgehouden, kan ervan gaan afwijken; dit kan dat niet,
+ * want het ís de werkelijkheid.
+ */
+export function collectAgentAnswers(mission: MissionV2): AgentAnswerRecord[] {
+  return (mission.successCriteria ?? [])
+    .filter((criterion) => criterion.lastEvaluationNote?.includes(AGENT_ANSWER_MARKER))
+    .map((criterion) => ({
+      criterionId: criterion.criterionId,
+      description: criterion.description,
+      answer: stripAnswerPrefixes(criterion.lastEvaluationNote ?? ""),
+      outcome: criterion.status,
+      answeredAt: criterion.evaluatedAt ?? null,
+    }));
+}
+
+/**
+ * Haalt "Beslissing van de eigenaar:" en het merkteken weg, zodat er in het
+ * scherm staat wat er inhoudelijk is geantwoord in plaats van twee lagen
+ * boekhouding ervoor.
+ */
+export function stripAnswerPrefixes(note: string): string {
+  return note
+    .replace(/^Beslissing van de eigenaar:\s*/i, "")
+    .split(AGENT_ANSWER_MARKER)
+    .join("")
+    .trim();
+}
+
+/**
+ * Telt hoe vaak er in deze missie al namens de eigenaar is geantwoord.
  */
 export function countAgentAnswers(mission: MissionV2): number {
-  return (mission.successCriteria ?? []).filter((criterion) =>
-    criterion.lastEvaluationNote?.includes(AGENT_ANSWER_MARKER),
-  ).length;
+  return collectAgentAnswers(mission).length;
 }
 
 /** Zet het merkteken voor een antwoord, zonder het twee keer toe te voegen. */

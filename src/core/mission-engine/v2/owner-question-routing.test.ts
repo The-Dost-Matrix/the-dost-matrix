@@ -4,6 +4,7 @@ import type { MissionV2 } from "./mission";
 import {
   AGENT_ANSWER_MARKER,
   MAX_AGENT_ANSWERS_PER_MISSION,
+  collectAgentAnswers,
   countAgentAnswers,
   markAgentAnswer,
   routeOwnerQuestion,
@@ -140,6 +141,53 @@ describe("routeOwnerQuestion", () => {
     expect(routeOwnerQuestion(buildMission(), { pullRequestFiles: [] })?.destination).toBe(
       "agent",
     );
+  });
+});
+
+describe("collectAgentAnswers", () => {
+  it("geeft alleen de criteria terug die namens de eigenaar zijn beantwoord, zonder voorvoegsels", () => {
+    const mission = buildMission({
+      successCriteria: [
+        {
+          criterionId: "c1",
+          description: "De nieuwe functie heeft unit tests.",
+          status: "PASSED",
+          evaluatedAt: "2026-09-19T12:30:00.000Z",
+          lastEvaluationNote: `Beslissing van de eigenaar: ${AGENT_ANSWER_MARKER} De tests staan in mission-duration.test.ts en slagen.`,
+        },
+        {
+          criterionId: "c2",
+          description: "Door Elroy zelf beoordeeld.",
+          status: "PASSED",
+          lastEvaluationNote: "Beslissing van de eigenaar: ziet er goed uit",
+        },
+        { criterionId: "c3", description: "Nog niet beoordeeld." },
+      ],
+    } as unknown as Partial<MissionV2>);
+
+    const answers = collectAgentAnswers(mission);
+
+    expect(answers).toHaveLength(1);
+    expect(answers[0].criterionId).toBe("c1");
+    expect(answers[0].answer).toBe(
+      "De tests staan in mission-duration.test.ts en slagen.",
+    );
+    expect(answers[0].answeredAt).toBe("2026-09-19T12:30:00.000Z");
+    expect(answers[0].outcome).toBe("PASSED");
+  });
+
+  it("geeft null terug als tijdstip wanneer dat niet is vastgelegd", () => {
+    const mission = buildMission({
+      successCriteria: [
+        {
+          criterionId: "c1",
+          description: "Zonder tijdstip.",
+          lastEvaluationNote: `${AGENT_ANSWER_MARKER} ja`,
+        },
+      ],
+    } as unknown as Partial<MissionV2>);
+
+    expect(collectAgentAnswers(mission)[0].answeredAt).toBeNull();
   });
 });
 
