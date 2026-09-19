@@ -154,37 +154,92 @@ function truncate(text: string, maxChars: number): string {
  * wat een klein bestand niet opmaakt schuift door naar het volgende. De harde
  * grens op wat er in totaal naar het model gaat blijft ongewijzigd — dat was
  * de grens die ergens voor diende.
+ *
+ * EN WAAROM "EEN EVENREDIG DEEL" OOK NOG NIET GENOEG WAS — 19 september 2026
+ *
+ * De versie hierboven deelde uit in leesvolgorde: elk bestand kreeg "wat er
+ * nog over is, gedeeld door hoeveel bestanden er nog komen". Dat schuift maar
+ * één kant op. Wat een klein bestand overlaat komt ten goede aan de bestanden
+ * ná hem; staat het grote bestand vooraan, dan gebeurt er niets.
+ *
+ * Bij PR #66 stonden er twee nieuwe bestanden in, en GitHub levert ze
+ * alfabetisch: `mission-duration.test.ts` (11.365 tekens) vóór
+ * `mission-duration.ts` (ruim 4.000). Het testbestand kreeg precies de helft,
+ * 8.000, en er werden 3.365 tekens afgekapt — terwijl het tweede bestand zijn
+ * eigen 8.000 niet eens nodig had. De beoordelaar escaleerde opnieuw, en
+ * opnieuw met het enige juiste argument: de diff is afgekapt, dus valt niet
+ * vast te stellen wat er in het ontbrekende deel staat.
+ *
+ * Daarom wordt het budget nu eerst verdeeld en pas daarna uitgeschreven. De
+ * bestanden worden van klein naar groot bediend, ieder krijgt hoogstens een
+ * gelijk deel van wat er op dát moment nog over is, en wat een bestand niet
+ * opmaakt valt terug in de pot — ongeacht waar het in de lijst staat. Passen
+ * alle diffs samen binnen het totaalbudget, dan wordt er dus niets afgekapt,
+ * hoe ongelijk verdeeld ze ook zijn.
  */
-export function buildDiffBlock(files: PullRequestFileChange[]): string {
-  const blocks: string[] = [];
-  let remaining = MAX_TOTAL_DIFF_CHARS;
+export function allocateDiffBudget(
+  files: readonly PullRequestFileChange[],
+  totalChars: number = MAX_TOTAL_DIFF_CHARS,
+): (number | null)[] {
+  const need = files.map((file) => file.patch?.length ?? 0);
+  const allowances: (number | null)[] = files.map(() => null);
 
-  for (let index = 0; index < files.length; index += 1) {
-    const file = files[index];
+  // Stabiel: bij gelijke omvang blijft de oorspronkelijke volgorde staan, zodat
+  // een pull request met twintig even grote bestanden voorspelbaar de eerste
+  // toont en de laatste weglaat in plaats van een willekeurige greep.
+  const smallestFirst = files
+    .map((_, index) => index)
+    .sort((left, right) => need[left] - need[right] || left - right);
 
+  let remaining = totalChars;
+  let left = smallestFirst.length;
+
+  for (const index of smallestFirst) {
     if (remaining < MIN_PATCH_CHARS_PER_FILE) {
-      const omitted = files.length - index;
-
-      blocks.push(
-        `… (nog ${omitted} bestand${omitted === 1 ? "" : "en"} weggelaten, ` +
-          "de diff werd te groot voor deze beoordeling)",
-      );
-      break;
+      left -= 1;
+      continue;
     }
 
-    const allowance = Math.max(
-      MIN_PATCH_CHARS_PER_FILE,
-      Math.floor(remaining / (files.length - index)),
-    );
+    const share = Math.max(MIN_PATCH_CHARS_PER_FILE, Math.floor(remaining / left));
+    const granted = Math.min(need[index], share);
+
+    allowances[index] = granted;
+    remaining = Math.max(0, remaining - granted - headerFor(files[index]).length);
+    left -= 1;
+  }
+
+  return allowances;
+}
+
+function headerFor(file: PullRequestFileChange): string {
+  return `### ${file.filename} (${file.status})`;
+}
+
+export function buildDiffBlock(files: PullRequestFileChange[]): string {
+  const allowances = allocateDiffBudget(files);
+  const blocks: string[] = [];
+  let omitted = 0;
+
+  files.forEach((file, index) => {
+    const allowance = allowances[index];
+
+    if (allowance === null) {
+      omitted += 1;
+      return;
+    }
 
     const patch = file.patch
       ? truncate(file.patch, allowance)
       : "(geen diff beschikbaar voor dit bestand — waarschijnlijk een binair bestand of een hernoeming)";
 
-    const block = `### ${file.filename} (${file.status})\n${patch}`;
+    blocks.push(`${headerFor(file)}\n${patch}`);
+  });
 
-    blocks.push(block);
-    remaining -= block.length;
+  if (omitted > 0) {
+    blocks.push(
+      `… (nog ${omitted} bestand${omitted === 1 ? "" : "en"} weggelaten, ` +
+        "de diff werd te groot voor deze beoordeling)",
+    );
   }
 
   return blocks.join("\n\n");

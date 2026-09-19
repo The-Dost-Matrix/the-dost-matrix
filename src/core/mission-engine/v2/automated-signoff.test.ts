@@ -14,6 +14,7 @@ vi.mock("@/core/llm/model-router", () => ({
 import { getChatProvider } from "@/core/llm/model-router";
 import {
   SYSTEM_PROMPT,
+  allocateDiffBudget,
   buildDiffBlock,
   reviewPullRequestForAutomatedSignoff,
 } from "./automated-signoff";
@@ -170,6 +171,30 @@ describe("buildDiffBlock", () => {
     expect(block).not.toContain("afgekapt");
     expect(block).toContain("src/a.ts");
     expect(block.length).toBeGreaterThan(6_000);
+  });
+
+  it("laat een groot en een klein bestand allebei volledig zien wanneer ze samen passen", () => {
+    // PR #66, 19 september 2026. GitHub levert de bestanden alfabetisch, dus
+    // het grote testbestand kwam eerst en kreeg precies de helft van het budget
+    // (8.000) — 3.365 tekens afgekapt, terwijl het tweede bestand zijn eigen
+    // helft niet eens nodig had. De beoordelaar escaleerde daarop, terecht.
+    const block = buildDiffBlock([
+      fileWithPatch("src/core/mission-engine/v2/mission-duration.test.ts", 11_365),
+      fileWithPatch("src/core/mission-engine/v2/mission-duration.ts", 4_000),
+    ]);
+
+    expect(block).not.toContain("afgekapt");
+    expect(block).not.toContain("weggelaten");
+  });
+
+  it("verdeelt het budget van klein naar groot, ongeacht de volgorde in de lijst", () => {
+    // De uitkomst hoort niet af te hangen van de volgorde waarin GitHub de
+    // bestanden toevallig teruggeeft.
+    const groot = fileWithPatch("src/groot.ts", 11_365);
+    const klein = fileWithPatch("src/klein.ts", 4_000);
+
+    expect(allocateDiffBudget([groot, klein])).toEqual([11_365, 4_000]);
+    expect(allocateDiffBudget([klein, groot])).toEqual([4_000, 11_365]);
   });
 
   it("kapt een bestand dat het hele budget overschrijdt wél af, met vermelding", () => {
