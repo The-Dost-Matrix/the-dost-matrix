@@ -1,7 +1,15 @@
 import { waitForMissionChecks } from "./ci-wait";
 import { runDirectorStep, DirectorRuntimeError } from "./director-runtime";
 import { createMissionEngineV2 } from "./engine-factory";
+import {
+  FAILURE_ISSUE_LABEL,
+  buildFailureIssueBody,
+  buildFailureIssueTitle,
+  findExistingFailureIssue,
+  isReportableFailure,
+} from "./failure-report";
 import { listMissionsForOwner } from "./firestore-store";
+import { createIssue, getGithubRepoTarget, listOpenIssues } from "./github/github-client";
 import type { MissionV2 } from "./mission";
 import { executeRoleAssignment } from "./role-runtime";
 
@@ -347,6 +355,66 @@ async function advanceSingleMission(
 }
 
 /**
+ * Meldt een vastgelopen missie als GitHub-issue.
+ *
+ * WAAROM DIT HIER STAAT EN NIET IN DE UI
+ *
+ * Dit is het pad dat draait terwijl er niemand kijkt. Valt een missie hier
+ * stil, dan staat de reden in het logboek van een Actions-run die alleen de
+ * eigenaar kan openklappen — en op 20 september 2026 bleek dat in de praktijk
+ * te betekenen dat hij zelf de foutmelding moest opzoeken en overtypen.
+ * Een issue blijft staan, is leesbaar voor iedereen die de repository kan
+ * zien, en verdwijnt niet met de volgende run.
+ *
+ * Alles hier is best-effort: kan GitHub niet worden bereikt, dan wordt dat
+ * gelogd en verder genegeerd. Een melding die niet verstuurd kan worden, mag
+ * nooit een missie of een tik laten mislukken — dat zou een logboekfunctie
+ * belangrijker maken dan het werk zelf.
+ */
+async function reportMissionFailure(outcome: MissionAdvanceOutcome): Promise<void> {
+  const failure = {
+    missionId: outcome.missionId,
+    title: outcome.title,
+    status: outcome.endStatus,
+    stoppedReason: outcome.stoppedReason,
+    errorCode: outcome.errorCode,
+    errorMessage: outcome.errorMessage,
+  };
+
+  // Eerst beslissen óf dit een storing is, en pas daarna GitHub aanroepen.
+  // Deze volgorde is niet toevallig: een nette escalatie naar Elroy komt hier
+  // vaker langs dan wat dan ook, en die mag geen netwerkaanroep kosten en al
+  // helemaal geen issue opleveren. Zie isReportableFailure voor het waarom.
+  if (!isReportableFailure(failure)) return;
+
+  try {
+    const target = getGithubRepoTarget();
+    const openIssues = await listOpenIssues(target);
+
+    // Bestaat er al een melding voor deze missie, dan niets doen. Zonder deze
+    // controle opent elke tik van de klok een nieuw issue voor hetzelfde
+    // probleem.
+    if (findExistingFailureIssue(openIssues, outcome.missionId)) return;
+
+    const issue = await createIssue(target, {
+      title: buildFailureIssueTitle(failure),
+      body: buildFailureIssueBody(failure),
+      labels: [FAILURE_ISSUE_LABEL],
+    });
+
+    console.warn("Vastgelopen missie gemeld als GitHub-issue", {
+      missionId: outcome.missionId,
+      issueUrl: issue.url,
+    });
+  } catch (error) {
+    console.error("Vastgelopen missie kon niet als issue worden gemeld", {
+      missionId: outcome.missionId,
+      error: error instanceof Error ? error.message : error,
+    });
+  }
+}
+
+/**
  * Laat alle ACTIVE- of WAITING_FOR_ROLE-missies van een eigenaar zo ver
  * mogelijk doorlopen, begrensd door `deadlineAt`. Bedoeld om periodiek
  * (bijv. elke ~10 minuten via GitHub Actions, zie
@@ -389,6 +457,8 @@ export async function advanceMissionsForOwner(
       maxStepsPerMission,
     });
     outcomes.push(outcome);
+
+    await reportMissionFailure(outcome);
 
     if (outcome.stoppedReason === "DEADLINE_REACHED") {
       deadlineReachedBeforeAllDone = true;
