@@ -671,6 +671,60 @@ export async function getCombinedCheckStatus(
   return { state: "success", failingCheckNames: [], pendingCheckNames: [] };
 }
 
+export interface GithubIssueSummary {
+  number: number;
+  title: string;
+  url: string;
+}
+
+/**
+ * De open issues van de repository.
+ *
+ * Gebruikt om te voorkomen dat een vastgelopen missie bij elke tik van de
+ * klok een nieuw issue opent: tien tikken zou tien identieke meldingen
+ * opleveren, en dan leest niemand ze meer.
+ */
+export async function listOpenIssues(
+  target: GithubRepoTarget,
+  limit = 100,
+): Promise<GithubIssueSummary[]> {
+  const data = await githubRequest<
+    { number: number; title: string; html_url: string; pull_request?: unknown }[]
+  >(`/repos/${target.owner}/${target.repo}/issues?state=open&per_page=${limit}`);
+
+  // GitHub geeft pull requests óók terug op het issues-endpoint. Die horen
+  // hier niet bij: een openstaande pull request is geen storingsmelding.
+  return data
+    .filter((issue) => !issue.pull_request)
+    .map((issue) => ({ number: issue.number, title: issue.title, url: issue.html_url }));
+}
+
+export interface CreateIssueInput {
+  title: string;
+  body: string;
+  labels?: string[];
+}
+
+/** Opent een issue. Bedoeld voor storingsmeldingen, niet voor werkverdeling. */
+export async function createIssue(
+  target: GithubRepoTarget,
+  input: CreateIssueInput,
+): Promise<GithubIssueSummary> {
+  const data = await githubRequest<{ number: number; title: string; html_url: string }>(
+    `/repos/${target.owner}/${target.repo}/issues`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        title: input.title,
+        body: input.body,
+        ...(input.labels?.length ? { labels: input.labels } : {}),
+      }),
+    },
+  );
+
+  return { number: data.number, title: data.title, url: data.html_url };
+}
+
 export interface PullRequestFileChange {
   filename: string;
   status: string;
