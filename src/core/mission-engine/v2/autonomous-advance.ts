@@ -6,6 +6,7 @@ import {
   buildFailureIssueBody,
   buildFailureIssueTitle,
   findExistingFailureIssue,
+  isReportableFailure,
 } from "./failure-report";
 import { listMissionsForOwner } from "./firestore-store";
 import { createIssue, getGithubRepoTarget, listOpenIssues } from "./github/github-client";
@@ -354,14 +355,6 @@ async function advanceSingleMission(
 }
 
 /**
- * Laat alle ACTIVE- of WAITING_FOR_ROLE-missies van een eigenaar zo ver
- * mogelijk doorlopen, begrensd door `deadlineAt`. Bedoeld om periodiek
- * (bijv. elke ~10 minuten via GitHub Actions, zie
- * .github/workflows/advance-missions.yml) aangeroepen te worden door de
- * nieuwe `/api/missions/v2/advance`-route — zie dat bestand voor de
- * authenticatie (gedeeld geheim, geen ingelogde gebruiker nodig).
- */
-/**
  * Meldt een vastgelopen missie als GitHub-issue.
  *
  * WAAROM DIT HIER STAAT EN NIET IN DE UI
@@ -379,6 +372,21 @@ async function advanceSingleMission(
  * belangrijker maken dan het werk zelf.
  */
 async function reportMissionFailure(outcome: MissionAdvanceOutcome): Promise<void> {
+  const failure = {
+    missionId: outcome.missionId,
+    title: outcome.title,
+    status: outcome.endStatus,
+    stoppedReason: outcome.stoppedReason,
+    errorCode: outcome.errorCode,
+    errorMessage: outcome.errorMessage,
+  };
+
+  // Eerst beslissen óf dit een storing is, en pas daarna GitHub aanroepen.
+  // Deze volgorde is niet toevallig: een nette escalatie naar Elroy komt hier
+  // vaker langs dan wat dan ook, en die mag geen netwerkaanroep kosten en al
+  // helemaal geen issue opleveren. Zie isReportableFailure voor het waarom.
+  if (!isReportableFailure(failure)) return;
+
   try {
     const target = getGithubRepoTarget();
     const openIssues = await listOpenIssues(target);
@@ -387,15 +395,6 @@ async function reportMissionFailure(outcome: MissionAdvanceOutcome): Promise<voi
     // controle opent elke tik van de klok een nieuw issue voor hetzelfde
     // probleem.
     if (findExistingFailureIssue(openIssues, outcome.missionId)) return;
-
-    const failure = {
-      missionId: outcome.missionId,
-      title: outcome.title,
-      status: outcome.endStatus,
-      stoppedReason: outcome.stoppedReason,
-      errorCode: outcome.errorCode,
-      errorMessage: outcome.errorMessage,
-    };
 
     const issue = await createIssue(target, {
       title: buildFailureIssueTitle(failure),
@@ -415,6 +414,14 @@ async function reportMissionFailure(outcome: MissionAdvanceOutcome): Promise<voi
   }
 }
 
+/**
+ * Laat alle ACTIVE- of WAITING_FOR_ROLE-missies van een eigenaar zo ver
+ * mogelijk doorlopen, begrensd door `deadlineAt`. Bedoeld om periodiek
+ * (bijv. elke ~10 minuten via GitHub Actions, zie
+ * .github/workflows/advance-missions.yml) aangeroepen te worden door de
+ * nieuwe `/api/missions/v2/advance`-route — zie dat bestand voor de
+ * authenticatie (gedeeld geheim, geen ingelogde gebruiker nodig).
+ */
 export async function advanceMissionsForOwner(
   ownerId: string,
   options: AdvanceMissionsOptions,
@@ -451,9 +458,7 @@ export async function advanceMissionsForOwner(
     });
     outcomes.push(outcome);
 
-    if (outcome.stoppedReason === "DIRECTOR_ERROR") {
-      await reportMissionFailure(outcome);
-    }
+    await reportMissionFailure(outcome);
 
     if (outcome.stoppedReason === "DEADLINE_REACHED") {
       deadlineReachedBeforeAllDone = true;

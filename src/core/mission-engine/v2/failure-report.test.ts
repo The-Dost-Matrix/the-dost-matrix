@@ -5,6 +5,7 @@ import {
   buildFailureIssueBody,
   buildFailureIssueTitle,
   findExistingFailureIssue,
+  isReportableFailure,
   type MissionFailure,
 } from "./failure-report";
 
@@ -21,6 +22,48 @@ function failure(overrides: Partial<MissionFailure> = {}): MissionFailure {
     ...overrides,
   };
 }
+
+describe("isReportableFailure", () => {
+  /**
+   * De fout die dit bestand bijna had gemaakt: needs-signoff is de normale,
+   * gewenste escalatie naar Elroy en tegelijk de meest voorkomende uitkomst
+   * in dit systeem (elke pull request met meer dan één bestand). Hierop
+   * melden zou de repository vullen met meldingen over dingen die goed gingen.
+   */
+  it("meldt geen nette escalatie naar de eigenaar", () => {
+    expect(isReportableFailure(failure({ errorCode: "NEEDS_SIGNOFF" }))).toBe(false);
+  });
+
+  it("meldt geen missie die op de CI staat te wachten", () => {
+    expect(isReportableFailure(failure({ errorCode: "CI_CHECKS_PENDING" }))).toBe(false);
+  });
+
+  it("meldt een echte storing wel", () => {
+    expect(isReportableFailure(failure({ errorCode: "QA_VERDICT_STALE" }))).toBe(true);
+    expect(isReportableFailure(failure({ errorCode: "MERGE_FAILED" }))).toBe(true);
+  });
+
+  /**
+   * Onbekend betekent melden, niet zwijgen. Wordt er later een foutcode
+   * toegevoegd en vergeet iemand deze lijst, dan is een melding te veel
+   * hinderlijk; een melding te weinig is precies het probleem waarvoor dit
+   * bestand bestaat.
+   */
+  it("meldt een foutcode die nog niemand kent", () => {
+    expect(isReportableFailure(failure({ errorCode: "IETS_GEHEEL_NIEUWS" }))).toBe(true);
+  });
+
+  it("meldt een crash zonder foutcode", () => {
+    expect(isReportableFailure(failure({ errorCode: undefined }))).toBe(true);
+  });
+
+  it("meldt niets wanneer de missie helemaal niet op een fout stopte", () => {
+    expect(
+      isReportableFailure(failure({ stoppedReason: "WAITING_FOR_CI", errorCode: undefined })),
+    ).toBe(false);
+    expect(isReportableFailure(failure({ stoppedReason: "STEP_LIMIT_REACHED" }))).toBe(false);
+  });
+});
 
 describe("buildFailureIssueTitle", () => {
   it("draagt het missie-id, want daarop wordt herkend", () => {

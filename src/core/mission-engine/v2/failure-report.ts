@@ -57,6 +57,56 @@ export interface MissionFailure {
 }
 
 /**
+ * Foutcodes die géén storing zijn.
+ *
+ * WAAROM DEZE LIJST MOET BESTAAN (20 september 2026)
+ *
+ * In autonomous-advance.ts krijgt élke onderbreking van een missie dezelfde
+ * stempel: `stoppedReason: "DIRECTOR_ERROR"`. Dat staat daar met opzet zo —
+ * voor die lus betekent het niet meer dan "deze missie kan nu niet verder,
+ * ga door met de volgende". Maar eronder zitten twee soorten gevallen door
+ * elkaar, en voor een storingsmelding is dat verschil alles:
+ *
+ * - NEEDS_SIGNOFF: de risicoclassificatie escaleerde naar Elroy. Dat is het
+ *   gedrag waarvoor die classificatie gebouwd is. En omdat in dit systeem
+ *   élke pull request met meer dan één bestand needs-signoff oplevert, is dit
+ *   de meest voorkomende uitkomst die er is. Hierop melden zou de repository
+ *   vollopen met meldingen over dingen die goed gingen.
+ * - CI_CHECKS_PENDING: de CI draait nog. De volgende tik pakt de missie op.
+ *
+ * Deze fout is er één geweest: de eerste versie van dit bestand filterde
+ * alleen op `stoppedReason` en zou voor elke nette escalatie een issue met de
+ * titel "Missie vastgelopen" hebben geopend.
+ *
+ * WAAROM DIT EEN UITZONDERINGSLIJST IS EN GEEN TOELATINGSLIJST
+ *
+ * Bij `AGENT_ALLOWED_ACTIONS` in agent-access.ts geldt de omgekeerde regel:
+ * daar is alles dicht tenzij het expliciet genoemd is, want daar kost een
+ * vergeten regel toegang die niemand bedoeld heeft. Hier is de schade precies
+ * andersom. Wordt er later een nieuwe foutcode toegevoegd en staat die op
+ * geen enkele lijst, dan moet hij gemeld worden — een storing die stilletjes
+ * niet gemeld wordt, is exact het probleem waarvoor dit bestand bestaat.
+ * Onbekend betekent hier dus: wél melden.
+ */
+export const NON_FAILURE_ERROR_CODES: readonly string[] = [
+  "NEEDS_SIGNOFF",
+  "CI_CHECKS_PENDING",
+];
+
+/**
+ * Of deze onderbreking een storingsmelding verdient.
+ *
+ * Een fout zonder code (een echte crash, geen DirectorRuntimeError) telt
+ * altijd als storing: juist daar weet niemand wat er gebeurd is.
+ */
+export function isReportableFailure(failure: MissionFailure): boolean {
+  if (failure.stoppedReason !== "DIRECTOR_ERROR") return false;
+  if (!failure.errorCode) return true;
+
+  return !NON_FAILURE_ERROR_CODES.includes(failure.errorCode);
+}
+
+/**
  * De titel draagt het missie-id, en dat is geen opsmuk: het is waarop
  * `findExistingFailureIssue` herkent dat er al een melding openstaat.
  */
