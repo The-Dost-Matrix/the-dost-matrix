@@ -79,3 +79,11 @@ git-auto-pull.bat
 # versie komen als de geïnstalleerde pdfjs-dist, dus hij hoort niet in Git)
 # ==========================================
 public/pdf.worker.min.mjs
+
+# ==========================================
+# Bestanden die Claude in dit gesprek oplevert en die per ongeluk binnen de
+# projectmap worden gedownload. Ze zijn bedoeld om ergens ANDERS naartoe te
+# kopiëren (bijvoorbeeld .github/workflows/), niet om zelf in de repo te
+# belanden — en een zip erbij sleept elke clone mee.
+# ==========================================
+Claude outputs/
