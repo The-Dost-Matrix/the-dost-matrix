@@ -48,6 +48,33 @@ export function getMissionDurationMs(mission: MissionV2, nowMs: number): number 
 }
 
 /**
+ * Verstreken wachttijd op de huidige eigenaarsvraag, in milliseconden.
+ * Zonder pendingOwnerInput is er geen openstaande vraag en volgt null.
+ *
+ * nowMs is een verplicht expliciet Unix-tijdstip in milliseconden en moet
+ * eindig zijn, ook zonder openstaande vraag. Een ongeldige requestedAt
+ * geeft een fout; een nu-tijdstip vóór requestedAt levert nul op.
+ * Alleen pendingOwnerInput bepaalt of er een vraag openstaat.
+ */
+export function getOwnerInputWaitDurationMs(
+  mission: MissionV2,
+  nowMs: number,
+): number | null {
+  assertFiniteMilliseconds(nowMs, "nowMs");
+
+  if (mission.pendingOwnerInput === undefined) {
+    return null;
+  }
+
+  const start = parseTimestamp(
+    mission.pendingOwnerInput.requestedAt,
+    "mission.pendingOwnerInput.requestedAt",
+  );
+
+  return elapsedMilliseconds(start, nowMs);
+}
+
+/**
  * Doorlooptijd van één rol-toewijzing; geen optelsom per roleId en geen
  * meting van uitsluitend actieve werktijd.
  *
