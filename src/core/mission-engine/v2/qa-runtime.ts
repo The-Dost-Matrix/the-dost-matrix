@@ -151,6 +151,12 @@ export interface ExecuteQaAssignmentOutput {
   result: RoleResult;
   roleOutput: string;
   criteriaVerdicts: CriterionVerdict[];
+  /**
+   * De commit waarop dit oordeel rust (F-03). Gaat mee in de evidenceRefs van
+   * elk criterium, zodat later vaststaat waar een GEHAALD betrekking op had.
+   * Zie qa-attest.ts.
+   */
+  reviewedHeadSha: string;
 }
 
 function buildQaSystemPrompt(mission: MissionV2): string {
@@ -763,6 +769,25 @@ export async function executeQaAssignment({
   }
 
   const files = await getPullRequestFiles(target, pr.number);
+
+  /**
+   * Bevinding F-07 (externe review, 20 september 2026). MAX_FILES_CONSIDERED
+   * kapte de bewijsbundel stilzwijgend af: QA las de eerste 40 bestanden
+   * volledig en gaf daarna een oordeel dat zich voordeed als een oordeel over
+   * de hele wijziging. Bij kleine pull requests valt dat nooit op, want dan
+   * gebeurt het niet.
+   *
+   * Elroy heeft op 20 september gekozen voor stoppen in plaats van doorgaan
+   * met een voetnoot: een beoordeling op onvolledig bewijs hoort geen
+   * goedkeuring te kunnen worden. Dit is dezelfde regel die al geldt voor een
+   * afgekapt bestand in builder-runtime.ts, en om dezelfde reden.
+   */
+  if (files.length > MAX_FILES_CONSIDERED) {
+    throw new Error(
+      `Pull request #${pr.number} ("${pr.title}") wijzigt ${files.length} bestanden, en QA kan er hoogstens ${MAX_FILES_CONSIDERED} volledig inlezen. Een oordeel op een deel van de wijziging zou zich voordoen als een oordeel over het geheel, en dat mag niet. Splits deze wijziging op in kleinere pull requests, of beoordeel hem zelf: ${pr.url}`,
+    );
+  }
+
   const evidence = await fetchFullFileContents(target, files.slice(0, MAX_FILES_CONSIDERED), pr.headSha);
   const evidenceText = formatEvidenceForPrompt(evidence);
 
@@ -863,5 +888,5 @@ export async function executeQaAssignment({
     reason: entry.reason,
   }));
 
-  return { result, roleOutput, criteriaVerdicts };
+  return { result, roleOutput, criteriaVerdicts, reviewedHeadSha: pr.headSha };
 }

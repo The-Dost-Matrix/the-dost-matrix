@@ -16,6 +16,7 @@ import {
 } from "./github/github-client";
 import { collectCiFailureReport } from "./ci-failure-source";
 import { findUnverifiedCiReason } from "./ci-policy";
+import { findStaleQaReason } from "./qa-attest";
 import { hasPassedAllCriteria, type MissionV2 } from "./mission";
 import {
   MAX_TECHNICAL_REPAIR_ATTEMPTS,
@@ -172,8 +173,39 @@ const ALLOWED_AUTONOMOUS_DECISIONS: DirectorDecisionType[] = [
   "COMPLETE_MISSION",
 ];
 
-const MAX_RELEVANT_KNOWLEDGE = 6;
-const MAX_KNOWLEDGE_CONTEXT_LENGTH = 6_000;
+/**
+ * Hoeveel kennis uit het Second Brain de Director per beslissing meekrijgt.
+ *
+ * WAT HIER STOND, EN WAAROM DAT WEG MOEST
+ *
+ * Tot 20 september 2026 stond hier `MAX_RELEVANT_KNOWLEDGE = 6` en
+ * `MAX_KNOWLEDGE_CONTEXT_LENGTH = 6_000`, zonder één woord uitleg. Zes
+ * kennisitems, op een Second Brain van 754 goedgekeurde items: minder dan één
+ * procent per beslissing. Dat is geen selectie meer maar een steekproef, en
+ * het verklaart een deel van de antwoorden waarvan Elroy zei "dit moet
+ * anders".
+ *
+ * WAAR DE NIEUWE GETALLEN OP RUSTEN
+ *
+ * Het vaste aantal is weg. Wat telt is het tekenbudget, want dat is waar het
+ * werkelijk om gaat: hoeveel er in de prompt past. 60.000 tekens is bij
+ * broncode en notities ruwweg 17.000 tokens — een fractie van het
+ * contextvenster van de modellen die deze rol draaien, en een paar cent per
+ * aanroep. In de praktijk zijn dat veertig tot honderd kennisitems in plaats
+ * van zes.
+ *
+ * Er blijft een bovengrens op het AANTAL staan, maar ruim: honderd. Niet om
+ * tekens te besparen, maar omdat honderd losse notities in één prompt het
+ * punt van selecteren voorbijstreeft — dan verdrinkt het signaal in de ruis.
+ *
+ * En de selectie zelf is aangescherpt: sinds 18 september eist de
+ * kennisfilter dat er werkelijk een woord uit de vraag in het item voorkomt
+ * (zie hasKeywordMatch in relevance.ts). Die aanscherping bestond alleen voor
+ * het Second Brain-zoekscherm; hier kon een item nog binnenkomen op
+ * type- en levensfasebonussen alleen, zonder enige tekstovereenkomst.
+ */
+const MAX_RELEVANT_KNOWLEDGE = 100;
+const MAX_KNOWLEDGE_CONTEXT_LENGTH = 60_000;
 
 /**
  * Machineleesbare foutcodes die de Director-runtime kan gooien wanneer een
@@ -207,6 +239,10 @@ export type DirectorRuntimeErrorCode =
   // CI_CHECKS_FAILED: er is niets kapot, er is iets niet vastgesteld, en dat
   // vraagt om een andere reactie dan een technische herstelpoging.
   | "CI_CHECKS_UNVERIFIED"
+  // "QA_VERDICT_STALE": alle succescriteria staan op GEHAALD, maar dat
+  // oordeel gaat over een andere commit dan de pull request nu draagt. Zie
+  // qa-attest.ts (F-03).
+  | "QA_VERDICT_STALE"
   | "MERGE_FAILED"
   | "PULL_REQUEST_NOT_FOUND"
   | "CRITERIA_NOT_PASSED"
@@ -272,7 +308,10 @@ function buildKnowledgeContextBlock(knowledge: KnowledgeEntry[]): string {
     const type = entry.type ?? "fact";
     const block = `[${type}] ${title}\n${entry.content}`;
 
-    if (used + block.length > MAX_KNOWLEDGE_CONTEXT_LENGTH) break;
+    // Doorgaan in plaats van stoppen: tot 20 september 2026 stond hier
+    // `break`, waardoor één toevallig lang kennisitem alle daaropvolgende
+    // items uit de prompt hield, hoe relevant ze ook waren.
+    if (used + block.length > MAX_KNOWLEDGE_CONTEXT_LENGTH) continue;
 
     blocks.push(block);
     used += block.length;
@@ -835,6 +874,20 @@ export async function ensureMissionPullRequestMerged(mission: MissionV2): Promis
     throw new DirectorRuntimeError("CI_CHECKS_UNVERIFIED", unverifiedCi);
   }
 
+  // F-03: het oordeel van QA hoort bij de commit die hij heeft gezien. Staat
+  // er inmiddels iets anders op de branch, dan is die nieuwe versie nooit
+  // beoordeeld — en groene CI zegt niets over de inhoud.
+  const staleQa = findStaleQaReason(mission, {
+    number: pr.number,
+    title: pr.title,
+    url: pr.url,
+    headSha: pr.headSha,
+  });
+
+  if (staleQa) {
+    throw new DirectorRuntimeError("QA_VERDICT_STALE", staleQa);
+  }
+
   const files = await getPullRequestFiles(target, pr.number);
   const risk = classifyPullRequestRiskForMission(files, mission.riskLevel);
 
@@ -876,6 +929,8 @@ export async function ensureMissionPullRequestMerged(mission: MissionV2): Promis
   try {
     await mergePullRequest(target, pr.number, {
       mergeMethod: "merge",
+      // F-03: merge exact de commit die hierboven is gecontroleerd.
+      expectedHeadSha: pr.headSha,
       commitTitle: `Director: ${mission.title} (#${pr.number})`.slice(0, 200),
       commitMessage,
     });
@@ -979,9 +1034,25 @@ export async function approveAndMergeMissionPullRequest(
     throw new DirectorRuntimeError("CI_CHECKS_UNVERIFIED", unverifiedCi);
   }
 
+  // F-03: het oordeel van QA hoort bij de commit die hij heeft gezien. Staat
+  // er inmiddels iets anders op de branch, dan is die nieuwe versie nooit
+  // beoordeeld — en groene CI zegt niets over de inhoud.
+  const staleQa = findStaleQaReason(mission, {
+    number: pr.number,
+    title: pr.title,
+    url: pr.url,
+    headSha: pr.headSha,
+  });
+
+  if (staleQa) {
+    throw new DirectorRuntimeError("QA_VERDICT_STALE", staleQa);
+  }
+
   try {
     await mergePullRequest(target, pr.number, {
       mergeMethod: "merge",
+      // F-03: merge exact de commit die hierboven is gecontroleerd.
+      expectedHeadSha: pr.headSha,
       commitTitle: `Director: ${mission.title} (#${pr.number})`.slice(0, 200),
       commitMessage: `Handmatig goedgekeurd en gemerged door de eigenaar vanuit de app ("Goedkeuring & Mergen") nadat de qa-rol alle succescriteria van missie "${mission.title}" had goedgekeurd, maar de risicoclassificatie eerst eigen goedkeuring vereiste.`,
     });

@@ -490,6 +490,24 @@ export interface MergePullRequestInput {
   mergeMethod?: "merge" | "squash" | "rebase";
   commitTitle?: string;
   commitMessage?: string;
+  /**
+   * De commit waarvan de aanroeper uitgaat dat de pull request er op staat.
+   * GitHub weigert de merge met een 409 wanneer de head inmiddels iets anders
+   * is.
+   *
+   * Bevinding F-03 uit de externe review van 20 september 2026. Tussen het
+   * moment waarop de Director de CI-stand en de succescriteria controleert en
+   * het moment waarop hij daadwerkelijk mergt, zit een gat. Duwt er in dat
+   * gat een nieuwe commit op de branch, dan merget hij iets anders dan wat er
+   * is gecontroleerd — en niets in de aanroep zelf hield dat tegen, want
+   * zonder dit veld merget GitHub gewoon wat er op dat moment staat.
+   *
+   * Dit is de kleine helft van F-03: het sluit de race tussen controle en
+   * merge. Dat QA's oordeel zelf aan een commit wordt vastgepind (zodat een
+   * goedkeuring van commit A niet blijft gelden voor commit B) is de tweede,
+   * grotere helft en staat apart.
+   */
+  expectedHeadSha?: string;
 }
 
 export interface MergePullRequestResult {
@@ -531,6 +549,7 @@ export async function mergePullRequest(
         merge_method: input.mergeMethod ?? "merge",
         ...(input.commitTitle ? { commit_title: input.commitTitle } : {}),
         ...(input.commitMessage ? { commit_message: input.commitMessage } : {}),
+        ...(input.expectedHeadSha ? { sha: input.expectedHeadSha } : {}),
       }),
     },
   );
@@ -658,16 +677,43 @@ export interface PullRequestFileChange {
   patch?: string;
 }
 
-/** Geeft de gewijzigde bestanden (met diff/patch waar beschikbaar) van een pull request. */
+/**
+ * Het maximum aantal pagina's dat wordt opgehaald. Bij 100 bestanden per
+ * pagina is dat 1.000 gewijzigde bestanden — ruim boven alles wat dit project
+ * doet, en tegelijk een bovengrens zodat een uitzonderlijke pull request geen
+ * onbeperkt aantal aanroepen veroorzaakt.
+ */
+const MAX_PULL_REQUEST_FILE_PAGES = 10;
+
+/**
+ * Geeft de gewijzigde bestanden (met diff/patch waar beschikbaar) van een pull
+ * request.
+ *
+ * Bevinding F-07 (externe review, 20 september 2026): dit haalde één pagina
+ * van 100 op en deed zich voor als de volledige lijst. Een pull request met
+ * meer dan 100 gewijzigde bestanden kwam dus stilzwijgend ingekort bij QA en
+ * bij de risicoclassificatie terecht — en juist die laatste beslist of een
+ * wijziging naar Elroy moet escaleren. Nu wordt er doorgebladerd.
+ */
 export async function getPullRequestFiles(
   target: GithubRepoTarget,
   pullNumber: number,
 ): Promise<PullRequestFileChange[]> {
-  const data = await githubRequest<
-    { filename: string; status: string; patch?: string }[]
-  >(`/repos/${target.owner}/${target.repo}/pulls/${pullNumber}/files?per_page=100`);
+  const collected: { filename: string; status: string; patch?: string }[] = [];
 
-  return data.map((file) => ({
+  for (let page = 1; page <= MAX_PULL_REQUEST_FILE_PAGES; page += 1) {
+    const data = await githubRequest<
+      { filename: string; status: string; patch?: string }[]
+    >(
+      `/repos/${target.owner}/${target.repo}/pulls/${pullNumber}/files?per_page=100&page=${page}`,
+    );
+
+    collected.push(...data);
+
+    if (data.length < 100) break;
+  }
+
+  return collected.map((file) => ({
     filename: file.filename,
     status: file.status,
     patch: file.patch,

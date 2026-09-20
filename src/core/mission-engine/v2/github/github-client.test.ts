@@ -275,6 +275,49 @@ describe("github-client", () => {
       expect(authHeader(init)).toBe(`Bearer ${TEST_INSTALLATION_TOKEN}`);
     });
 
+    /**
+     * Bevinding F-03 (externe review, 20 september 2026): tussen de controle
+     * van CI en succescriteria en de merge zelf kan er een nieuwe commit op de
+     * branch komen. Zonder een verwachte SHA merget GitHub dan gewoon wat er op
+     * dat moment staat — iets anders dan wat is gecontroleerd.
+     */
+    it("stuurt de verwachte head-SHA mee zodat GitHub weigert als de branch is verschoven", async () => {
+      fetchMock.mockImplementation(async (input: unknown) => {
+        const url = requestUrl(input);
+        if (url.includes("/access_tokens")) return accessTokenResponse();
+        if (url.endsWith("/pulls/42/merge")) return toResponse({ merged: true, sha: "merge-sha-000", message: "Merged" }, 200);
+        throw new Error(`Onverwachte fetch-aanroep: ${url}`);
+      });
+
+      const client = await loadClient();
+      await client.mergePullRequest(TEST_TARGET, 42, { expectedHeadSha: "head-sha-abc" });
+
+      const mergeCall = fetchMock.mock.calls.find(([input]) => requestUrl(input).endsWith("/pulls/42/merge"));
+      const [, init] = mergeCall as [unknown, RequestInit];
+      const body = JSON.parse(String(init.body));
+
+      expect(body.sha).toBe("head-sha-abc");
+    });
+
+    it("laat de SHA weg wanneer de aanroeper er geen meegeeft", async () => {
+      // Zo blijft een aanroep zonder verwachting zich gedragen zoals voorheen,
+      // in plaats van dat GitHub een lege sha te zien krijgt.
+      fetchMock.mockImplementation(async (input: unknown) => {
+        const url = requestUrl(input);
+        if (url.includes("/access_tokens")) return accessTokenResponse();
+        if (url.endsWith("/pulls/42/merge")) return toResponse({ merged: true, sha: "merge-sha-000", message: "Merged" }, 200);
+        throw new Error(`Onverwachte fetch-aanroep: ${url}`);
+      });
+
+      const client = await loadClient();
+      await client.mergePullRequest(TEST_TARGET, 42);
+
+      const mergeCall = fetchMock.mock.calls.find(([input]) => requestUrl(input).endsWith("/pulls/42/merge"));
+      const [, init] = mergeCall as [unknown, RequestInit];
+
+      expect(JSON.parse(String(init.body))).not.toHaveProperty("sha");
+    });
+
     it("gooit een fout wanneer GitHub meldt dat de pull request niet gemergd kon worden", async () => {
       fetchMock.mockImplementation(async (input: unknown) => {
         const url = requestUrl(input);

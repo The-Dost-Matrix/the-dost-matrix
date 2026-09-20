@@ -185,6 +185,27 @@ zodat een volgende sessie ze niet hoeft te raden.
 
 ## Al afgehandeld
 
+### `MAX_RELEVANT_KNOWLEDGE` en `MAX_KNOWLEDGE_CONTEXT_LENGTH` — 20 september 2026
+Van 6 items en 6.000 tekens naar 100 items en 60.000 tekens, met de rekensom
+erbij. Het `break` in de opbouwlus is `continue` geworden, zodat één lang
+kennisitem de rest van de lijst niet meer uit de prompt houdt. En de Director
+kreeg eindelijk het keywordfilter dat het zoekscherm sinds 18 september al had:
+een kennisitem moet nu werkelijk een woord uit de vraag bevatten, in plaats van
+binnen te komen op type- en levensfasebonussen alleen.
+
+### `MAX_FILES_CONSIDERED = 40` — 20 september 2026
+Niet verhoogd maar hard gemaakt, na bevinding F-07 uit de externe review. Bij
+meer gewijzigde bestanden dan QA volledig kan inlezen, stopt QA nu met een
+duidelijke melding in plaats van een oordeel te vellen over een deel van de
+wijziging. Mijn conclusie hierboven ("laten staan, toelichting erbij") was
+fout: het probleem was niet het getal maar dat het stilzwijgend gebeurde.
+
+In dezelfde ronde is `getPullRequestFiles` gaan doorbladeren. Die haalde één
+pagina van 100 bestanden op en deed zich voor als de volledige lijst — óók
+richting de risicoclassificatie die bepaalt of een wijziging naar de eigenaar
+moet escaleren.
+
+
 ### `MAX_TOTAL_DIFF_CHARS`: 16.000 → 200.000 — 19 september 2026
 `src/core/mission-engine/v2/automated-signoff.ts`
 

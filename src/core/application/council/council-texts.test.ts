@@ -47,10 +47,31 @@ describe("buildCouncilRoundOneUserMessage", () => {
 
 describe("buildCouncilRoundTwoUserMessage", () => {
   it("bevat het standpunt van het andere lid, zonder providernaam te introduceren", () => {
-    const message = buildCouncilRoundTwoUserMessage("Ik denk dat optie A beter is omdat...");
+    const message = buildCouncilRoundTwoUserMessage(
+      "Moeten we stap 16 nu al doen?",
+      "PROJECTSTAND: drie missies voltooid.",
+      "Ik denk dat optie A beter is omdat...",
+    );
     expect(message).toContain("Ik denk dat optie A beter is omdat...");
     expect(message.toLowerCase()).not.toContain("anthropic");
     expect(message.toLowerCase()).not.toContain("openai");
+  });
+
+  /**
+   * Bevinding F-05 (externe review, 20 september 2026): ronde 2 kreeg alleen
+   * de analyse van het andere lid, zonder de vraag en zonder de projectstand.
+   * Kritiek zonder bewijsbasis is een gesprek over een tekst in plaats van
+   * over de zaak.
+   */
+  it("geeft ook de oorspronkelijke vraag en de projectstand mee", () => {
+    const message = buildCouncilRoundTwoUserMessage(
+      "Moeten we stap 16 nu al doen?",
+      "PROJECTSTAND: drie missies voltooid.",
+      "Ik denk dat optie A beter is omdat...",
+    );
+
+    expect(message).toContain("Moeten we stap 16 nu al doen?");
+    expect(message).toContain("drie missies voltooid");
   });
 });
 

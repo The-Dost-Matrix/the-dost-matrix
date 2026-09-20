@@ -1,7 +1,7 @@
 import type { KnowledgeEntry } from "@/core/domain/knowledge/knowledge-entry";
 import { getKnowledgeEntries } from "@/core/repositories/knowledge-repository";
 
-import { findRelevantKnowledge } from "./relevance";
+import { findRelevantKnowledge, hasKeywordMatch } from "./relevance";
 
 /**
  * Het ophalen van kennis voor een vraag: eerst alles van de eigenaar uit de
@@ -18,6 +18,23 @@ import { findRelevantKnowledge } from "./relevance";
  */
 export { findRelevantKnowledge };
 
+/**
+ * Het keywordfilter, 20 september 2026.
+ *
+ * De drempel in relevance.ts ligt op 0,08, en een kennisitem krijgt al 0,05
+ * voor zijn type en 0,03 voor zijn levensfase. Samen precies 0,08 — bij nul
+ * tekstovereenkomst met de vraag. Een item kan dus binnenkomen zonder dat er
+ * ook maar één woord uit de vraag in voorkomt.
+ *
+ * Voor het Second Brain-zoekscherm is dat op 18 september afgevangen met
+ * hasKeywordMatch. Hier gebeurde dat niet, waardoor de Director plekken in
+ * zijn prompt verspeelde aan kennis die niets met de missie te maken had.
+ * Nu geldt dezelfde eis op beide plekken.
+ *
+ * Bewust hier en niet in findRelevantKnowledge zelf: die functie berekent de
+ * rangschikking, en die berekening is elders (in tests en in het zoekscherm)
+ * al vastgelegd. Filteren is een keuze van de aanroeper.
+ */
 export async function retrieveKnowledgeContext(
   ownerId: string,
   query: string,
@@ -26,10 +43,12 @@ export async function retrieveKnowledgeContext(
 ): Promise<KnowledgeEntry[]> {
   const entries = await getKnowledgeEntries(ownerId);
 
-  return findRelevantKnowledge(
+  const ranked = findRelevantKnowledge(
     query,
     queryEmbedding,
     entries,
     topK,
   );
+
+  return ranked.filter((entry) => hasKeywordMatch(query, entry));
 }

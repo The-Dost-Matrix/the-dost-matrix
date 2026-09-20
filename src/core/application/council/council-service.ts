@@ -111,7 +111,12 @@ export async function runCouncilSession(
       const other = roundOne[(index + 1) % roundOne.length];
       const completion = await members[index].provider.chatCompletion(
         buildCouncilRoundTwoSystemPrompt(),
-        [{ role: "user", content: buildCouncilRoundTwoUserMessage(other.analysis) }],
+        [
+          {
+            role: "user",
+            content: buildCouncilRoundTwoUserMessage(trimmed, evidence, other.analysis),
+          },
+        ],
       );
       usage.add(completion);
 

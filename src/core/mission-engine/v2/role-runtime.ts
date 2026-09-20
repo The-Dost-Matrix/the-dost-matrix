@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { buildReviewedShaRef } from "./qa-attest";
+
 import type { ActorRef, JsonValue, RoleResult } from "@/core/contracts/v2";
 import { getChatProvider } from "@/core/llm/model-router";
 import { estimateCost } from "@/core/llm/pricing";
@@ -111,6 +113,9 @@ export async function executeRoleAssignment({
   let result: RoleResult;
   let roleOutput: string;
   let criteriaVerdicts: CriterionVerdict[] = [];
+  // F-03: de commit waarop QA zijn oordeel baseerde, zodat later vaststaat
+  // waar een GEHAALD betrekking op had. Zie qa-attest.ts.
+  let reviewedHeadSha: string | null = null;
 
   if (assignment.roleId === "builder") {
     const builderOutcome = await executeBuilderAssignment({ mission, assignment });
@@ -121,6 +126,7 @@ export async function executeRoleAssignment({
     result = qaOutcome.result;
     roleOutput = qaOutcome.roleOutput;
     criteriaVerdicts = qaOutcome.criteriaVerdicts;
+    reviewedHeadSha = qaOutcome.reviewedHeadSha;
   } else {
     const provider = getChatProvider();
     const startedAt = Date.now();
@@ -187,7 +193,9 @@ export async function executeRoleAssignment({
       payload: {
         criterionId: verdict.criterionId,
         outcome: verdict.outcome,
-        evidenceRefs: [result.resultId],
+        evidenceRefs: reviewedHeadSha
+          ? [result.resultId, buildReviewedShaRef(reviewedHeadSha)]
+          : [result.resultId],
         note: verdict.reason,
       },
     });

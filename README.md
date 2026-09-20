@@ -166,11 +166,29 @@ de omgeving te schrijven waar de app op dat moment draait:
    de GitHub REST API.
 2. Een LLM bepaalt de volledige nieuwe inhoud van maximaal 8 bestanden per
    toewijzing.
-3. Die wijzigingen worden gecommit op een nieuwe branch
-   (`director/mission-<id>-<tijdstip>`) en aangeboden als pull request naar de
-   standaardbranch.
-4. Er wordt nooit automatisch gemerged — de eigenaar beoordeelt en merget de
-   pull request zelf op GitHub.
+3. Die wijzigingen worden gecommit op één vaste branch per missie
+   (`MISSION_BRANCH_NAME(missionId)`, zie `mission-branch.ts`) en aangeboden
+   als pull request naar de standaardbranch. Opeenvolgende toewijzingen binnen
+   dezelfde missie gebruiken die branch opnieuw, in plaats van per toewijzing
+   een nieuwe branch met een tijdstip erin te maken.
+4. Of er automatisch gemerged wordt, hangt af van de risicoclassificatie (zie
+   `risk-classification.ts`):
+   - **auto-approve** — één geïsoleerd bestand buiten de kritieke paden: de
+     Director merget zelf, mits de CI aantoonbaar is geslaagd.
+   - **needs-signoff** — meerdere bestanden, een kritiek pad, of een missie die
+     de eigenaar zelf op MEDIUM of hoger heeft gezet: er volgt eerst een
+     tweede, geautomatiseerde beoordeling van de diff
+     (`automated-signoff.ts`). Keurt die goed, dan merget de Director alsnog
+     zelf; escaleert ze, dan komt de wijziging bij de eigenaar terecht.
+   - **altijd naar de eigenaar** — geheimen en tokens, GitHub-workflows,
+     authenticatie, Firebase-configuratie en élke bestandsverwijdering
+     (`findHardEscalationReason`). Deze categorie merget nooit automatisch,
+     wat de geautomatiseerde beoordeling er ook van vindt.
+
+   Drie voorwaarden gelden bij elke automatische merge: alle succescriteria
+   staan op GEHAALD, de CI is aantoonbaar geslaagd (niet enkel "niet
+   gefaald" — zie `ci-policy.ts`), en het oordeel van QA hoort bij precies de
+   commit die gemergd wordt (`qa-attest.ts`).
 
 **Setup**
 
@@ -299,9 +317,10 @@ en te controleren.
 
 **Hoe draag ik bij aan dit project?**
 Volg de installatiestappen hierboven om de app lokaal te draaien, maak je
-wijzigingen op een aparte branch en open een pull request. De eigenaar
-beoordeelt en merget pull requests zelf; er wordt nooit automatisch
-gemerged.
+wijzigingen op een aparte branch en open een pull request. Pull requests van
+buitenaf worden door de eigenaar beoordeeld en gemergd. Voor pull requests die
+de Mission Engine zelf opent, geldt de risicoclassificatie hierboven: een deel
+merget automatisch, een deel gaat altijd langs de eigenaar.
 
 **Welke LLM-providers ondersteunt de chat?**
 De chatfunctionaliteit ondersteunt zowel Anthropic als OpenAI. De Model

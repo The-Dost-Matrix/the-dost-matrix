@@ -216,6 +216,39 @@ describe("ensureMissionPullRequestMerged", () => {
     );
   });
 
+  /**
+   * Bevinding F-03 (externe review, 20 september 2026). QA beoordeelt commit
+   * A, daarna komt commit B op dezelfde pull request. De criteria staan nog
+   * op GEHAALD en de CI op B is groen — zonder deze controle wordt B gemergd
+   * zonder dat er ooit iemand inhoudelijk naar gekeken heeft.
+   */
+  it("mergt niet wanneer QA een andere commit heeft beoordeeld dan de pull request nu draagt", async () => {
+    const pr = buildPullRequest({ headSha: "nieuwe-commit-b" });
+    vi.mocked(findMissionPullRequest).mockReturnValue(pr);
+    vi.mocked(getCombinedCheckStatus).mockResolvedValue({
+      state: "success",
+      failingCheckNames: [],
+      pendingCheckNames: [],
+    });
+
+    const mission = buildMission({
+      successCriteria: [
+        {
+          criterionId: "c1",
+          description: "Criterium",
+          status: "PASSED",
+          evidenceRefs: ["result-1", "qa-head-sha:oude-commit-a"],
+        },
+      ],
+    } as unknown as Partial<MissionV2>);
+
+    await expect(ensureMissionPullRequestMerged(mission)).rejects.toMatchObject({
+      code: "QA_VERDICT_STALE",
+    });
+
+    expect(mergePullRequest).not.toHaveBeenCalled();
+  });
+
   it("gooit NEEDS_SIGNOFF en mergt niet wanneer de wijziging hard escaleert (secrets/auth/workflows/verwijdering), zonder de geautomatiseerde beoordeling zelfs aan te roepen", async () => {
     const pr = buildPullRequest();
     vi.mocked(findMissionPullRequest).mockReturnValue(pr);

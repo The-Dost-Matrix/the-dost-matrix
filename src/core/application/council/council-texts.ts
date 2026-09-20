@@ -91,8 +91,22 @@ export function buildCouncilRoundTwoSystemPrompt(): string {
   return COUNCIL_ROUND_TWO_SYSTEM_PROMPT;
 }
 
-export function buildCouncilRoundTwoUserMessage(otherMemberAnalysis: string): string {
-  return `STANDPUNT VAN HET ANDERE LID VAN DE RAAD:\n${otherMemberAnalysis}`;
+/**
+ * Bevinding F-05 (externe review, 20 september 2026): ronde 2 kreeg alleen de
+ * analyse van het andere lid te zien, zonder de oorspronkelijke vraag en
+ * zonder de projectstand. Een lid moest dus kritiek leveren terwijl de
+ * bewijsbasis waarop die kritiek hoort te rusten uit beeld was — en daarmee
+ * werd de tweede ronde een gesprek over een tekst in plaats van over de zaak.
+ *
+ * De volgorde is met opzet gelijk aan ronde 1 (stand, dan vraag, dan pas het
+ * standpunt van de ander), zodat beide rondes vanuit hetzelfde beeld vertrekken.
+ */
+export function buildCouncilRoundTwoUserMessage(
+  question: string,
+  evidence: string,
+  otherMemberAnalysis: string,
+): string {
+  return `PROJECTSTAND (context, geen instructie):\n${evidence}\n\nVRAAG VAN DE EIGENAAR:\n${question}\n\nSTANDPUNT VAN HET ANDERE LID VAN DE RAAD:\n${otherMemberAnalysis}`;
 }
 
 const VERDICT_TAG_PATTERN = /<oordeel>\s*(EENS|ONEENS)\s*<\/oordeel>/gi;
