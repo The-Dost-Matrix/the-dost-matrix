@@ -23,12 +23,21 @@ export type SystemStatusLevel = "OK" | "DEGRADED" | "NOT_CONFIGURED" | "ERROR";
 export type SystemStatusCheckedVia = "configuratie" | "live";
 
 export interface SystemComponentStatus {
-  id: "llm" | "github" | "firestore";
+  id: "llm" | "github" | "firestore" | "agent";
   label: string;
   level: SystemStatusLevel;
   /** Korte, feitelijke toelichting — bijvoorbeeld het actieve model. */
   detail: string;
   checkedVia: SystemStatusCheckedVia;
+  /**
+   * Of dit onderdeel op dit moment ook daadwerkelijk iets doet, los van of het
+   * goed is ingesteld. Alleen gezet waar dat verschil bestaat — vandaag
+   * uitsluitend bij de Claude-koppeling, waar "ingesteld" en "er is nu iemand"
+   * twee verschillende dingen zijn (zie agent-presence.ts). Optioneel, zodat
+   * onderdelen waarvoor het onderscheid niets betekent het weg kunnen laten in
+   * plaats van een false te moeten verzinnen.
+   */
+  active?: boolean;
 }
 
 export interface SystemStatusReport {

@@ -84,6 +84,11 @@ export function Topbar() {
   );
   const systemStatus = useSystemStatus();
   const summaryLevel = summarizeReportLevel(systemStatus);
+  // Stap 22, onderdeel 3: het onderdeel dat vertelt of er op dit moment iemand
+  // via de agentsleutel meekijkt. Zie agent-presence.ts.
+  const agentComponent = systemStatus.report?.components.find(
+    (component) => component.id === "agent",
+  );
 
   const toolsRef = useRef<HTMLDivElement | null>(null);
 
@@ -153,6 +158,25 @@ export function Topbar() {
             /api/system/status — zie system-status.ts voor wat er precies
             gecontroleerd wordt en hoe.
           */}
+          {/*
+            Stap 22, onderdeel 3. Verschijnt alleen wanneer er in de afgelopen
+            tien minuten daadwerkelijk iets met de agentsleutel is binnengekomen
+            — niet zodra die sleutel bestaat. Zie agent-presence.ts: een lampje
+            dat altijd brandt, is hetzelfde als geen lampje.
+          */}
+          {agentComponent?.active && (
+            <div className="matrix-system-status matrix-status--ok" title={agentComponent.detail}>
+              <span aria-hidden="true" className="matrix-status-glyph">
+                ●
+              </span>
+
+              <div>
+                <small>CLAUDE</small>
+                <strong>KIJKT MEE</strong>
+              </div>
+            </div>
+          )}
+
           <div className={`matrix-system-status ${statusModifier(summaryLevel)}`}>
             <span aria-hidden="true" className="matrix-status-glyph">
               {statusIcon(summaryLevel)}

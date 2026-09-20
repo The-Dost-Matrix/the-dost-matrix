@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 
 import { verifyIdToken } from "@/core/firebase/admin";
+import { recordAgentSeen } from "@/core/repositories/agent-presence-repository";
 import {
   AGENT_KEY_HEADER,
   isActionAllowedForAgent,
@@ -805,6 +806,13 @@ export async function POST(request: NextRequest) {
       action: body.action,
       at: new Date().toISOString(),
     });
+
+    // Het spoor waarop het scherm "Claude kijkt mee" baseert. Bewust
+    // afgewacht en niet los weggezet: een aanroep die net binnenkomt hoort al
+    // zichtbaar te zijn wanneer het statuspaneel een seconde later ververst.
+    // recordAgentSeen faalt nooit naar buiten toe (zie de toelichting daar),
+    // dus dit kan de actie zelf niet tegenhouden.
+    await recordAgentSeen(ownerId);
   }
 
   try {

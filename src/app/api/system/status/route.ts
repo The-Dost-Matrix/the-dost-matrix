@@ -4,6 +4,8 @@ import { verifyIdToken } from "@/core/firebase/admin";
 import { describeActiveChatModel } from "@/core/llm/model-router";
 import { getDefaultBranch, getGithubRepoTarget } from "@/core/mission-engine/v2/github/github-client";
 import { withOwnerLlmSettings } from "@/core/repositories/llm-settings-repository";
+import { getAgentLastSeenAt } from "@/core/repositories/agent-presence-repository";
+import { buildAgentStatus } from "@/core/system/agent-presence";
 import {
   buildFirestoreStatus,
   buildGithubStatus,
@@ -49,9 +51,17 @@ export async function GET(request: NextRequest) {
     buildLlmStatus(describeActiveChatModel()),
   );
 
+  // Stap 22, onderdeel 3: of er op dit moment iemand via de agentsleutel
+  // meekijkt. Gebaseerd op het spoor van de laatste aanroep, niet op het
+  // bestaan van de sleutel — zie agent-presence.ts.
+  const agentStatus = buildAgentStatus({
+    secretConfigured: Boolean(process.env.MISSION_AGENT_SECRET),
+    lastSeenAt: await getAgentLastSeenAt(ownerId),
+  });
+
   const report: SystemStatusReport = {
     checkedAt: new Date().toISOString(),
-    components: [llmStatus, githubStatus, buildFirestoreStatus(process.env)],
+    components: [llmStatus, githubStatus, buildFirestoreStatus(process.env), agentStatus],
   };
 
   return NextResponse.json(report);
