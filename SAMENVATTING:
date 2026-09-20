@@ -1,4 +1,4 @@
-De CI-build faalt bij het verzamelen van paginagegevens voor /api/chat doordat FIREBASE_SERVICE_ACCOUNT_KEY en FIREBASE_SERVICE_ACCOUNT_FILE ontbreken. Het aangeleverde log toont geen fout in mission-duration. De Node.js-melding is een waarschuwing, niet de oorzaak van de mislukte build.
+De CI-build faalt bij het verzamelen van paginagegevens voor /api/conversations/archive doordat FIREBASE_SERVICE_ACCOUNT_KEY en FIREBASE_SERVICE_ACCOUNT_FILE ontbreken. Het aangeleverde log toont geen fout in mission-duration. De Node.js-melding is een waarschuwing, niet de oorzaak van de mislukte build.
 
 De ontbrekende Firebase-configuratie valt buiten de twee toegestane bronbestanden. De bestaande implementatie en tests in mission-duration.ts en mission-duration.test.ts blijven ongewijzigd; er worden geen controles uitgeschakeld.
 
