@@ -152,14 +152,23 @@ function assertOwnership(mission: MissionV2, ownerId: string): void {
 
 export async function GET(request: NextRequest) {
   let ownerId: string;
+  let actor: RequestActor;
 
   try {
-    ({ ownerId } = await requireOwner(request));
+    ({ ownerId, actor } = await requireOwner(request));
   } catch {
     return NextResponse.json(
       { error: "Je sessie is ongeldig of verlopen. Log opnieuw in." },
       { status: 401 },
     );
+  }
+
+  // Ook lezen telt als meekijken — sterker nog, dat ís meekijken. Stond dit
+  // alleen bij POST, dan zou het scherm pas "Claude kijkt mee" tonen op het
+  // moment dat er iets wordt gedaan, en nooit terwijl er alleen wordt
+  // gekeken. Zie agent-presence.ts.
+  if (actor === "agent") {
+    await recordAgentSeen(ownerId);
   }
 
   const missionId = request.nextUrl.searchParams.get("missionId");
