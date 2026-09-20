@@ -133,6 +133,8 @@ export function ciStatusLabel(ci: CombinedCheckStatus | null): string {
       return `CI mislukt${named(ci.failingCheckNames)}`;
     case "pending":
       return `CI loopt nog${named(ci.pendingCheckNames)}`;
+    case "unknown":
+      return "CI-stand niet op te halen bij GitHub";
     default:
       return "Geen CI-controles geregistreerd voor deze commit";
   }

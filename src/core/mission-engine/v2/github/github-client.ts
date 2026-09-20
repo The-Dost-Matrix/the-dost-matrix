@@ -540,15 +540,28 @@ export async function mergePullRequest(
 
 export interface CombinedCheckStatus {
   /**
-   * "success": alle checks zijn afgerond en geslaagd (of er zijn er geen —
-   * zie "none"). "failure": minstens één check is afgerond met een
-   * niet-geslaagde uitkomst. "pending": minstens één check loopt nog.
-   * "none": er zijn helemaal geen check-runs geregistreerd voor deze commit
-   * (bijvoorbeeld een repository zonder CI-workflow) — dit telt bewust NIET
-   * als "failure", anders zou elke missie in zo'n repository nooit meer
-   * kunnen afronden of mergen.
+   * "success": alle checks zijn afgerond en geslaagd. "failure": minstens
+   * één check is afgerond met een niet-geslaagde uitkomst. "pending":
+   * minstens één check loopt nog. "none": er zijn helemaal geen check-runs
+   * geregistreerd voor deze commit (bijvoorbeeld een repository zonder
+   * CI-workflow, of de eerste seconden na een push). "unknown": GitHub gaf
+   * de stand niet prijs — in de praktijk een HTTP 403 op de Checks-API.
+   *
+   * WAAROM "unknown" SINDS 20 SEPTEMBER 2026 APART STAAT
+   *
+   * Tot die datum werd een 403 vertaald naar "none", met hier de toelichting
+   * dat "none" bewust niet als "failure" telt omdat een repository zonder CI
+   * anders nooit meer zou kunnen mergen. Die redenering klopte voor een
+   * repository zonder CI, maar ze zette twee heel verschillende situaties op
+   * één hoop: "er is hier niets te controleren" en "ik mag of kan niet zien
+   * wat de controle zegt". Externe review (F-02, 20 september 2026) wees daar
+   * terecht op: het tweede is geen positieve verificatie.
+   *
+   * Beide blijven op zichzelf géén "failure" — er is niets gefaald. Of ze een
+   * automatische merge mogen tegenhouden is een beleidsvraag, en die staat in
+   * ci-policy.ts, niet hier.
    */
-  state: "success" | "failure" | "pending" | "none";
+  state: "success" | "failure" | "pending" | "none" | "unknown";
   /** Namen van checks die zijn afgerond met een niet-geslaagde uitkomst. */
   failingCheckNames: string[];
   /** Namen van checks die nog niet zijn afgerond. */
@@ -598,7 +611,9 @@ export async function getCombinedCheckStatus(
     );
   } catch (error) {
     if (error instanceof GithubApiError && error.status === 403) {
-      return { state: "none", failingCheckNames: [], pendingCheckNames: [] };
+      // Niet "none": we weten niet of er checks zijn, laat staan wat ze
+      // zeggen. Zie de toelichting bij CombinedCheckStatus.state.
+      return { state: "unknown", failingCheckNames: [], pendingCheckNames: [] };
     }
     throw error;
   }

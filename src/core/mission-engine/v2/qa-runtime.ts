@@ -437,6 +437,10 @@ export function describeCiOutcomeForPrompt(ciStatus: CombinedCheckStatus): strin
     return `${intro} nog niet afgerond (${ciStatus.pendingCheckNames.join(", ")}).`;
   }
 
+  if (ciStatus.state === "unknown") {
+    return `${intro} de stand kon niet bij GitHub worden opgehaald. Dat is nadrukkelijk GEEN geslaagde controle — behandel het als ontbrekend bewijs en niet als bevestiging.`;
+  }
+
   return `${intro} er zijn geen CI-controles geregistreerd voor deze commit. Je kunt hier dus niets uit afleiden, in geen van beide richtingen.`;
 }
 

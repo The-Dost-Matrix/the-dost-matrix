@@ -15,6 +15,7 @@ import {
   mergePullRequest,
 } from "./github/github-client";
 import { collectCiFailureReport } from "./ci-failure-source";
+import { findUnverifiedCiReason } from "./ci-policy";
 import { hasPassedAllCriteria, type MissionV2 } from "./mission";
 import {
   MAX_TECHNICAL_REPAIR_ATTEMPTS,
@@ -200,6 +201,12 @@ export type DirectorRuntimeErrorCode =
   | "NEEDS_SIGNOFF"
   | "CI_CHECKS_FAILED"
   | "CI_CHECKS_PENDING"
+  // "CI_CHECKS_UNVERIFIED": de CI is niet gefaald, maar ook niet aantoonbaar
+  // geslaagd — er zijn geen controles gevonden, of de stand kon niet bij
+  // GitHub worden opgehaald. Zie ci-policy.ts. Bewust een eigen code en niet
+  // CI_CHECKS_FAILED: er is niets kapot, er is iets niet vastgesteld, en dat
+  // vraagt om een andere reactie dan een technische herstelpoging.
+  | "CI_CHECKS_UNVERIFIED"
   | "MERGE_FAILED"
   | "PULL_REQUEST_NOT_FOUND"
   | "CRITERIA_NOT_PASSED"
@@ -815,6 +822,19 @@ export async function ensureMissionPullRequestMerged(mission: MissionV2): Promis
     );
   }
 
+  // F-02 (externe review, 20 september 2026): "geen controles gevonden" en
+  // "kon de stand niet ophalen" zijn geen groen licht. Zie ci-policy.ts voor
+  // de afweging en voor de uitzondering per project.
+  const unverifiedCi = findUnverifiedCiReason(ciStatus, {
+    pullRequestNumber: pr.number,
+    pullRequestTitle: pr.title,
+    pullRequestUrl: pr.url,
+  });
+
+  if (unverifiedCi) {
+    throw new DirectorRuntimeError("CI_CHECKS_UNVERIFIED", unverifiedCi);
+  }
+
   const files = await getPullRequestFiles(target, pr.number);
   const risk = classifyPullRequestRiskForMission(files, mission.riskLevel);
 
@@ -944,6 +964,19 @@ export async function approveAndMergeMissionPullRequest(
       "CI_CHECKS_PENDING",
       `De CI-check(s) op pull request #${pr.number} ("${pr.title}") zijn nog niet klaar (${ciStatus.pendingCheckNames.join(", ")}) — probeer het over een paar minuten opnieuw: ${pr.url}`,
     );
+  }
+
+  // F-02 (externe review, 20 september 2026): "geen controles gevonden" en
+  // "kon de stand niet ophalen" zijn geen groen licht. Zie ci-policy.ts voor
+  // de afweging en voor de uitzondering per project.
+  const unverifiedCi = findUnverifiedCiReason(ciStatus, {
+    pullRequestNumber: pr.number,
+    pullRequestTitle: pr.title,
+    pullRequestUrl: pr.url,
+  });
+
+  if (unverifiedCi) {
+    throw new DirectorRuntimeError("CI_CHECKS_UNVERIFIED", unverifiedCi);
   }
 
   try {

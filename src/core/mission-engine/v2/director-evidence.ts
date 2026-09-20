@@ -230,6 +230,8 @@ function describeCi(ci: CombinedCheckStatus): string {
       return `CI: GEFAALD (${ci.failingCheckNames.join(", ") || "onbekende check"}).`;
     case "pending":
       return `CI: loopt nog (${ci.pendingCheckNames.join(", ") || "onbekende check"}).`;
+    case "unknown":
+      return "CI: stand niet op te halen bij GitHub (geen geslaagde controle).";
     case "none":
     default:
       return "CI: geen checks geregistreerd voor deze commit.";
