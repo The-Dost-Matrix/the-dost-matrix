@@ -39,6 +39,7 @@ import {
   findUnknownImports,
 } from "./export-check";
 import {
+  MAX_OBJECTIVE_EVIDENCE_FILES,
   extractRepositoryPaths,
   formatObjectiveEvidence,
   type ObjectiveEvidenceFile,
@@ -47,6 +48,7 @@ import {
   BUILDER_TOOL_DEFINITIONS,
   MAX_BUILDER_TOOL_ROUNDS,
   createBuilderToolRunner,
+  shieldedPathsForTurn,
 } from "./builder-tools";
 import type { ChatCompletionResult, ChatWithToolsOptions } from "@/core/llm/types";
 import {
@@ -282,22 +284,26 @@ async function askBuilder(
 }
 
 /**
- * Bouwt het gereedschap voor één toewijzing: lezen en zoeken binnen de
+ * Bouwt het gereedschap voor ÉÉN SCHRIJFBEURT: lezen en zoeken binnen de
  * missiebranch, en niets anders. Zie builder-tools.ts voor waarom er geen
  * schrijf- of uitvoergereedschap bij zit.
+ *
+ * Per beurt en niet per toewijzing, omdat `shieldedPaths` per beurt verschilt
+ * — zie createBuilderToolRunner voor de regel en de missie die op de oude,
+ * te ruime versie strandde.
  */
 function buildBuilderTools(
   target: GithubRepoTarget,
   ref: string,
   treePaths: readonly string[],
-  writablePaths: readonly string[],
+  shieldedPaths: readonly string[],
 ): ChatWithToolsOptions {
   return {
     tools: BUILDER_TOOL_DEFINITIONS,
     maxToolRounds: MAX_BUILDER_TOOL_ROUNDS,
     runTool: createBuilderToolRunner({
       treePaths,
-      writablePaths,
+      shieldedPaths,
       readFile: async (path) => {
         try {
           return (await getFileContent(target, path, ref))?.content ?? null;
@@ -1328,9 +1334,19 @@ async function assertImportedNamesExist(
 /**
  * Haalt de inhoud op van de bestanden die de opdracht met naam noemt.
  *
- * Bestanden die deze toewijzing zelf schrijft blijven eruit: die krijgt de
- * Builder al als "huidige inhoud" of als sibling te zien, en ze twee keer in
- * dezelfde prompt zetten is alleen maar verwarrend.
+ * WAAROM HIER NIET MEER OP DE SCHRIJFLIJST GEFILTERD WORDT (20 september 2026)
+ *
+ * Hiervóór stond hier een filter dat elk bestand oversloeg dat de toewijzing
+ * zelf schrijft, met als reden: dat ziet de Builder toch al als "huidige
+ * inhoud" of als sibling. Dat klopt alleen voor de beurt waarin dat bestand
+ * aan de beurt ís. In de beurten ervóór zag hij het helemaal niet, ook niet
+ * als de opdracht hem letterlijk opdroeg het te lezen — en dat is precies hoe
+ * de missie "Wachttijd op eigenaarsantwoord berekenen" strandde.
+ *
+ * Het filteren gebeurt nu per beurt, in writeFiles(), op dezelfde
+ * `shieldedPaths` die ook het gereedschap gebruikt. Daar is wél bekend welk
+ * bestand op dat moment geschreven wordt. Deze functie verzamelt dus
+ * eenvoudigweg alles wat de opdracht noemt.
  *
  * Faalt het ophalen, dan wordt dat bestand overgeslagen en gaat de rest
  * gewoon door — dezelfde fail-open lijn als de rest van de bewijslaag. Een
@@ -1340,11 +1356,20 @@ async function gatherObjectiveEvidence(
   target: GithubRepoTarget,
   ref: string,
   objectiveText: string,
-  writablePaths: readonly string[],
   treePaths: readonly string[],
+  extraBudget: number,
 ): Promise<ObjectiveEvidenceFile[]> {
-  const mentioned = extractRepositoryPaths(objectiveText, treePaths).filter(
-    (path) => !writablePaths.includes(path),
+  // Ruimer ophalen dan er per beurt meegaat. Het afschermen gebeurt nu pas in
+  // writeFiles(), en daar valt per beurt hoogstens `extraBudget` bestanden af
+  // (het bestand dat geschreven wordt plus de al geschreven siblings). Zonder
+  // die marge zou een genoemd bestand dat toevallig ook geschreven wordt een
+  // van de vier plekken opsouperen en een ánder genoemd bestand verdringen —
+  // stil, en precies het soort verlies waar dit bestand tegen bedoeld is.
+  // De echte grens van MAX_OBJECTIVE_EVIDENCE_FILES wordt daar toegepast.
+  const mentioned = extractRepositoryPaths(
+    objectiveText,
+    treePaths,
+    MAX_OBJECTIVE_EVIDENCE_FILES + extraBudget,
   );
 
   const files: ObjectiveEvidenceFile[] = [];
@@ -1373,7 +1398,7 @@ async function writeFiles(
   testContextByPath: ReadonlyMap<string, BuilderTestContext>,
   usesVitest: boolean,
   objectiveEvidence: readonly ObjectiveEvidenceFile[],
-  tools: ChatWithToolsOptions | null,
+  buildTools: (shieldedPaths: readonly string[]) => ChatWithToolsOptions | null,
 ): Promise<BuilderWriteResult> {
   const files: BuilderFileChange[] = [];
   let model = "";
@@ -1384,6 +1409,18 @@ async function writeFiles(
   // inhoud van zijn siblings in deze toewijzing, niet de oude repo-inhoud.
   for (const file of plannedFiles) {
     const siblingFiles = files.filter((written) => written.path !== file.path);
+
+    // De afschermlijst voor déze beurt: het bestand dat nu geschreven wordt,
+    // plus de bestanden uit deze toewijzing die al geschreven zijn. Van die
+    // twee ligt de inhoud al in de opdracht, en het gereedschap zou er een
+    // oudere versie naast zetten. De nog niet geschreven bestanden uit
+    // `plan.paths` horen er juist NIET bij — zie shieldedPathsForTurn in
+    // builder-tools.ts voor de missie die op precies dat verschil strandde.
+    const shieldedPaths = shieldedPathsForTurn(
+      file.path,
+      files.map((written) => written.path),
+    );
+
     const written = await writeSingleFile(
       mission,
       assignment,
@@ -1393,8 +1430,10 @@ async function writeFiles(
       siblingFiles,
       testContextByPath.get(file.path) ?? null,
       usesVitest,
-      objectiveEvidence,
-      tools,
+      objectiveEvidence
+        .filter((evidence) => !shieldedPaths.includes(evidence.path))
+        .slice(0, MAX_OBJECTIVE_EVIDENCE_FILES),
+      buildTools(shieldedPaths),
     );
     files.push({ path: file.path, content: written.content });
     model = written.model;
@@ -1567,8 +1606,8 @@ export async function executeBuilderAssignment({
     target,
     missionBranch,
     [assignment.objective, plan.planSummary].join("\n"),
-    plan.paths,
     treePaths,
+    plan.paths.length,
   );
 
   const testContextByPath = new Map<string, BuilderTestContext>();
@@ -1607,7 +1646,7 @@ export async function executeBuilderAssignment({
     objectiveEvidence,
     // Stap 18 (deel 4): de Builder mag zelf opvragen wat hij nodig heeft, in
     // plaats van alleen te krijgen wat wij vooraf konden bedenken.
-    buildBuilderTools(target, missionBranch, treePaths, plan.paths),
+    (shieldedPaths) => buildBuilderTools(target, missionBranch, treePaths, shieldedPaths),
   );
 
   // Stap 18 (deel 3): vóór er ook maar iets gecommit wordt, mechanisch

@@ -151,13 +151,36 @@ export function searchTreePaths(
     .slice(0, limit);
 }
 
+/**
+ * Stelt voor één schrijfbeurt de lijst samen van paden waarvan de inhoud al
+ * in de opdracht staat.
+ *
+ * Staat hier als losse functie en niet als regeltje in de lus van
+ * writeFiles(), omdat dit de regel is die op 20 september 2026 fout bleek en
+ * een missie liet stranden. Een regel die een missie kan laten stranden,
+ * hoort een test te hebben.
+ *
+ * @param currentPath het bestand dat in deze beurt geschreven wordt
+ * @param writtenPaths de bestanden uit deze toewijzing die al geschreven zijn
+ */
+export function shieldedPathsForTurn(
+  currentPath: string,
+  writtenPaths: readonly string[],
+): string[] {
+  return [currentPath, ...writtenPaths.filter((path) => path !== currentPath)];
+}
+
 export interface BuilderToolRunnerInput {
   /** Alle bestanden die op de missiebranch staan. */
   treePaths: readonly string[];
   /** Haalt de inhoud van één bestand op, of null wanneer die er niet is. */
   readFile: (path: string) => Promise<string | null>;
-  /** Paden die deze toewijzing zelf schrijft — die mag hij niet als "huidig" lezen. */
-  writablePaths?: readonly string[];
+  /**
+   * Paden waarvan de inhoud in déze beurt al op tafel ligt — zie
+   * createBuilderToolRunner voor wat dat precies betekent en waarom het niet
+   * de hele toewijzing is.
+   */
+  shieldedPaths?: readonly string[];
   /** Wordt aangeroepen bij elk gebruik, voor het logboek. */
   onUse?: (toolName: string, argument: string, outcome: string) => void;
 }
@@ -169,15 +192,40 @@ export interface BuilderToolRunnerInput {
  * onbekend gereedschap, een ontbrekend argument, een pad dat niet bestaat.
  * Alleen zo kan het model zich herstellen binnen dezelfde beurt.
  *
- * Bestanden die de toewijzing zelf gaat schrijven worden geweigerd met een
- * uitleg. De Builder krijgt hun huidige inhoud al op de gewone manier te
- * zien, en ze via gereedschap nóg een keer ophalen levert verwarring op over
- * welke versie de echte is.
+ * WELKE BESTANDEN AFGESCHERMD ZIJN, EN WELKE NIET (20 september 2026)
+ *
+ * Hiervóór stond hier: alle bestanden die de toewijzing schrijft. Dat was te
+ * ruim, en het heeft een live missie laten stranden.
+ *
+ * De opdracht was "breid mission-duration.ts uit en voeg tests toe in
+ * mission-duration.test.ts — lees vooraf beide bestanden". De Builder werkt
+ * zo'n toewijzing bestand voor bestand af, broncode eerst. In de beurt waarin
+ * hij mission-duration.ts schreef, stond het testbestand op de schrijflijst
+ * en werd het dus geweigerd — terwijl het daar nog gewoon onaangeroerd op de
+ * branch stond en hij het volgens zijn eigen opdracht moest lezen. Hij
+ * weigerde te schrijven en zei precies dat. Terecht.
+ *
+ * De juiste grens is niet "schrijft de toewijzing dit bestand" maar "ligt de
+ * inhoud van dit bestand in déze beurt al op tafel". Dat geldt voor twee
+ * gevallen, en alleen die twee:
+ *
+ * - Het bestand dat hij nú schrijft. Zijn huidige inhoud staat al als
+ *   "huidige inhoud van dit bestand" in de opdracht.
+ * - Een bestand uit deze toewijzing dat hij al geschreven heeft. Dat staat al
+ *   in de opdracht met zijn NIEUWE inhoud; het gereedschap zou de oude van de
+ *   branch teruggeven, en dan zijn er twee versies in omloop.
+ *
+ * Een bestand uit de toewijzing dat nog niet aan de beurt is geweest, hoort
+ * er niet bij: daarvan is de inhoud op de branch nog wél de echte, en de
+ * Builder heeft hem soms nodig om het bestand ervóór goed te kunnen schrijven.
+ *
+ * Zie writeFiles() in builder-runtime.ts voor waar die lijst per beurt wordt
+ * samengesteld.
  */
 export function createBuilderToolRunner({
   treePaths,
   readFile,
-  writablePaths = [],
+  shieldedPaths = [],
   onUse,
 }: BuilderToolRunnerInput) {
   const known = new Set(treePaths);
@@ -221,11 +269,11 @@ export function createBuilderToolRunner({
 
       const path = normalizeToolPath(raw);
 
-      if (writablePaths.includes(path)) {
+      if (shieldedPaths.includes(path)) {
         return report(
           path,
-          "EIGEN_BESTAND",
-          `"${path}" is een bestand dat je in deze toewijzing zelf schrijft. De huidige inhoud staat al in je opdracht hierboven; gebruik die.`,
+          "AL_IN_OPDRACHT",
+          `De inhoud van "${path}" staat al in je opdracht hierboven — gebruik die. Wat dit gereedschap teruggeeft is de versie zoals die op de branch staat, en die kan inmiddels achterhaald zijn.`,
         );
       }
 

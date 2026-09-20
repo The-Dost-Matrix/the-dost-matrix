@@ -6,6 +6,7 @@ import {
   createBuilderToolRunner,
   normalizeToolPath,
   searchTreePaths,
+  shieldedPathsForTurn,
 } from "./builder-tools";
 
 /**
@@ -40,6 +41,34 @@ function runner(overrides: Partial<Parameters<typeof createBuilderToolRunner>[0]
 }
 
 const call = (name: string, args: Record<string, unknown>) => ({ id: "t1", name, arguments: args });
+
+describe("shieldedPathsForTurn", () => {
+  const BRON = "src/core/mission-engine/v2/mission-duration.ts";
+  const TEST = "src/core/mission-engine/v2/mission-duration.test.ts";
+
+  /**
+   * DE REGEL DIE OP 20 SEPTEMBER 2026 FOUT BLEEK
+   *
+   * De afschermlijst was "alles wat de toewijzing schrijft". Daardoor was in
+   * de eerste beurt — het bronbestand — het testbestand al dicht, terwijl het
+   * daar nog onaangeroerd op de branch stond en de opdracht letterlijk zei
+   * "lees vooraf beide bestanden". De Builder weigerde te schrijven, terecht,
+   * en de missie stond stil.
+   */
+  it("schermt in de eerste beurt alleen het bestand af dat nu geschreven wordt", () => {
+    expect(shieldedPathsForTurn(BRON, [])).toEqual([BRON]);
+  });
+
+  it("schermt in een latere beurt ook de al geschreven bestanden af", () => {
+    // De nieuwe inhoud daarvan staat al als sibling in de opdracht; het
+    // gereedschap zou de oude van de branch teruggeven.
+    expect(shieldedPathsForTurn(TEST, [BRON])).toEqual([TEST, BRON]);
+  });
+
+  it("noemt het huidige bestand nooit twee keer", () => {
+    expect(shieldedPathsForTurn(BRON, [BRON])).toEqual([BRON]);
+  });
+});
 
 describe("normalizeToolPath", () => {
   it("laat een gewoon pad met rust", () => {
@@ -128,14 +157,37 @@ describe("createBuilderToolRunner", () => {
     expect(result).toContain("mission-labels.ts");
   });
 
-  it("weigert een bestand dat de toewijzing zelf schrijft", async () => {
-    // De huidige inhoud daarvan staat al in de opdracht; hem hier nóg eens
-    // ophalen levert verwarring op over welke versie de echte is.
+  it("weigert een bestand waarvan de inhoud al in de opdracht staat", async () => {
+    // Het bestand dat hij op dit moment schrijft, en de bestanden uit deze
+    // toewijzing die hij al geschreven heeft. Die staan al in de opdracht, en
+    // wat dit gereedschap teruggeeft is de oudere versie van de branch.
     const result = await runner({
-      writablePaths: ["src/domains/missions/mission-labels.ts"],
+      shieldedPaths: ["src/domains/missions/mission-labels.ts"],
     })(call("lees_bestand", { pad: "src/domains/missions/mission-labels.ts" }));
 
-    expect(result).toContain("zelf schrijft");
+    expect(result).toContain("staat al in je opdracht");
+  });
+
+  /**
+   * DE MISSER VAN 20 SEPTEMBER 2026
+   *
+   * De afschermlijst was "alle bestanden die deze toewijzing schrijft". Een
+   * toewijzing die zowel een bronbestand als zijn testbestand aanraakt, werkt
+   * die één voor één af, broncode eerst — en in die eerste beurt was het
+   * testbestand dus geblokkeerd, terwijl het daar nog onaangeroerd op de
+   * branch stond en de opdracht letterlijk zei "lees vooraf beide bestanden".
+   * De Builder weigerde te schrijven. Terecht.
+   */
+  it("geeft een nog niet geschreven bestand uit dezelfde toewijzing wél terug", async () => {
+    const result = await runner({
+      // Alleen het bestand dat nú geschreven wordt staat op de lijst — het
+      // testbestand komt pas in een latere beurt aan de beurt.
+      shieldedPaths: ["src/domains/missions/mission-labels.ts"],
+      readFile: async () => "export const zichtbaar = true;",
+    })(call("lees_bestand", { pad: "src/core/mission-engine/v2/mission.ts" }));
+
+    expect(result).toContain("zichtbaar");
+    expect(result).not.toContain("staat al in je opdracht");
   });
 
   it("vraagt om een pad wanneer dat ontbreekt", async () => {
