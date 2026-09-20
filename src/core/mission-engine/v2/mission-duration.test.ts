@@ -3,6 +3,7 @@ import {
   formatDurationNl,
   getAssignmentDurationMs,
   getMissionDurationMs,
+  getOwnerInputWaitDurationMs,
 } from "./mission-duration";
 import type { MissionAssignmentRecord, MissionV2 } from "./mission";
 
@@ -151,6 +152,101 @@ describe("getMissionDurationMs", () => {
           value,
         ),
       ).toThrow("nowMs moet een eindig aantal milliseconden zijn.");
+    }
+  });
+});
+
+describe("getOwnerInputWaitDurationMs", () => {
+  it("berekent de wachttijd vanaf requestedAt tot het expliciete nu", () => {
+    const mission = buildMission({
+      status: "WAITING_FOR_OWNER",
+      updatedAt: "2026-09-13T16:00:00.000Z",
+      pendingOwnerInput: {
+        requestId: "input-1",
+        question: "Welke uitvoer is gewenst?",
+        requestedAt: "2026-09-13T14:45:00.000Z",
+      },
+    });
+
+    expect(getOwnerInputWaitDurationMs(mission, nowMs)).toBe(8_100_000);
+    expect(getOwnerInputWaitDurationMs(mission, nowMs + 60_000)).toBe(8_160_000);
+  });
+
+  it("geeft nul wanneer nu gelijk is aan requestedAt", () => {
+    const mission = buildMission({
+      status: "WAITING_FOR_OWNER",
+      pendingOwnerInput: {
+        requestId: "input-1",
+        question: "Welke uitvoer is gewenst?",
+        requestedAt: "2026-09-13T17:00:00.000Z",
+      },
+    });
+
+    expect(getOwnerInputWaitDurationMs(mission, nowMs)).toBe(0);
+  });
+
+  it("geeft null wanneer er geen eigenaarsvraag openstaat", () => {
+    expect(getOwnerInputWaitDurationMs(buildMission(), nowMs)).toBeNull();
+  });
+
+  it("geeft nul wanneer nu vóór requestedAt ligt", () => {
+    const mission = buildMission({
+      status: "WAITING_FOR_OWNER",
+      pendingOwnerInput: {
+        requestId: "input-1",
+        question: "Welke uitvoer is gewenst?",
+        requestedAt: "2026-09-13T17:00:01.000Z",
+      },
+    });
+
+    expect(getOwnerInputWaitDurationMs(mission, nowMs)).toBe(0);
+  });
+
+  it("behoudt milliseconden zonder afronding", () => {
+    const mission = buildMission({
+      status: "WAITING_FOR_OWNER",
+      pendingOwnerInput: {
+        requestId: "input-1",
+        question: "Welke uitvoer is gewenst?",
+        requestedAt: "2026-09-13T16:59:59.958Z",
+      },
+    });
+
+    expect(getOwnerInputWaitDurationMs(mission, nowMs)).toBe(42);
+  });
+
+  it("wijst een ongeldige requestedAt af", () => {
+    const mission = buildMission({
+      status: "WAITING_FOR_OWNER",
+      pendingOwnerInput: {
+        requestId: "input-1",
+        question: "Welke uitvoer is gewenst?",
+        requestedAt: "ongeldig",
+      },
+    });
+
+    expect(() => getOwnerInputWaitDurationMs(mission, nowMs)).toThrow(
+      "mission.pendingOwnerInput.requestedAt moet een geldig ISO-tijdstip zijn.",
+    );
+  });
+
+  it("vereist een eindig nu met en zonder openstaande vraag", () => {
+    const mission = buildMission({
+      status: "WAITING_FOR_OWNER",
+      pendingOwnerInput: {
+        requestId: "input-1",
+        question: "Welke uitvoer is gewenst?",
+        requestedAt: "2026-09-13T14:45:00.000Z",
+      },
+    });
+
+    for (const value of [NaN, Infinity, -Infinity]) {
+      expect(() => getOwnerInputWaitDurationMs(mission, value)).toThrow(
+        "nowMs moet een eindig aantal milliseconden zijn.",
+      );
+      expect(() => getOwnerInputWaitDurationMs(buildMission(), value)).toThrow(
+        "nowMs moet een eindig aantal milliseconden zijn.",
+      );
     }
   });
 });
