@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyIdToken } from "@/core/firebase/admin";
 import {
   AGENT_KEY_HEADER,
+  isActionAllowedForAgent,
   resolveAgentOwnerId,
   type RequestActor,
 } from "@/core/mission-engine/v2/agent-access";
@@ -775,6 +776,29 @@ export async function POST(request: NextRequest) {
   // giswerk. Het zichtbaar maken hiervan in Command Center is onderdeel 3 van
   // stap 22; dit is de laag eronder, en die hoort er eerder te zijn dan het
   // scherm dat hem toont.
+  // F-01 uit de externe review van 20 september 2026: de agentsleutel mag
+  // niet bij elke actie. Deze poort staat vóór de switch hieronder, zodat een
+  // actie die er later bijkomt standaard gesloten is voor de agent in plaats
+  // van standaard open. Zie AGENT_ALLOWED_ACTIONS in agent-access.ts voor
+  // waarom approve-and-merge er met opzet buiten valt.
+  if (actor === "agent" && !isActionAllowedForAgent(body.action)) {
+    console.warn("Agentsleutel geweigerd voor een actie die alleen de eigenaar mag doen", {
+      ownerId,
+      action: body.action,
+      at: new Date().toISOString(),
+    });
+
+    return NextResponse.json(
+      {
+        error:
+          "Deze actie kan alleen door de eigenaar zelf worden uitgevoerd, niet met de agentsleutel.",
+        reason:
+          "Goedkeuren en mergen is de menselijke handtekening onder een wijziging die de geautomatiseerde beoordeling juist niet zelf mag afdoen.",
+      },
+      { status: 403 },
+    );
+  }
+
   if (actor === "agent") {
     console.warn("Mission Engine V2 aangeroepen met de agentsleutel", {
       ownerId,

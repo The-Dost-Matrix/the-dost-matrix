@@ -58,6 +58,49 @@ export const MIN_AGENT_SECRET_LENGTH = 32;
 export type RequestActor = "owner" | "agent";
 
 /**
+ * Welke acties een houder van de agentsleutel mág uitvoeren.
+ *
+ * WAAROM DIT EEN WITTE LIJST IS EN GEEN ZWARTE
+ *
+ * Bevinding F-01 uit de externe review van 20 september 2026, en ze klopte.
+ * Op 19 september is de agentsleutel gebouwd als tweede weg naar dezelfde
+ * eigenaar-identiteit, met de redenering "daaronder verandert er niets, alle
+ * bestaande grenzen blijven staan". Dat gold niet voor één actie.
+ *
+ * `approve-and-merge` is namelijk precies de actie die géén risicoclassificatie
+ * meer uitvoert — zie approveAndMergeMissionPullRequest in director-runtime.ts:
+ * de klik van de eigenaar ís daar de goedkeuring. Dat klopte zolang er maar
+ * één manier was om die knop te bereiken. Met de agentsleutel erbij kon een
+ * geautomatiseerde partij langs precies de grens die voor haar bedoeld is:
+ * de harde escalatiecategorie (geheimen, GitHub-workflows, authenticatie,
+ * Firebase-configuratie en elke bestandsverwijdering) escaleert altijd naar
+ * Elroy, ongeacht wat een geautomatiseerde beoordeling ervan vindt. Via deze
+ * route hoefde die beoordeling niet eens plaats te vinden.
+ *
+ * De overgebleven poorten — alle succescriteria op GEHAALD, en CI niet
+ * mislukt of nog bezig — zijn geen vervanging daarvoor: ze zeggen iets over
+ * of de wijziging wérkt, niet over of iemand hem had mogen goedkeuren.
+ *
+ * Een witte lijst in plaats van een zwarte, zodat een actie die hier later
+ * bijkomt standaard gesloten is voor de agent. Een vergeten regel levert dan
+ * een geweigerde aanroep op in plaats van een stilzwijgend open deur.
+ */
+export const AGENT_ALLOWED_ACTIONS: readonly string[] = [
+  "create",
+  "dispatch",
+  "run-role",
+  "auto-step",
+  "cancel",
+  // Wel toegestaan, maar niet onbeperkt: routeOwnerQuestion bepaalt per vraag
+  // of de agent hem mag beantwoorden (zie owner-question-routing.ts).
+  "answer-owner-input",
+];
+
+export function isActionAllowedForAgent(action: string): boolean {
+  return AGENT_ALLOWED_ACTIONS.includes(action);
+}
+
+/**
  * Vergelijkt twee tekenreeksen zonder dat de tijd die dat kost iets verraadt
  * over hoeveel tekens er klopten. Gelijk aan de implementatie in
  * /api/missions/v2/advance, en om dezelfde reden.
