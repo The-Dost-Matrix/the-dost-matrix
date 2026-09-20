@@ -109,4 +109,42 @@ describe("formatObjectiveEvidence", () => {
 
     expect(blok).not.toContain("x".repeat(MAX_OBJECTIVE_EVIDENCE_CHARS + 1));
   });
+
+  /**
+   * Regressietest bij de reparatie van 20 september 2026.
+   *
+   * Een live missie strandde omdat een genoemd testbestand van 11.352 tekens
+   * op 6.000 werd afgekapt — zonder melding, en mét de zin erboven dat dit de
+   * volledige huidige inhoud was. De Builder zag een bestand dat midden in een
+   * test ophield en weigerde te schrijven, precies zoals hij hoort te doen.
+   *
+   * De grens is verhoogd, maar dat is de minst belangrijke helft: zolang
+   * afkappen stil gebeurt, komt ditzelfde probleem bij een groter bestand
+   * gewoon terug.
+   */
+  it("meldt het hardop wanneer er iets is afgekapt, met beide aantallen", () => {
+    const lengte = MAX_OBJECTIVE_EVIDENCE_CHARS + 500;
+    const blok = formatObjectiveEvidence([
+      { path: "src/groot.test.ts", content: "x".repeat(lengte) },
+    ]);
+
+    expect(blok).toContain("LET OP");
+    expect(blok).toContain(String(MAX_OBJECTIVE_EVIDENCE_CHARS));
+    expect(blok).toContain(String(lengte));
+    expect(blok).toContain("lees_bestand");
+  });
+
+  it("zwijgt over afkappen wanneer er niets is afgekapt", () => {
+    // Anders leest elk normaal bestand als een waarschuwing, en dan wordt de
+    // waarschuwing bij het ene bestand dat hem wél verdient niet meer gezien.
+    const blok = formatObjectiveEvidence([{ path: "src/klein.ts", content: "kort" }]);
+
+    expect(blok).not.toContain("LET OP");
+    expect(blok).toContain("--- einde ---");
+  });
+
+  it("is ruim genoeg voor het bestand waarop de live missie strandde", () => {
+    // mission-duration.test.ts was 11.352 tekens.
+    expect(MAX_OBJECTIVE_EVIDENCE_CHARS).toBeGreaterThan(11_352);
+  });
 });

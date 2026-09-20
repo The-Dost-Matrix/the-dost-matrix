@@ -54,8 +54,30 @@
  */
 export const MAX_OBJECTIVE_EVIDENCE_FILES = 4;
 
-/** Hoeveel tekens er per genoemd bestand maximaal meegaan. */
-export const MAX_OBJECTIVE_EVIDENCE_CHARS = 6_000;
+/**
+ * Hoeveel tekens er per genoemd bestand maximaal meegaan.
+ *
+ * WAAROM DIT OP 20 SEPTEMBER 2026 VAN 6.000 NAAR 40.000 GING
+ *
+ * Een live missie strandde erop, en wel op de manier die dit bestand nu juist
+ * had moeten voorkomen. De opdracht noemde
+ * `src/core/mission-engine/v2/mission-duration.test.ts` met naam, dus het
+ * bestand werd keurig gevonden en meegestuurd — afgekapt op 6.000 van de
+ * 11.352 tekens, zonder dat erbij stond dat er iets ontbrak. De Builder zag
+ * een testbestand dat midden in een test ophield, concludeerde dat hij de
+ * bestaande testopzet niet kon controleren, en weigerde te schrijven.
+ *
+ * Dat is precies het juiste gedrag. De fout zat hier.
+ *
+ * 40.000 tekens is ruim boven elk bestand in dit project op één na, en met
+ * hoogstens vier genoemde bestanden is de bovengrens 160.000 tekens —
+ * ongeveer 45.000 tokens in het slechtste geval, en dat geval komt in de
+ * praktijk niet voor. Ter vergelijking: één bestand dat de Builder helemaal
+ * herschrijft mag 300.000 tekens groot zijn (MAX_FILE_CONTENT_LENGTH in
+ * builder-runtime.ts). Een bestand dat hij alleen mag lézen zuiniger
+ * behandelen dan een bestand dat hij herschrijft, was de omgekeerde wereld.
+ */
+export const MAX_OBJECTIVE_EVIDENCE_CHARS = 40_000;
 
 /**
  * Bestandsextensies die als "broncode van dit project" tellen. Bewust een
@@ -131,22 +153,43 @@ export interface ObjectiveEvidenceFile {
 }
 
 /**
+ * De naam van de leestool, zodat de melding bij een afgekapt bestand de
+ * gebruiker van deze prompt vertelt hoe hij aan de rest komt. Bewust hier
+ * herhaald in plaats van builder-tools.ts te importeren: dat bestand trekt de
+ * hele gereedschapslaag mee, en dit bestand is met opzet vrij van
+ * afhankelijkheden zodat het zonder netwerk getest kan worden.
+ */
+const READ_FILE_TOOL_NAME = "lees_bestand";
+
+/**
  * Zet de genoemde bestanden om in een promptblok.
  *
  * Nadrukkelijk gelabeld als "alleen om te lezen": zonder die zin is de kans
  * reëel dat het model denkt dat het ze ook mag aanpassen, en dan komt er een
  * bestand in de pull request dat er niet hoort.
+ *
+ * En nadrukkelijk eerlijk over afkappen: zie de toelichting bij
+ * MAX_OBJECTIVE_EVIDENCE_CHARS.
  */
 export function formatObjectiveEvidence(files: readonly ObjectiveEvidenceFile[]): string {
   if (files.length === 0) return "";
 
-  const blocks = files.map((file) =>
-    [
+  const blocks = files.map((file) => {
+    const truncated = file.content.length > MAX_OBJECTIVE_EVIDENCE_CHARS;
+
+    return [
       `--- ${file.path} (alleen om te lezen) ---`,
       file.content.slice(0, MAX_OBJECTIVE_EVIDENCE_CHARS),
-      "--- einde ---",
-    ].join("\n"),
-  );
+      // Nooit stilzwijgend afkappen. Zonder deze regel staat er boven een half
+      // bestand dat het de volledige huidige inhoud is, en dan moet het model
+      // kiezen tussen gokken en weigeren. Zie de toelichting bij
+      // MAX_OBJECTIVE_EVIDENCE_CHARS hierboven, en dezelfde les in
+      // builder-runtime.ts bij MAX_FILE_CONTENT_LENGTH.
+      truncated
+        ? `--- LET OP: hierboven staan de eerste ${MAX_OBJECTIVE_EVIDENCE_CHARS} van ${file.content.length} tekens van dit bestand. De rest ontbreekt. Heb je het volledige bestand nodig, vraag het dan op met ${READ_FILE_TOOL_NAME}. ---`
+        : "--- einde ---",
+    ].join("\n");
+  });
 
   return [
     "Bestanden die in de opdracht genoemd worden. Dit is de huidige, echte inhoud uit de repository — gebruik uitsluitend namen, typen en signaturen die je hier letterlijk ziet staan. Deze bestanden worden NIET door jou geschreven; laat ze ongemoeid.",
