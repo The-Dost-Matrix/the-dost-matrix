@@ -1760,6 +1760,52 @@ een herbruikbaar sjabloon met vooraf ingevulde objective/succescriteria.
 
 ### Stap 22 — De Claude-koppeling: terugkoppeling zonder tussenpersoon
 
+> #### STATUS, 20 september 2026: GEBOUWD, MAAR HET DOEL IS NIET GEHAALD
+>
+> Onderdeel 1, 2 en 3 hieronder zijn gebouwd, gecommit en uitgerold. En tóch
+> heeft Claude sinds die oplevering geen enkele keer in The Dost Matrix
+> gekeken. Niet één keer. Wat hieronder staat beschrijft dus een ontwerp dat
+> op zichzelf klopt, met een aanname eronder die niet klopte.
+>
+> **Wat wél werkt.** De deur is echt. Elroy heeft hem zelf getest vanaf de
+> opdrachtregel, met de agentsleutel als kopregel, en kreeg zijn drie missies
+> terug. De weigering bij een onjuiste sleutel werkt ook (401). De
+> vragenroutering en het paneel zijn gebouwd en getest.
+>
+> **Waarom het toch niet kan werken.** De sleutel moet mee als HTTP-kopregel
+> (`x-matrix-agent-key`). Het enige gereedschap waarmee een Claude-sessie een
+> adres kan opvragen, kan geen eigen kopregels meesturen. Daarmee kan geen
+> enkele sessie ooit door deze deur, hoe goed de deur ook gebouwd is. Dit was
+> vooraf te weten en is vooraf niet gezegd — het is niet ontdekt tijdens het
+> bouwen, het is over het hoofd gezien vóórdat het bouwen begon. Dat is een
+> fout van Claude, en hij heeft Elroy een avond gekost aan een onderdeel dat
+> zijn eigen doel niet kon halen.
+>
+> **Wat het bolletje "CLAUDE · KIJKT MEE" werkelijk aantoont.** Precies wat er
+> in `agent-presence.ts` staat en niets meer: dat er recent een aanroep met de
+> agentsleutel is binnengekomen. Dat was Elroy's eigen test. Het bolletje heeft
+> nooit iets onwaars beweerd; het is als bewijs van meekijken gepresenteerd, en
+> dat was het niet.
+>
+> **Hoe het alsnog kan.** Niet via de sleutel, maar via de browseruitbreiding
+> Claude in Chrome: die draait in Elroy's eigen Chrome, op zijn computer, in
+> zijn ingelogde sessie. Dan ziet Claude letterlijk wat Elroy ziet —
+> foutmeldingen in het missiepaneel incluis — en is er geen sleutel nodig.
+> Dezelfde route lost ook het tweede probleem op: GitHub weigert de repo aan
+> alles wat geen browser is (`robots.txt` op github.com; 403 wegens
+> snelheidsbegrenzing op api.github.com vanaf gedeelde cloud-adressen), en een
+> echte browser heeft daar geen last van. **Dit is op het moment van schrijven
+> niet bewezen.** Afspraak: eerst aanzetten en testen op één pagina, pas daarna
+> erop bouwen — de omgekeerde volgorde van deze stap.
+>
+> **Wat van deze stap waarde houdt, ook naast Chrome.** Twee dingen, en het
+> eerste weegt het zwaarst. Via de browser handelt Claude als Elroy, met al
+> zijn rechten; de agentsleutel heeft uitdrukkelijk mínder rechten
+> (`AGENT_ALLOWED_ACTIONS` in `agent-access.ts` is een witte lijst waar
+> `approve-and-merge` niet in staat). Dat onderscheid is niet cosmetisch. En:
+> de sleutelroute werkt terwijl Elroy's computer uit staat, de browserroute
+> niet.
+
 **Deze stap vervangt de oude stap 22, die de andere kant op keek.** Daar stond:
 "een paneel in Command Center dat live meekijkt met een externe Claude
 Code/Cowork-sessie". Dat is niet wat nodig is. Het probleem is niet dat Elroy
@@ -1902,6 +1948,30 @@ elke keer gekozen moet worden.
 Punt 3 is de belangrijkste van de vijf. Een koppeling die alles zelf afdoet, is
 geen verbetering maar een verplaatsing van hetzelfde probleem: dan is Elroy niet
 meer de postbode maar ook niet meer de beslisser.
+
+**Stand op 20 september 2026.** Punt 4 is gehaald (Elroy heeft de weigering met
+een onjuiste sleutel zelf gezien). Punt 5 is gehaald voor zover er iets te tonen
+was. Punt 1, 2 en 3 zijn **niet** gehaald en konden langs deze weg ook niet
+gehaald worden — zie de status bovenaan deze stap. Ze blijven staan als de maat
+waaraan de vervanger gemeten wordt.
+
+#### Stap 22b — Meekijken via de browser (nog te doen)
+
+De vervanger van het onbereikbare deel hierboven. Volgorde, en die volgorde is
+het hele punt:
+
+1. Elroy zet Claude in Chrome aan.
+2. **Bewijzen dat het werkt**, op één pagina, vóórdat er iets op gebouwd wordt.
+   Concreet: Claude leest de missiepagina van The Dost Matrix en geeft de tekst
+   van een foutmelding terug die Elroy niet heeft overgetypt.
+3. Pas daarna vaststellen wat er verder mee gedaan wordt.
+
+De reden dat stap 2 apart genoemd staat: stap 22 is gebouwd op een aanname die
+nooit getoetst is. Dat mag hier niet nog een keer gebeuren.
+
+Openstaande vragen die het antwoord op stap 2 moet geven: werkt de uitbreiding
+bij Elroy's opstelling, en worden de toestemmingen per site werkbaar of een
+last?
 
 ### Stap 23 — Visualisatie van wat er achter de schermen gebeurt
 (voorheen stap 22, oorspronkelijk stap 15, door Elroy zelf toegevoegd) Een
